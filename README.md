@@ -13,7 +13,7 @@ Projeto criado por [Armando Ciciliano Carlini](https://github.com/armandocarlini
 
 ## Estado atual
 
-Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY, descoberta Git somente leitura e o primeiro adaptador de agente real: o ATLAS detecta o Kimi Code no `PATH` e inicia sessões interativas do CLI em pastas autorizadas. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`. Execução, mensagens, evidências e orquestração permanecem nos próximos marcos. Os quatro cards iniciais do cockpit são marcados como ilustrativos e não representam integrações ativas.
+Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY e descoberta Git somente leitura. O ATLAS detecta o Kimi Code no `PATH` e abre uma sessão principal real de planejamento no projeto autorizado, além das sessões manuais. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`. Delegação, execução de tarefas, mensagens e evidências estruturadas permanecem nos próximos marcos. Os quatro cards de demonstração aparecem somente no navegador e não representam integrações ativas.
 
 Já estão implementados:
 
@@ -102,6 +102,12 @@ O botão **Sessão** lista os CLIs de agente detectados no `PATH` (neste marco, 
 
 Projetos, sessões, runs e eventos são registrados em `atlas.sqlite`, no diretório de dados do aplicativo, sem transcripts. Uma sessão possui identidade própria e uma run representa a tentativa concreta de execução. Ao fechar o aplicativo, seus PTYs são interrompidos; runs sem saída confirmada ficam `lost`, com motivo explícito. Após crash, a próxima abertura reconcilia runs que ficaram ativas. Sessões anteriores de projetos e diretórios ainda autorizados reaparecem como histórico, com resultado e datas, sem abrir processo ou simular uma conversa. O aplicativo aceita uma única instância por perfil para impedir reconciliação concorrente de processos vivos.
 
+## Sessão principal de planejamento
+
+Ao abrir um projeto autorizado sem principal anterior, o desktop inicia o Kimi interativo com um perfil de planejamento do ATLAS. O perfil permite apenas ferramentas de leitura; modelo e permissões permanecem no harness, sem flags de autonomia nem prompt inicial. A principal aparece antes das sessões manuais do projeto e não substitui seu terminal.
+
+Há uma identidade principal por projeto. Depois de saída ou interrupção, **Nova execução** cria outra tentativa com essa identidade, sem prometer retomada da conversa nativa. Se estiver em pop-up, o ATLAS reintegra a janela antes de conectar o novo PTY. Abrir novamente um projeto com histórico não ressuscita processos automaticamente. Delegação entre sessões ainda não está conectada.
+
 ## Tarefas do projeto
 
 No desktop, selecione o projeto ou uma de suas worktrees e abra **Tarefas → Nova tarefa**. Informe título e critérios de aceite; a descrição é opcional. A tarefa entra no backlog e permanece após reinício. O comando de criação usa chave de idempotência para tolerar envio repetido sem duplicar a tarefa. Trocar de projeto altera a lista; a janela de acompanhamento recebe o mesmo estado para leitura. Execução, atribuição, revisão e conclusão ainda não estão disponíveis neste incremento.
@@ -123,6 +129,14 @@ npm run smoke:agent
 
 Ele inicia o CLI real em uma fixture temporária com `KIMI_CODE_HOME` isolado, envia somente `/status` e `/exit` (sem prompts ao modelo e sem consumo de tokens) e confirma o encerramento limpo com código 0. Depois fecha e reabre o Electron no mesmo perfil e verifica a identidade e o resultado preservados, sem recriar PTY.
 
+Para validar também uma conversa curta na principal, com o provedor já configurado no Kimi:
+
+```powershell
+npm run smoke:orchestrator
+```
+
+Esse teste opt-in usa a configuração/autenticação existente do harness, sem copiar credenciais ou alterar preferências. O diretório e o perfil Electron são temporários; um único prompt curto é digitado pelo xterm e pode consumir tokens do provedor. Os testes padrão não chamam o modelo.
+
 O smoke test abre uma instância Electron com preferências isoladas, cria uma fixture Git temporária e usa PowerShells reais. Valida diretório da worktree, Unicode, resize, Ctrl+C, dois streams independentes, pop-ups, reintegração, acompanhamento sempre no topo, temas, persistência de layout e encerramento dos processos. As janelas de teste podem aparecer durante a execução. A fixture é removida ao concluir com sucesso; em caso de falha, seu caminho é registrado para diagnóstico.
 
 Capturas de tela, medições de contraste e resultado ficam em `.atlas-smoke-results/`. A porta local de depuração usada é `9333` (substituível por `ATLAS_SMOKE_PORT`); o controle nativo de teste usa a porta seguinte e um token temporário. Esses serviços existem somente no ponto de entrada de teste.
@@ -143,6 +157,7 @@ electron/
   agent-host.cjs        Identidade e ciclo de vida das sessões de agente
   operational-store.cjs SQLite, migrations, runs e eventos persistentes
   task-host.cjs         Criação e listagem de tarefas em escopo autorizado
+  orchestrator-profile.cjs Perfil de planejamento somente de leitura
 scripts/                Inicialização desktop, testes e smokes
 src/
   App.jsx               Cockpit e estado compartilhado

@@ -24,6 +24,7 @@
     "test": "node --test scripts/*.test.mjs",
     "test:agent": "node --test scripts/agent-*.test.mjs",
     "smoke:agent": "node scripts/smoke-agent.mjs",
+    "smoke:orchestrator": "node scripts/smoke-agent.mjs --configured-model",
     "check:public": "node scripts/check-public-files.mjs"
   },
   "dependencies": {

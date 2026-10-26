@@ -54,7 +54,13 @@ Desvios corrigidos: revisão visual detectou regra CSS antiga ocultando o botão
 
 O smoke real final do Kimi 2.3.2 passou após essa correção: `/status`, `/exit`, código nativo 0 e reinício do Electron preservando identidade e resultado. Nenhum prompt foi enviado ao modelo. `check:public` passou incluindo os 55 arquivos rastreados. A revisão independente confirmou a correção do driver e do foco, sem bloqueios remanescentes. A integração deste marco depende da CI Ubuntu/Windows do PR.
 
-Não há orquestrador conectado. Os marcos seguintes e os 12 passos de aceite da v0.1 permanecem pendentes.
+## Marco 3 — sessão principal real
+
+Conforme `docs/PLANO_ORQUESTRADOR.md`: ao abrir projeto autorizado sem principal, o desktop inicia o Kimi interativo com perfil ATLAS somente de leitura (`electron/orchestrator-profile.cjs`, via `--agent-file` oficial), sem flags de autonomia nem prompt inicial. Uma identidade de orquestrador por projeto (índice único na migration 3); cada tentativa é uma run com tentativa monotônica e snapshot de versão/cwd. Saída/interrupção preserva a identidade e exige **Nova execução** explícita; em pop-up, a janela é reintegrada antes do novo PTY. O desktop não mostra mais cards, métricas e menus ilustrativos — eles permanecem apenas no wireframe do navegador.
+
+Validação local nesta continuação (agente Kimi, após trabalho do agente anterior na mesma branch): `npm test` 61/61, build, `check:public` (55 arquivos), smoke desktop completo e `npm run smoke:orchestrator` passaram. O smoke real confirmou principal com perfil de leitura, conversa real com um único prompt curto no provedor já configurado, `/status` e `/exit` com código 0, nova run após saída em pop-up e reinício do Electron com identidade preservada. Delegação, mensagens, handoffs, worktrees sob política, evidências/revisão e instalador continuam pendentes.
+
+Não há orquestrador conectado a subordinados. Os marcos seguintes e os 12 passos de aceite da v0.1 permanecem pendentes.
 
 O Kimi foi interrompido durante os testes de dois terminais e descoberta Git. Essa etapa foi concluída: os testes agora são reproduzíveis em `scripts/`, e os marcos confirmados foram atualizados no planejamento. O relatório técnico/visual está em `docs/VALIDACAO_DESKTOP.md`.
 

@@ -65,4 +65,8 @@ const server = http.createServer(async (request, response) => {
   }
 }).listen(Number(process.env.ATLAS_SMOKE_CONTROL_PORT), '127.0.0.1');
 app.on('will-quit', () => server.close());
+if (process.env.ATLAS_SMOKE_NO_CLI === '1') {
+  const adapters = require('../electron/agent-adapters.cjs');
+  adapters.discoverAdapters = async () => adapters.ADAPTERS.map((adapter) => ({ ...adapter, status: 'unavailable', executable: null, version: null, error: 'CLI ausente na fixture determinística.' }));
+}
 require('../electron/main.cjs');

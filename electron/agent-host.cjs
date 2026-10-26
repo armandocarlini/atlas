@@ -4,8 +4,9 @@ const { discoverAdapters } = require('./agent-adapters.cjs');
 // Ciclo de vida de sessões de agente neste marco: identidade gerada no
 // processo principal, cwd validado, PTY real e estado mínimo em memória.
 // O estado operacional é apenas running/exited; nada é inferido do ANSI.
-function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, store, onPersistenceError = console.error }) {
+function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, store, onPersistenceError = console.error, orchestratorProfile }) {
   const agents = new Map();
+  const pendingOrchestrators = new Map();
   let discoveryPromise = null;
 
   function describe(agent) {
@@ -23,6 +24,9 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       createdAt: agent.createdAt,
       projectId: agent.projectId,
       runId: agent.runId,
+      role: agent.role,
+      runStartedAt: agent.runStartedAt,
+      runAttempt: agent.runAttempt,
     };
   }
 
@@ -45,6 +49,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
           runId: run.id, runState: run.state, reason: run.reason,
           exit: run.exit_code === null ? null : { exitCode: run.exit_code, signal: run.signal },
           createdAt: session.created_at, endedAt: run.ended_at,
+          role: session.role, runStartedAt: run.started_at, runAttempt: run.attempt,
         });
       }
     }
@@ -68,8 +73,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     return listAgents();
   });
 
-  ipcMain.handle('agent:create', async (event, request = {}) => {
-    if (!isMainSender(event)) throw new Error('Janela não autorizada a criar sessões de agente.');
+  async function createAgent(request = {}, { role = 'agent', existing = null } = {}) {
     await projectHost.ready;
 
     const adapters = await listAdapters();
@@ -91,7 +95,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     try {
       record = transport.spawn({
         file: adapter.executable,
-        args: adapter.spawnArgs,
+        args: [...adapter.spawnArgs, ...(role === 'orchestrator' ? ['--agent-file', orchestratorProfile] : [])],
         cwd,
         cols,
         rows,
@@ -102,7 +106,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     }
 
     const agent = {
-      id: randomUUID(),
+      id: existing?.id || randomUUID(),
       name,
       adapterId: adapter.id,
       cli: adapter.name,
@@ -112,13 +116,16 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       ptyId: record.id,
       state: 'running',
       exit: null,
-      createdAt: new Date().toISOString(),
+      createdAt: existing?.created_at || new Date().toISOString(),
+      runStartedAt: new Date().toISOString(),
+      role,
       projectId: project?.id,
     };
     let run;
     try {
       run = store?.startSession(agent);
       agent.runId = run?.id;
+      agent.runAttempt = run?.attempt;
     } catch (error) {
       transport.close(record);
       throw new Error(`Não foi possível persistir a sessão de agente: ${error.message}`);
@@ -137,6 +144,33 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     });
     agents.set(agent.id, agent);
     return describe(agent);
+  }
+
+  ipcMain.handle('agent:create', async (event, request = {}) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a criar sessões de agente.');
+    return createAgent(request);
+  });
+
+  ipcMain.handle('agent:open-orchestrator', async (event, request = {}) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a abrir o orquestrador.');
+    if (!store || typeof orchestratorProfile !== 'string') throw new Error('Perfil do orquestrador não configurado.');
+    await projectHost.ready;
+    if (!request || !projectHost.isAllowedCwd(request.cwd)) throw new Error('Selecione uma pasta autorizada.');
+    const project = projectHost.getProjectForCwd(request.cwd);
+    if (!project || !projectHost.isAllowedCwd(project.path)) throw new Error('Projeto não encontrado para a pasta autorizada.');
+    if (pendingOrchestrators.has(project.id)) return pendingOrchestrators.get(project.id);
+    const current = [...agents.values()].find((agent) => agent.projectId === project.id && agent.role === 'orchestrator' && agent.state === 'running');
+    if (current) return describe(current);
+    const existing = store.getOrchestrator(project.id);
+    if (existing && request.startNewRun !== true) {
+      const history = listAgents().find((agent) => agent.id === existing.id);
+      if (!history) throw new Error('Histórico da principal fora do escopo autorizado.');
+      return history;
+    }
+    const operation = createAgent({ adapterId: 'kimi-code', name: 'ORQUESTRADOR', cwd: project.path }, { role: 'orchestrator', existing })
+      .finally(() => pendingOrchestrators.delete(project.id));
+    pendingOrchestrators.set(project.id, operation);
+    return operation;
   });
 
   return {

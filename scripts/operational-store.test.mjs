@@ -74,11 +74,11 @@ test('migration inválida reverte DDL e versão, sem tocar dados anteriores', (t
   store.close();
   const raw = new DatabaseSync(filename);
   try {
-    assert.throws(() => migrate(raw, [...MIGRATIONS, { version: 3, sql: 'CREATE TABLE partial (id TEXT); INVALID SQL;' }]), /syntax/);
-    assert.equal(raw.prepare('PRAGMA user_version').get().user_version, 2);
+    assert.throws(() => migrate(raw, [...MIGRATIONS, { version: 4, sql: 'CREATE TABLE partial (id TEXT); INVALID SQL;' }]), /syntax/);
+    assert.equal(raw.prepare('PRAGMA user_version').get().user_version, 3);
     assert.equal(raw.prepare("SELECT count(*) AS total FROM sqlite_master WHERE name = 'partial'").get().total, 0);
     assert.equal(raw.prepare('SELECT count(*) AS total FROM projects').get().total, 1);
-    assert.equal(raw.prepare('SELECT count(*) AS total FROM schema_migrations').get().total, 2);
+    assert.equal(raw.prepare('SELECT count(*) AS total FROM schema_migrations').get().total, 3);
   } finally {
     raw.close();
   }
@@ -142,7 +142,7 @@ test('foreign keys e conflitos rejeitam operação inteira, incluindo eventos', 
   const run = session(store, id);
   const before = store.listEvents(id);
   assert.throws(() => store.finishRun({ runId: run.id, expectedVersion: 99, exitCode: 0 }), /conflito/);
-  assert.throws(() => session(store, id), /UNIQUE/);
+  assert.throws(() => session(store, id), /Identidade de sessão já existente/);
   assert.equal(store.listRuns(id)[0].state, 'running');
   assert.deepEqual(store.listEvents(id), before);
 });
@@ -232,4 +232,20 @@ test('backup WAL restaura estado consistente sem sobrescrever arquivos existente
   await assert.rejects(store.backupTo(destination), /EEXIST/);
   await assert.rejects(store.backupTo(path.join(directory, 'estado.sqlite')), /outro caminho/);
   assert.equal(store.listRuns(id)[0].state, 'succeeded');
+});
+
+test('tentativas da principal ordenam por sequência durável, mesmo se relógio voltar', (t) => {
+  const { open } = fixture(t);
+  const store = open();
+  const projectId = project(store);
+  const principal = { id: 'principal', projectId, name: 'ORQUESTRADOR', adapterId: 'kimi-code', cli: 'Kimi Code', version: '2.3.2', cwd: '/fixtures/project-a', origin: 'user', role: 'orchestrator', createdAt: '2026-10-26T12:00:00Z' };
+  const first = store.startSession({ ...principal, runStartedAt: '2026-10-26T12:00:00Z' });
+  store.finishRun({ runId: first.id, expectedVersion: 1, exitCode: 0 });
+  const second = store.startSession({ ...principal, runStartedAt: '2026-10-26T11:59:00Z', version: '2.3.3' });
+  const runs = store.listRuns(projectId);
+  assert.deepEqual(runs.map((run) => run.attempt), [1, 2]);
+  assert.equal(runs.at(-1).id, second.id);
+  assert.equal(runs[0].cli_version, '2.3.2');
+  assert.equal(runs[1].cli_version, '2.3.3');
+  assert.equal(store.listSessions(projectId).length, 1);
 });

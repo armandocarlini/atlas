@@ -11,9 +11,10 @@ export function agentSession(agent) {
   }
   return {
     id: agent.id, ptyId: archived ? null : agent.ptyId, projectId: agent.projectId,
+    roleKind: agent.role || 'agent', exited: archived || agent.state === 'exited', runStartedAt: agent.runStartedAt, runAttempt: agent.runAttempt,
     name: agent.name, cli: agent.cli, version: agent.version,
-    role: archived ? 'Histórico de sessão; nenhum processo conectado' : 'Sessão de agente criada pelo usuário',
-    origin: agent.origin === 'orchestrator' ? 'orquestrador' : 'manual',
+    role: archived ? 'Histórico de sessão; nenhum processo conectado' : agent.role === 'orchestrator' ? 'Planejamento do projeto; delegação ainda não conectada' : 'Sessão de agente criada pelo usuário',
+    origin: agent.role === 'orchestrator' ? 'principal' : agent.origin === 'orchestrator' ? 'orquestrador' : 'manual',
     status, color: archived ? '#8d959d' : '#4ecb8d', worktree: agent.cwd,
     archived, runState: agent.runState, reason: agent.reason, createdAt: agent.createdAt,
     endedAt: agent.endedAt, model: null, effort: null, lines: [],
@@ -25,7 +26,14 @@ export function mergeAgentSessions(current, agents) {
   const merged = current.map((session) => {
     const update = updates.get(session.id);
     updates.delete(session.id);
+    if (Number.isInteger(update?.runAttempt) && Number.isInteger(session.runAttempt) && update.runAttempt < session.runAttempt) return session;
+    if (update?.runAttempt === session.runAttempt && session.exited && !update?.exited) return session;
     return update || session;
   });
   return [...merged, ...updates.values()];
+}
+
+export function sessionExit(current, sessionId, exit) {
+  return current.map((session) => session.id === sessionId && typeof exit.ptyId === 'string' && exit.ptyId === session.ptyId
+    ? { ...session, exited: true, status: `encerrado · código ${exit.exitCode}` } : session);
 }
