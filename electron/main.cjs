@@ -5,12 +5,14 @@ const { createProjectHost } = require('./project-host.cjs');
 const { createTerminalHost } = require('./terminal-host.cjs');
 const { createAgentHost } = require('./agent-host.cjs');
 const { createPtyTransport, registerTransportChannels } = require('./pty-transport.cjs');
+const { createOperationalStore, closeOperationalStore } = require('./operational-store.cjs');
 
 let mainWindow = null;
 let panelWindow = null;
 let projectHost = null;
 let ptyTransport = null;
 let boundsSaveTimer = null;
+let operationalStore = null;
 const terminalWindows = new Map();
 
 const stateFile = () => path.join(app.getPath('userData'), 'atlas-window-state.json');
@@ -210,8 +212,13 @@ ipcMain.handle('terminal-window:close', (event, { sessionId } = {}) => {
   return true;
 });
 
-app.whenReady().then(() => {
-  projectHost = createProjectHost({ app, dialog, ipcMain, getMainWindow });
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+app.whenReady().then(async () => {
+  operationalStore = createOperationalStore({ filename: path.join(app.getPath('userData'), 'atlas.sqlite') });
+  operationalStore.reconcileRuns();
+  projectHost = createProjectHost({ app, dialog, ipcMain, getMainWindow, store: operationalStore });
   ptyTransport = createPtyTransport({ getMainWindow });
   const terminalHost = createTerminalHost({
     ipcMain,
@@ -230,14 +237,23 @@ app.whenReady().then(() => {
     projectHost,
     transport: ptyTransport,
     isMainSender: terminalHost.isMainSender,
+    store: operationalStore,
   });
+  await projectHost.ready;
   createMainWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
+}).catch((error) => {
+  console.error('Não foi possível abrir o estado operacional do ATLAS:', error);
+  app.quit();
 });
+}
 
-app.on('before-quit', () => ptyTransport?.killAll());
+app.on('before-quit', () => {
+  ptyTransport?.killAll();
+  closeOperationalStore(operationalStore, (error) => console.error('Não foi possível registrar a interrupção das runs do ATLAS:', error));
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

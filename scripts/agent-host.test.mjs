@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const { createAgentHost } = createRequire(import.meta.url)('../electron/agent-host.cjs');
+const { createOperationalStore } = createRequire(import.meta.url)('../electron/operational-store.cjs');
 
-function createHarness({ allowedCwds = ['C:\\projeto'], adapters } = {}) {
+function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError } = {}) {
   const handlers = new Map();
   const listeners = new Map();
   const ipcMain = {
@@ -15,11 +19,13 @@ function createHarness({ allowedCwds = ['C:\\projeto'], adapters } = {}) {
     ready: Promise.resolve(),
     getDefaultCwd: () => allowedCwds[0],
     isAllowedCwd: (cwd) => allowedCwds.some((allowed) => allowed.toLowerCase() === String(cwd).toLowerCase()),
+    getProjectForCwd: () => ({ id: 'project-a' }),
   };
   const spawns = [];
   const records = [];
   const transport = {
     records,
+    close: (record) => { record.closed = true; },
     spawn(request) {
       spawns.push(request);
       let exitCallback = null;
@@ -42,6 +48,8 @@ function createHarness({ allowedCwds = ['C:\\projeto'], adapters } = {}) {
     ipcMain,
     projectHost,
     transport,
+    store,
+    onPersistenceError,
     isMainSender: (event) => event.sender === 'main',
     discover: async () => adapters || [{
       id: 'kimi-code',
@@ -143,4 +151,61 @@ test('falha no spawn vira erro acionável sem registrar o agente', async () => {
     /Não foi possível iniciar o Kimi Code: ConPTY indisponível/,
   );
   assert.deepEqual(handlers.get('agent:list')(mainEvent), []);
+});
+
+test('agente persiste sessão, run e saída em SQLite e conserva histórico ao reabrir', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-agent-store-'));
+  const filename = path.join(directory, 'agents.sqlite');
+  let store = createOperationalStore({ filename });
+  t.after(() => {
+    store.close();
+    const resolved = fs.realpathSync(directory);
+    assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
+    assert(path.basename(resolved).startsWith('atlas-agent-store-'));
+    fs.rmSync(resolved, { recursive: true, force: true });
+  });
+  store.registerProject({ id: 'project-a', name: 'Fixture', path: '/fixtures/project-a' });
+  const { handlers, transport, mainEvent } = createHarness({ store });
+  const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code' });
+  assert.equal(store.listSessions('project-a')[0].id, agent.id);
+  assert.equal(store.listRuns('project-a')[0].id, agent.runId);
+  transport.records[0].emitExit(0, 0);
+  store.close();
+  store = createOperationalStore({ filename });
+  assert.equal(store.reconcileRuns(), 0);
+  assert.equal(store.listRuns('project-a')[0].state, 'succeeded');
+  assert.equal(store.listSessions('project-a')[0].id, agent.id);
+});
+
+test('falha na persistência encerra PTY e não apresenta sessão criada', async () => {
+  const { handlers, transport, mainEvent } = createHarness({
+    store: { startSession: () => { throw new Error('disco indisponível'); } },
+  });
+  await assert.rejects(handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code' }), /persistir.*disco indisponível/);
+  assert.equal(transport.records[0].closed, true);
+  assert.deepEqual(handlers.get('agent:list')(mainEvent), []);
+});
+
+test('projeto ausente impede spawn mesmo com pasta autorizada', async () => {
+  const { handlers, projectHost, spawns, mainEvent } = createHarness({ store: {} });
+  projectHost.getProjectForCwd = () => null;
+  await assert.rejects(handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code' }), /Projeto não encontrado/);
+  assert.equal(spawns.length, 0);
+});
+
+test('falha ao persistir saída é reportada; callback tardio após fechar banco é seguro', async () => {
+  const errors = [];
+  const store = {
+    closed: false,
+    startSession: () => ({ id: 'run-a', version: 1 }),
+    finishRun: () => { throw new Error('disco indisponível'); },
+  };
+  const { handlers, transport, mainEvent } = createHarness({ store, onPersistenceError: (error) => errors.push(error) });
+  await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code' });
+  transport.records[0].emitExit(0, 0);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /persistir a saída.*disco indisponível/);
+  store.closed = true;
+  transport.records[0].emitExit(0, 0);
+  assert.equal(errors.length, 1);
 });

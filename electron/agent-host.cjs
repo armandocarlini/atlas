@@ -4,7 +4,7 @@ const { discoverAdapters } = require('./agent-adapters.cjs');
 // Ciclo de vida de sessões de agente neste marco: identidade gerada no
 // processo principal, cwd validado, PTY real e estado mínimo em memória.
 // O estado operacional é apenas running/exited; nada é inferido do ANSI.
-function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters }) {
+function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, store, onPersistenceError = console.error }) {
   const agents = new Map();
   let discoveryPromise = null;
 
@@ -21,6 +21,8 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       state: agent.state,
       exit: agent.exit,
       createdAt: agent.createdAt,
+      projectId: agent.projectId,
+      runId: agent.runId,
     };
   }
 
@@ -52,6 +54,8 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
 
     const cwd = request.cwd || projectHost.getDefaultCwd();
     if (!projectHost.isAllowedCwd(cwd)) throw new Error('Selecione uma pasta autorizada ou uma worktree descoberta.');
+    const project = projectHost.getProjectForCwd?.(cwd);
+    if (store && !project) throw new Error('Projeto não encontrado para a pasta autorizada. Atualize os projetos.');
 
     const cols = Number.isInteger(request.cols) ? Math.min(500, Math.max(20, request.cols)) : 100;
     const rows = Number.isInteger(request.rows) ? Math.min(200, Math.max(5, request.rows)) : 30;
@@ -84,11 +88,27 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       state: 'running',
       exit: null,
       createdAt: new Date().toISOString(),
+      projectId: project?.id,
     };
+    let run;
+    try {
+      run = store?.startSession(agent);
+      agent.runId = run?.id;
+    } catch (error) {
+      transport.close(record);
+      throw new Error(`Não foi possível persistir a sessão de agente: ${error.message}`);
+    }
     record.meta.agentId = agent.id;
     record.process.onExit(({ exitCode, signal }) => {
       agent.state = 'exited';
       agent.exit = { exitCode, signal };
+      if (store && !store.closed) {
+        try {
+          store.finishRun({ runId: run.id, expectedVersion: run.version, exitCode, signal });
+        } catch (error) {
+          onPersistenceError(new Error(`Não foi possível persistir a saída da run ${run.id}: ${error.message}`));
+        }
+      }
     });
     agents.set(agent.id, agent);
     return describe(agent);

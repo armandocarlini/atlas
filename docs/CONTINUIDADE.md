@@ -22,7 +22,19 @@ Ambiente da retomada: Windows, Node.js 24.14.0 selecionado somente para os coman
 
 Evidências locais da correção: `npm test` (19/19), `npm run test:agent` (16/16), `npm run build`, `npm run check:public` e `npm run test:desktop` passaram em Windows. O smoke desktop executou Electron, dois PTYs reais e descoberta Git em fixture temporária, incluindo limpeza dos processos. A execução inicial no sandbox foi bloqueada ao criar a fixture Git; a execução autorizada fora do sandbox passou. A validação nativa em Ubuntu depende da CI do PR.
 
-Tarefas, mensagens, evidências e os quatro cards iniciais continuam ilustrativos. Ainda não há SQLite, orquestrador conectado ou persistência operacional. O próximo marco é SQLite, migrations e o modelo operacional mínimo, seguido do orquestrador real.
+O PR #9 corrigiu a descoberta de adaptadores e foi integrado como `98c5728`, após `Verify (ubuntu-latest)` e `Verify (windows-latest)` verdes na execução 40314429850. `main` foi sincronizada e inspecionada antes de iniciar `codex/sqlite-operational-foundation`.
+
+## Marco 2a — base SQLite
+
+Implementação em validação conforme `docs/PLANO_SQLITE.md`: `electron/operational-store.cjs` registra projetos, sessões, runs e eventos atomicamente no SQLite embutido do Node/Electron. O banco fica no perfil do aplicativo. Migrations numeradas, foreign keys, WAL, controle de versão da run e backup consistente estão cobertos por testes. A autorização de diretórios continua no JSON existente; ler o banco não autoriza diretórios.
+
+Uma única instância por perfil impede reconciliação concorrente de runs vivas. A saída natural confirmada vira `succeeded`/`failed`; fechamento ou crash não inventa sucesso: runs ainda ativas viram `lost`, com motivo explícito e sem exit code fictício. Nenhum transcript, prompt, entrada ou saída do PTY é gravado. Os cards ainda não são restaurados a partir desse histórico; essa é a próxima subdivisão do marco 2, junto de tarefas reais persistentes.
+
+Validação local no Windows: `npm test` (35/35), `npm run test:agent` (20/20), `npm run build` e `npm run test:desktop` passaram. Os testes de store e ciclo dos agentes também passaram usando o Electron 45 em modo Node (24/24). O smoke verifica o banco real criado pelo processo principal e sua integridade. Revisão de código independente não encontrou falhas críticas/importantes; a observação de tratamento de erro no shutdown foi corrigida com regressão SQLite. A API `node:sqlite` em Node.js 24.14.0 ainda emite aviso experimental; isso é um limite conhecido, sem suprimir o aviso.
+
+Bloqueio de ambiente: `npm run smoke:agent` foi tentado e falhou porque o Kimi Code não está no PATH nesta máquina. Não houve instalação global do CLI. O smoke desktop e os testes de ciclo de vida com SQLite podem ser validados independentemente; a demonstração real do Kimi e o aceite do orquestrador dependem de disponibilizar o CLI.
+
+Tarefas, mensagens, evidências e os quatro cards iniciais continuam ilustrativos. Não há orquestrador conectado. O marco 2 completo, os demais marcos e os 12 passos de aceite da v0.1 permanecem pendentes.
 
 O Kimi foi interrompido durante os testes de dois terminais e descoberta Git. Essa etapa foi concluída: os testes agora são reproduzíveis em `scripts/`, e os marcos confirmados foram atualizados no planejamento. O relatório técnico/visual está em `docs/VALIDACAO_DESKTOP.md`.
 

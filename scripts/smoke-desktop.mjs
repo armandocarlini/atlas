@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { auditInterface } from './audit-interface.mjs';
+import { DatabaseSync } from 'node:sqlite';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const resultsDir = path.join(root, '.atlas-smoke-results');
@@ -327,6 +328,17 @@ await until(() => pids.every((pid) => { try { process.kill(pid, 0); return false
 let exitTimer;
 await Promise.race([childExit, new Promise((_, reject) => { exitTimer = setTimeout(() => reject(new Error('Electron test process did not exit')), 15000); })]).finally(() => clearTimeout(exitTimer));
 assert(!stderr.includes('AttachConsole failed'), 'Closing an exited PTY must not kill the same console again');
+const persisted = new DatabaseSync(path.join(profile, 'atlas.sqlite'), { readOnly: true });
+try {
+  assert.equal(persisted.prepare('PRAGMA user_version').get().user_version, 1);
+  const paths = persisted.prepare('SELECT path FROM projects').all().map((item) => item.path);
+  assert(paths.includes(fs.realpathSync(fixture)), 'Initial project must persist in SQLite');
+  assert(paths.includes(fs.realpathSync(extraProject)), 'Authorized project must persist in SQLite');
+  assert.equal(persisted.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
+} finally {
+  persisted.close();
+}
+console.log('PASS projetos persistidos pelo processo principal em SQLite íntegro');
 // Only remove this run's freshly created directory, after verifying its exact parent.
 const fixtureReal = fs.realpathSync(fixture);
 const tempReal = fs.realpathSync(os.tmpdir());
