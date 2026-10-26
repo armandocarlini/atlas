@@ -74,11 +74,11 @@ test('migration inválida reverte DDL e versão, sem tocar dados anteriores', (t
   store.close();
   const raw = new DatabaseSync(filename);
   try {
-    assert.throws(() => migrate(raw, [...MIGRATIONS, { version: 2, sql: 'CREATE TABLE partial (id TEXT); INVALID SQL;' }]), /syntax/);
-    assert.equal(raw.prepare('PRAGMA user_version').get().user_version, 1);
+    assert.throws(() => migrate(raw, [...MIGRATIONS, { version: 3, sql: 'CREATE TABLE partial (id TEXT); INVALID SQL;' }]), /syntax/);
+    assert.equal(raw.prepare('PRAGMA user_version').get().user_version, 2);
     assert.equal(raw.prepare("SELECT count(*) AS total FROM sqlite_master WHERE name = 'partial'").get().total, 0);
     assert.equal(raw.prepare('SELECT count(*) AS total FROM projects').get().total, 1);
-    assert.equal(raw.prepare('SELECT count(*) AS total FROM schema_migrations').get().total, 1);
+    assert.equal(raw.prepare('SELECT count(*) AS total FROM schema_migrations').get().total, 2);
   } finally {
     raw.close();
   }

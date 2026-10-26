@@ -43,6 +43,7 @@ import GitDiscovery from './GitDiscovery.jsx';
 import { appearanceTokens, contrastInk } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
 import { agentSession, mergeAgentSessions } from './session-state.js';
+import { PersistentTaskPanel, NewTaskModal } from './PersistentTasks.jsx';
 
 const THEME_PRESETS = [
   { name: 'Laranja', color: '#f2994a' },
@@ -398,7 +399,7 @@ function AppearanceModal({ theme, onChange, onClose }) {
 
 const PANEL_LABELS = { task: 'Tarefas', messages: 'Mensagens', evidence: 'Evidências' };
 
-function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReorderPanel, columnDragOver, columnDragging, onColumnPointerDown, style, detached = false, native = false, onToggleDetach, onPopupPointerDown, onHideColumn }) {
+function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReorderPanel, columnDragOver, columnDragging, onColumnPointerDown, style, detached = false, native = false, onToggleDetach, onPopupPointerDown, onHideColumn, taskPanel }) {
   const [dragOverPanel, setDragOverPanel] = useState(null);
   const activePanel = panels.includes(tab) ? tab : panels[0];
   return (
@@ -447,7 +448,7 @@ function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReord
           </div>
         </div>
         <div className="dock-panel-content">
-      {activePanel === 'task' && <>
+      {activePanel === 'task' && (taskPanel || <>
         <section className="task-overview">
           <div className="section-kicker"><span>TAREFA SELECIONADA</span><span className={`task-status ${activeTask.group}`}>{activeTask.status}</span></div>
           <span className="task-id">{activeTask.id}</span>
@@ -467,9 +468,10 @@ function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReord
           <div className="section-title"><span>NESTA MISSÃO</span><button><ListTodo size={14} /></button></div>
           {tasks.map((task) => <button className={`queue-item ${activeTask.id === task.id ? 'active' : ''}`} key={task.id} onClick={() => onTaskSelect(task)}><StatusDot color={task.group === 'done' ? '#7dbb91' : task.group === 'review' ? '#a685f2' : task.group === 'blocked' ? '#d98ca7' : '#f2994a'} /><span><small>{task.id}</small><strong>{task.title}</strong></span><ChevronRight size={13} /></button>)}
         </section>
-      </>}
+      </>)}
 
       {activePanel === 'messages' && <section className="messages-panel">
+        {taskPanel && <p className="scope-note">Mensagens ilustrativas · integração pendente.</p>}
         <div className="section-kicker"><span>COLABORAÇÃO</span><span>2 não lidas</span></div>
         <h2>Mensagens entre sessões</h2>
         <div className="message-card unread"><div className="message-route"><span>exploracao-terminal</span><Send size={12} /><span>orquestrador</span></div><p>Resize e entrada validados. Encontrei uma divergência no tratamento de sequências ANSI.</p><small>ATL-024 · agora · mensagem #0184</small></div>
@@ -478,6 +480,7 @@ function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReord
       </section>}
 
       {activePanel === 'evidence' && <section className="evidence-panel">
+        {taskPanel && <p className="scope-note">Evidências ilustrativas · integração pendente.</p>}
         <div className="section-kicker"><span>ENTREGA VERIFICÁVEL</span><ShieldCheck size={15} /></div>
         <h2>{activeTask.id}</h2>
         <div className="evidence-item"><GitBranch size={16} /><div><strong>Worktree e diff</strong><span>atlas/session-messages</span><small>base 8f31a2c · 6 arquivos alterados</small></div><ChevronRight size={14} /></div>
@@ -506,6 +509,8 @@ export default function App() {
   const [detachedTerminals, setDetachedTerminals] = useState([]);
   const [activeMission, setActiveMission] = useState('Cockpit interativo');
   const [activeTask, setActiveTask] = useState(tasks[0]);
+  const [taskState, setTaskState] = useState({ projectId: null, projectName: '', items: [], loading: false, error: '' });
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState('task');
   const [initialDockLayout] = useState(getInitialDockLayout);
   const [docks, setDocks] = useState(initialDockLayout.docks);
@@ -526,7 +531,7 @@ export default function App() {
   const isSecondaryWindow = isNativePanelWindow || isNativeTerminalWindow;
   const panelChannelRef = useRef(null);
   const panelStateRef = useRef(null);
-  panelStateRef.current = { activeTask, inspectorTab, docks, theme, sessions, selectedId };
+  panelStateRef.current = { activeTask, inspectorTab, docks, theme, sessions, selectedId, taskState };
 
   const visibleSessions = useMemo(() => focusId ? sessions.filter((session) => session.id === focusId) : sessions, [focusId, sessions]);
   const displayedColumnOrder = columnDrag?.previewOrder || columnOrder;
@@ -552,6 +557,7 @@ export default function App() {
         setTheme(data.state.theme);
         setSessions(data.state.sessions);
         setSelectedId(data.state.selectedId);
+        if (data.state.taskState) setTaskState(data.state.taskState);
       };
       channel.postMessage({ type: 'ready' });
     } else {
@@ -580,7 +586,7 @@ export default function App() {
   useEffect(() => {
     if (isSecondaryWindow || !panelChannelRef.current) return;
     panelChannelRef.current.postMessage({ type: 'state', state: panelStateRef.current });
-  }, [activeTask, inspectorTab, docks, theme, sessions, selectedId, isSecondaryWindow]);
+  }, [activeTask, inspectorTab, docks, theme, sessions, selectedId, taskState, isSecondaryWindow]);
 
   useEffect(() => {
     if (!desktop?.isDesktop || isSecondaryWindow) return undefined;
@@ -614,6 +620,35 @@ export default function App() {
     }).catch((error) => notify(`Não foi possível carregar as sessões: ${error.message}`));
     return () => { active = false; };
   }, [isSecondaryWindow, projects]);
+
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow) return undefined;
+    const samePath = (left, right) => left.toLowerCase() === right.toLowerCase();
+    const project = projects.find((item) => samePath(item.path, workingDirectory))
+      || projects.find((item) => item.repositories.some((repo) => repo.worktrees.some((worktree) => !worktree.statusError && samePath(worktree.path, workingDirectory))));
+    let active = true;
+    setTaskState({ projectId: project?.id || null, projectName: project?.name || '', items: [], loading: Boolean(project), error: '' });
+    if (project) desktop.listTasks({ cwd: workingDirectory }).then((state) => {
+      if (active) setTaskState({ ...state, loading: false, error: '' });
+    }).catch((error) => {
+      if (active) setTaskState({ projectId: project.id, projectName: project.name, items: [], loading: false, error: error.message });
+    });
+    return () => { active = false; };
+  }, [isSecondaryWindow, projects, workingDirectory]);
+
+  async function createTask(request) {
+    try {
+      const task = await desktop.createTask(request);
+      setTaskState((state) => state.projectId === task.projectId ? { ...state, items: [...state.items.filter((item) => item.id !== task.id), task] } : state);
+      setTaskModalOpen(false);
+      notify('Tarefa criada no backlog');
+      return null;
+    } catch (error) {
+      return error.message;
+    }
+  }
+
+  const persistentTaskPanel = desktop?.isDesktop ? <PersistentTaskPanel state={taskState} onNew={isSecondaryWindow ? undefined : () => setTaskModalOpen(true)} /> : null;
 
   useEffect(() => {
     document.body.classList.toggle('native-panel-window', Boolean(isNativePanelWindow));
@@ -971,6 +1006,7 @@ export default function App() {
       <div className="native-panels-shell">
         <Inspector
           activeTask={activeTask}
+          taskPanel={persistentTaskPanel}
           onTaskSelect={(task) => {
             setActiveTask(task);
             panelChannelRef.current?.postMessage({ type: 'task', taskId: task.id });
@@ -1120,6 +1156,7 @@ export default function App() {
 
         {!panelsDetached && !hiddenColumns.right && <Inspector
           activeTask={activeTask} onTaskSelect={setActiveTask}
+          taskPanel={persistentTaskPanel}
           tab={inspectorTab} onTabChange={setInspectorTab}
           panels={docks.right} onReorderPanel={reorderPanel}
           columnDragOver={columnDrag?.target === 'right'}
@@ -1139,6 +1176,7 @@ export default function App() {
       {panelsDetached && !desktop?.isDesktop && <div className="detached-panels-window" style={{ left: popupPosition.x, top: popupPosition.y }}>
         <Inspector
           activeTask={activeTask} onTaskSelect={setActiveTask}
+          taskPanel={persistentTaskPanel}
           tab={inspectorTab} onTabChange={setInspectorTab}
           panels={docks.right} onReorderPanel={reorderPanel}
           detached onToggleDetach={toggleDetachedPanels}
@@ -1153,6 +1191,7 @@ export default function App() {
 
       {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
+      {taskModalOpen && <NewTaskModal projectName={taskState.projectName} cwd={workingDirectory} onCreate={createTask} onClose={() => setTaskModalOpen(false)} />}
       {toast && <div className="toast" role="status"><CheckCircle2 size={15} />{toast}</div>}
     </div>
   );

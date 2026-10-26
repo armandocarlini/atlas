@@ -13,7 +13,7 @@ Projeto criado por [Armando Ciciliano Carlini](https://github.com/armandocarlini
 
 ## Estado atual
 
-Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY, descoberta Git somente leitura e o primeiro adaptador de agente real: o ATLAS detecta o Kimi Code no `PATH` e inicia sessões interativas do CLI em pastas autorizadas. A base SQLite registra projetos, identidade de sessões, runs e eventos no processo principal. Tarefas, mensagens e evidências exibidas no cockpit ainda são ilustrativas; sua persistência e a orquestração serão implementadas nas próximas etapas. Os quatro cards iniciais do cockpit são marcados como ilustrativos e não representam integrações ativas.
+Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY, descoberta Git somente leitura e o primeiro adaptador de agente real: o ATLAS detecta o Kimi Code no `PATH` e inicia sessões interativas do CLI em pastas autorizadas. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`. Execução, mensagens, evidências e orquestração permanecem nos próximos marcos. Os quatro cards iniciais do cockpit são marcados como ilustrativos e não representam integrações ativas.
 
 Já estão implementados:
 
@@ -40,6 +40,8 @@ Já estão implementados:
 - Windows e Windows PowerShell para o PTY deste marco.
 
 Para reproduzir o ambiente validado e a CI, prefira **Node.js 24 LTS**.
+
+O `npm ci` aplica uma correção local de ordem de saída no `node-pty` 1.1.0, com versão e hashes verificados. Ela evita anunciar encerramento ConPTY antes do exit code nativo. Atualizar essa dependência exige revisar/remover o patch conforme [docs/PLANO_TAREFAS.md](docs/PLANO_TAREFAS.md).
 
 ## Clonar em outra máquina
 
@@ -100,6 +102,10 @@ O botão **Sessão** lista os CLIs de agente detectados no `PATH` (neste marco, 
 
 Projetos, sessões, runs e eventos são registrados em `atlas.sqlite`, no diretório de dados do aplicativo, sem transcripts. Uma sessão possui identidade própria e uma run representa a tentativa concreta de execução. Ao fechar o aplicativo, seus PTYs são interrompidos; runs sem saída confirmada ficam `lost`, com motivo explícito. Após crash, a próxima abertura reconcilia runs que ficaram ativas. Sessões anteriores de projetos e diretórios ainda autorizados reaparecem como histórico, com resultado e datas, sem abrir processo ou simular uma conversa. O aplicativo aceita uma única instância por perfil para impedir reconciliação concorrente de processos vivos.
 
+## Tarefas do projeto
+
+No desktop, selecione o projeto ou uma de suas worktrees e abra **Tarefas → Nova tarefa**. Informe título e critérios de aceite; a descrição é opcional. A tarefa entra no backlog e permanece após reinício. O comando de criação usa chave de idempotência para tolerar envio repetido sem duplicar a tarefa. Trocar de projeto altera a lista; a janela de acompanhamento recebe o mesmo estado para leitura. Execução, atribuição, revisão e conclusão ainda não estão disponíveis neste incremento.
+
 ## Validação
 
 ```powershell
@@ -136,6 +142,7 @@ electron/
   agent-adapters.cjs    Metadados e descoberta de CLIs de agente
   agent-host.cjs        Identidade e ciclo de vida das sessões de agente
   operational-store.cjs SQLite, migrations, runs e eventos persistentes
+  task-host.cjs         Criação e listagem de tarefas em escopo autorizado
 scripts/                Inicialização desktop, testes e smokes
 src/
   App.jsx               Cockpit e estado compartilhado
@@ -151,7 +158,7 @@ A janela principal e os pop-ups usam `BroadcastChannel` para sincronizar o estad
 
 ## Privacidade
 
-O ATLAS funciona localmente, sem telemetria ou serviço central obrigatório. Somente pastas autorizadas são descobertas e somente nelas os CLIs de agente são iniciados. A entrada digitada no terminal não é registrada pelo ATLAS; a saída permanece somente em um buffer temporário nesta etapa. Tarefas, mensagens e evidências continuam ilustrativas e não representam integrações ativas.
+O ATLAS funciona localmente, sem telemetria ou serviço central obrigatório. Somente pastas autorizadas são descobertas e somente nelas os CLIs de agente são iniciados. A entrada digitada no terminal não é registrada pelo ATLAS; a saída permanece somente em um buffer temporário nesta etapa. Os textos das tarefas criadas pelo usuário são gravados no banco local. Mensagens, evidências e exemplos no navegador continuam ilustrativos.
 
 ## Contribuição e licença
 

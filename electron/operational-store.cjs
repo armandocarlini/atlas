@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, createHash } = require('node:crypto');
 const { DatabaseSync, backup } = require('node:sqlite');
 
 const MIGRATIONS = [{
@@ -34,7 +34,40 @@ const MIGRATIONS = [{
     CREATE INDEX runs_by_session ON agent_runs(session_id, started_at);
     CREATE INDEX events_by_project ON audit_events(project_id, sequence);
   `,
+}, {
+  version: 2,
+  sql: `
+    CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 160),
+      description TEXT NOT NULL CHECK(length(description) <= 8000),
+      acceptance TEXT NOT NULL CHECK(length(acceptance) BETWEEN 1 AND 4000),
+      state TEXT NOT NULL DEFAULT 'backlog' CHECK(state IN ('backlog', 'ready', 'in_progress', 'in_review', 'done', 'blocked', 'canceled')),
+      version INTEGER NOT NULL DEFAULT 1, created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX tasks_by_project ON tasks(project_id, created_at);
+    CREATE TABLE commands (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      command_type TEXT NOT NULL, target_id TEXT NOT NULL,
+      payload TEXT NOT NULL CHECK(json_valid(payload)), payload_hash TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL, status TEXT NOT NULL,
+      created_by TEXT NOT NULL, created_at TEXT NOT NULL, completed_at TEXT,
+      result TEXT NOT NULL CHECK(json_valid(result)), correlation_id TEXT NOT NULL,
+      UNIQUE(project_id, idempotency_key)
+    ) STRICT;
+  `,
 }];
+
+function taskPayload({ title, description = '', acceptance, idempotencyKey }) {
+  for (const [label, value, max, required] of [
+    ['Título', title, 160, true], ['Descrição', description, 8000, false], ['Critérios de aceite', acceptance, 4000, true],
+  ]) {
+    if (typeof value !== 'string' || value.length > max || (required && !value.trim())) throw new Error(`${label}: informe texto válido com até ${max} caracteres.`);
+  }
+  if (typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(idempotencyKey)) throw new Error('Chave de idempotência inválida.');
+  return { title: title.trim(), description: description.trim(), acceptance: acceptance.trim() };
+}
 
 function transaction(db, operation) {
   db.exec('BEGIN IMMEDIATE');
@@ -78,11 +111,11 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     throw error;
   }
 
-  function event({ projectId, sessionId = null, runId = null, type, payload = {}, at = now() }) {
+  function event({ projectId, sessionId = null, runId = null, type, payload = {}, at = now(), correlationId }) {
     db.prepare(`INSERT INTO audit_events
       (id, project_id, session_id, run_id, type, correlation_id, payload, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      randomUUID(), projectId, sessionId, runId, type, runId || sessionId || projectId, JSON.stringify(payload), at,
+      randomUUID(), projectId, sessionId, runId, type, correlationId || runId || sessionId || projectId, JSON.stringify(payload), at,
     );
   }
 
@@ -105,6 +138,27 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   }
 
   return {
+    createTask(request) {
+      const payload = taskPayload(request);
+      const encoded = JSON.stringify(payload);
+      const hash = createHash('sha256').update(encoded).digest('hex');
+      return transaction(db, () => {
+        const previous = db.prepare('SELECT payload_hash, result FROM commands WHERE project_id = ? AND idempotency_key = ?').get(request.projectId, request.idempotencyKey);
+        if (previous) {
+          if (previous.payload_hash !== hash) throw new Error('Chave de idempotência já usada com outro conteúdo.');
+          return JSON.parse(previous.result);
+        }
+        const id = randomUUID();
+        const commandId = randomUUID();
+        const at = now();
+        const task = { id, projectId: request.projectId, ...payload, state: 'backlog', version: 1, createdBy: 'user', createdAt: at, updatedAt: at };
+        db.prepare('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, request.projectId, payload.title, payload.description, payload.acceptance, 'backlog', 1, 'user', at, at);
+        db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'task.create', id, encoded, hash, request.idempotencyKey, 'completed', 'user', at, at, JSON.stringify(task), commandId);
+        event({ projectId: request.projectId, type: 'task.created', payload: { taskId: id }, correlationId: commandId, at });
+        return task;
+      });
+    },
+    listTasks: (projectId) => db.prepare(`SELECT id, project_id AS projectId, title, description, acceptance, state, version, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt FROM tasks WHERE project_id = ? ORDER BY created_at, id`).all(projectId).map((row) => ({ ...row })),
     registerProject({ id, name, path: projectPath }) {
       return transaction(db, () => {
         const previous = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
