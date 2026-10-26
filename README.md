@@ -13,7 +13,7 @@ Projeto criado por [Armando Ciciliano Carlini](https://github.com/armandocarlini
 
 ## Estado atual
 
-Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY, descoberta Git somente leitura e o primeiro adaptador de agente real: o ATLAS detecta o Kimi Code no `PATH` e inicia sessões interativas do CLI em pastas autorizadas. Tarefas, mensagens e evidências exibidas no cockpit ainda são ilustrativas; SQLite e orquestração serão implementados nas próximas etapas. Os quatro cards iniciais do cockpit são marcados como ilustrativos e não representam integrações ativas.
+Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY, descoberta Git somente leitura e o primeiro adaptador de agente real: o ATLAS detecta o Kimi Code no `PATH` e inicia sessões interativas do CLI em pastas autorizadas. A base SQLite registra projetos, identidade de sessões, runs e eventos no processo principal. Tarefas, mensagens e evidências exibidas no cockpit ainda são ilustrativas; sua persistência e a orquestração serão implementadas nas próximas etapas. Os quatro cards iniciais do cockpit são marcados como ilustrativos e não representam integrações ativas.
 
 Já estão implementados:
 
@@ -34,7 +34,7 @@ Já estão implementados:
 
 ## Requisitos
 
-- Node.js 22.12 ou superior;
+- Node.js 24 ou superior (SQLite embutido usado nos testes e no núcleo);
 - npm;
 - Git disponível no `PATH` para a descoberta de repositórios;
 - Windows e Windows PowerShell para o PTY deste marco.
@@ -98,6 +98,8 @@ O `npm start` utiliza o conteúdo gerado em `dist`. Execute `npm run build` nova
 
 O botão **Sessão** lista os CLIs de agente detectados no `PATH` (neste marco, o Kimi Code). A sessão inicia o CLI real e interativo na worktree ou pasta autorizada escolhida, sem flags de autonomia e sem prompt inicial: permissões e modelo permanecem no harness. O card exibe nome, CLI com versão detectada e diretório, e o estado operacional é apenas `running` ou `exited` — nada é inferido do conteúdo do terminal.
 
+Projetos, sessões, runs e eventos são registrados em `atlas.sqlite`, no diretório de dados do aplicativo, sem transcripts. Uma sessão possui identidade própria e uma run representa a tentativa concreta de execução. Ao fechar o aplicativo, seus PTYs são interrompidos; runs sem saída confirmada ficam `lost`, com motivo explícito. Após crash, a próxima abertura reconcilia runs que ficaram ativas. O histórico já permanece no banco, mas a restauração dos cards na UI ainda é um incremento pendente. O aplicativo aceita uma única instância por perfil para impedir reconciliação concorrente de processos vivos.
+
 ## Validação
 
 ```powershell
@@ -119,7 +121,7 @@ O smoke test abre uma instância Electron com preferências isoladas, cria uma f
 
 Capturas de tela, medições de contraste e resultado ficam em `.atlas-smoke-results/`. A porta local de depuração usada é `9333` (substituível por `ATLAS_SMOKE_PORT`); o controle nativo de teste usa a porta seguinte e um token temporário. Esses serviços existem somente no ponto de entrada de teste.
 
-Veja o [relatório de validação e revisão visual](docs/VALIDACAO_DESKTOP.md). Esta validação cobre o shell local e seus terminais; os adaptadores de agentes e a persistência operacional ainda fazem parte dos próximos marcos.
+Veja o [relatório de validação e revisão visual](docs/VALIDACAO_DESKTOP.md). O relatório original cobre o shell local e seus terminais; os incrementos posteriores de adaptadores e da base operacional estão registrados em [docs/CONTINUIDADE.md](docs/CONTINUIDADE.md).
 
 ## Estrutura
 
@@ -133,6 +135,7 @@ electron/
   terminal-host.cjs     Terminais PowerShell
   agent-adapters.cjs    Metadados e descoberta de CLIs de agente
   agent-host.cjs        Identidade e ciclo de vida das sessões de agente
+  operational-store.cjs SQLite, migrations, runs e eventos persistentes
 scripts/                Inicialização desktop, testes e smokes
 src/
   App.jsx               Cockpit e estado compartilhado

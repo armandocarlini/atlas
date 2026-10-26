@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { discoverRepositories, idFor } = require('./git-discovery.cjs');
 
-function createProjectHost({ app, dialog, ipcMain, getMainWindow }) {
+function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
   const settingsFile = path.join(app.getPath('userData'), 'atlas-projects.json');
   const initialRoot = process.cwd();
   const projects = new Map();
@@ -33,6 +33,7 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow }) {
 
   async function scanRoot(root) {
     const project = { id: idFor(root), name: path.basename(root), path: root, repositories: [], errors: [], truncated: false, scannedAt: null };
+    store?.registerProject(project);
     try {
       const result = await discoverRepositories(root);
       Object.assign(project, result, { scannedAt: new Date().toISOString() });
@@ -98,6 +99,14 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow }) {
     ready,
     getProjects: () => [...projects.values()],
     getDefaultCwd: () => authorizedRoots[0] || initialRoot,
+    getProjectForCwd: (cwd) => {
+      const equal = (left, right) => process.platform === 'win32'
+        ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
+        : path.resolve(left) === path.resolve(right);
+      const all = [...projects.values()];
+      return all.find((project) => equal(project.path, cwd))
+        || all.find((project) => project.repositories.some((repository) => repository.worktrees.some((worktree) => !worktree.statusError && equal(worktree.path, cwd))));
+    },
     isAllowedCwd: (cwd) => {
       if (typeof cwd !== 'string') return false;
       const requested = path.resolve(cwd);
