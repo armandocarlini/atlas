@@ -7,6 +7,7 @@ const { createAgentHost } = require('./agent-host.cjs');
 const { createPtyTransport, registerTransportChannels } = require('./pty-transport.cjs');
 const { createOperationalStore, closeOperationalStore } = require('./operational-store.cjs');
 const { createTaskHost } = require('./task-host.cjs');
+const { ensureOrchestratorProfile } = require('./orchestrator-profile.cjs');
 
 let mainWindow = null;
 let panelWindow = null;
@@ -239,6 +240,7 @@ app.whenReady().then(async () => {
     transport: ptyTransport,
     isMainSender: terminalHost.isMainSender,
     store: operationalStore,
+    orchestratorProfile: ensureOrchestratorProfile(app.getPath('userData')),
   });
   await projectHost.ready;
   createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });

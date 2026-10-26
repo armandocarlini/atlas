@@ -78,7 +78,7 @@ const endpoint = `http://127.0.0.1:${port}`;
 const electron = createRequire(import.meta.url)('electron');
 const controlPort = Number(port) + 1;
 const controlToken = randomUUID();
-const env = { ...process.env, ATLAS_SMOKE_PROFILE: profile, ATLAS_SMOKE_PROJECT: extraProject, ATLAS_SMOKE_CONTROL_PORT: String(controlPort), ATLAS_SMOKE_TOKEN: controlToken };
+const env = { ...process.env, ATLAS_SMOKE_PROFILE: profile, ATLAS_SMOKE_PROJECT: extraProject, ATLAS_SMOKE_CONTROL_PORT: String(controlPort), ATLAS_SMOKE_TOKEN: controlToken, ATLAS_SMOKE_NO_CLI: '1' };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.VITE_DEV_SERVER_URL;
 // Codex can inject its bundled PowerShell modules; exercise Windows' own modules.
@@ -161,6 +161,8 @@ try {
   const main = await connect(await until(async () => (await pages()).find((item) => !item.url.includes('window=')), 'main window'));
   await until(() => main.evaluate(`Boolean(document.querySelector('.app-shell'))`), 'React ready');
   await until(() => main.evaluate(`Boolean(document.querySelector('.session-history'))`), 'persisted session restored');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.origin-badge.demo').length`), 0, 'Desktop must not show illustrative agent cards');
+  await until(() => main.evaluate(`document.querySelector('[role=alert]')?.innerText.includes('CLI ausente na fixture')`), 'honest orchestrator error without available CLI');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 1, 'Unauthorized project history must remain hidden');
   const restoredHistory = await main.evaluate(`(() => { const history = document.querySelector('.session-history'); const card = history.closest('.session-card'); return { text: history.innerText, inputs: card.querySelectorAll('input, textarea').length, popup: [...card.querySelectorAll('button')].some(item => item.textContent === 'Pop-up'), tokens: Boolean(card.querySelector('.token-count')) }; })()`);
   assert(restoredHistory.text.includes('resultado incerto'));
@@ -177,7 +179,7 @@ try {
   console.log('PASS histórico restaurado como lost, sem PTY, composer ou métricas fictícias');
   await native('focus');
   await click(main, '.add-project');
-  await until(() => main.evaluate(`document.querySelectorAll('.session-history').length === 2`), 'history loaded after project authorization without reload');
+  await until(() => main.evaluate(`window.atlasDesktop.listAgents().then(items => items.length === 2)`), 'history loaded after project authorization without reload');
   console.log('PASS autorizar projeto restaura histórico adicional sem recarregar a UI');
   await until(() => main.evaluate(`document.querySelectorAll('.worktree-item').length >= 2`), 'Git discovery UI');
   await until(() => main.evaluate(`!document.querySelector('.discovery-heading button').disabled`), 'project loading finished');
@@ -187,6 +189,10 @@ try {
   assert(await main.evaluate(`document.querySelector('.project-tab.active').textContent.startsWith('Projeto adicional')`), 'Initial hydration overwrote the selected project');
   assert(await main.evaluate(`document.querySelector('.workspace-path span').textContent === ${JSON.stringify(extraProject)}`), 'Initial hydration overwrote the selected directory');
   console.log('PASS seleção do projeto preservada durante inicialização tardia');
+  await click(main, '[title="Modo de foco"]');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.session-card').length`), 1, 'Focus must select a session in the current project');
+  assert((await main.evaluate(`document.querySelector('.session-history').innerText`)).includes(extraProject));
+  await click(main, '[title="Exibir grid"]');
   await until(() => main.evaluate(`Boolean(document.querySelector('.persistent-tasks button:not(:disabled)'))`), 'task project ready');
   assert(await main.evaluate(`document.querySelector('.persistent-tasks button').getBoundingClientRect().width > 0`), 'New task control must be visible to the user');
   await click(main, '.persistent-tasks button', 'Nova tarefa');
@@ -317,7 +323,7 @@ try {
   await main.evaluate(`window.atlasDesktop.closePty(${JSON.stringify(first.id)})`);
   await until(() => main.evaluate(`[...document.querySelectorAll('.session-state')].some(item => item.textContent.includes('encerrado'))`), 'visible exit status');
   await main.call('Page.reload');
-  await until(() => main.evaluate(`document.querySelectorAll('.session-history').length === 2`), 'history restored once after reload');
+  await until(() => main.evaluate(`document.querySelectorAll('.session-history').length === 1`), 'project history restored once after reload');
   await until(() => main.evaluate(`document.querySelector('.app-shell') && document.querySelectorAll('[data-column-id]').length === 1 && getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#18222b'`), 'layout and custom background persisted after reload');
   await until(() => main.evaluate(`window.atlasDesktop.listProjects().then(items => items.some(item => item.path === ${JSON.stringify(extraProject)}))`), 'authorized project restored');
   // UI sessions are intentionally not persisted yet; PTYs are still closed below by id.
@@ -396,7 +402,7 @@ await Promise.race([childExit, new Promise((_, reject) => { exitTimer = setTimeo
 assert(!stderr.includes('AttachConsole failed'), 'Closing an exited PTY must not kill the same console again');
 const persisted = new DatabaseSync(path.join(profile, 'atlas.sqlite'), { readOnly: true });
 try {
-  assert.equal(persisted.prepare('PRAGMA user_version').get().user_version, 2);
+  assert.equal(persisted.prepare('PRAGMA user_version').get().user_version, 3);
   const paths = persisted.prepare('SELECT path FROM projects').all().map((item) => item.path);
   assert(paths.includes(fs.realpathSync(fixture)), 'Initial project must persist in SQLite');
   assert(paths.includes(fs.realpathSync(extraProject)), 'Authorized project must persist in SQLite');

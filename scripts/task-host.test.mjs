@@ -111,7 +111,7 @@ test('conteúdo de tarefa é tratado como texto, sem interpretar SQL', async (t)
   assert.equal((await call('task:list', { cwd: request.cwd })).items[0].title, task.title);
 });
 
-test('migration 1 para 2 preserva projetos, sessões, runs e eventos', (t) => {
+test('migration antiga preserva projetos, sessões, runs e eventos', (t) => {
   const { filename, store, reopen } = harness(t);
   store.close();
   const legacyFile = `${filename}.legacy`;
@@ -122,6 +122,8 @@ test('migration 1 para 2 preserva projetos, sessões, runs e eventos', (t) => {
     legacy.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('old-session', 'legacy', 'Sessão anterior', 'kimi-code', 'Kimi Code', '2.3.2', '/fixture/legacy', 'user', '2026-10-26T00:00:00Z');
     legacy.prepare("INSERT INTO agent_runs (id, session_id, state, started_at) VALUES ('old-run', 'old-session', 'running', '2026-10-26T00:00:00Z')").run();
     legacy.prepare("INSERT INTO audit_events (id, project_id, session_id, run_id, type, correlation_id, payload, created_at) VALUES ('old-event', 'legacy', 'old-session', 'old-run', 'run.started', 'old-run', '{}', '2026-10-26T00:00:00Z')").run();
+    migrate(legacy, MIGRATIONS.slice(0, 2));
+    legacy.prepare('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run('old-task', 'legacy', 'Tarefa anterior', 'Escopo anterior', 'Critério anterior', 'backlog', 1, 'user', '2026-10-26T00:00:00Z', '2026-10-26T00:00:00Z');
   } finally { legacy.close(); }
   const upgraded = createOperationalStore({ filename: legacyFile });
   try {
@@ -129,8 +131,9 @@ test('migration 1 para 2 preserva projetos, sessões, runs e eventos', (t) => {
     assert.equal(upgraded.listSessions('legacy')[0].id, 'old-session');
     assert.equal(upgraded.listRuns('legacy')[0].state, 'running');
     assert.equal(upgraded.listEvents('legacy')[0].id, 'old-event');
+    assert.equal(upgraded.listTasks('legacy')[0].acceptance, 'Critério anterior');
     assert(upgraded.createTask({ ...request, projectId: 'legacy' }).id);
-    assert.equal(upgraded.listTasks('legacy').length, 1);
+    assert.equal(upgraded.listTasks('legacy').length, 2);
   } finally { upgraded.close(); }
   reopen();
 });

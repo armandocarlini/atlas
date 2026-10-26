@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const resultsDir = path.join(root, '.atlas-smoke-results');
+const configuredModel = process.argv.includes('--configured-model');
 fs.mkdirSync(resultsDir, { recursive: true });
 
 if (process.platform !== 'win32') {
@@ -54,6 +55,10 @@ const env = {
   ATLAS_SMOKE_TOKEN: controlToken,
   KIMI_CODE_HOME: kimiHome,
 };
+if (configuredModel) {
+  if (process.env.KIMI_CODE_HOME) env.KIMI_CODE_HOME = process.env.KIMI_CODE_HOME;
+  else delete env.KIMI_CODE_HOME;
+}
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.VITE_DEV_SERVER_URL;
 
@@ -83,7 +88,46 @@ async function until(check, label, timeout = 60000) {
   throw new Error(`Timeout: ${label}${last ? ` (${last.message})` : ''}`);
 }
 
+async function callMain(method, params) {
+  const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+  const page = pages.find((item) => item.url.includes('index.html') && !item.url.includes('window='));
+  if (!page) throw new Error('Renderer principal ainda não disponível.');
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(page.webSocketDebuggerUrl);
+    const finish = (error, value) => { clearTimeout(timer); socket.close(); error ? reject(error) : resolve(value); };
+    const timer = setTimeout(() => finish(new Error('Timeout CDP da principal')), 10000);
+    socket.onerror = () => finish(new Error('Falha CDP da principal'));
+    socket.onopen = () => socket.send(JSON.stringify({ id: 1, method, params }));
+    socket.onmessage = ({ data }) => {
+      const message = JSON.parse(data);
+      if (message.id !== 1) return;
+      if (message.error) finish(new Error('Falha CDP na fixture'));
+      else finish(null, message.result);
+    };
+  });
+}
+
+async function evaluateMain(expression) {
+  const result = await callMain('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+  if (result.exceptionDetails) throw new Error('Falha ao avaliar renderer da fixture');
+  return result.result.value;
+}
+
+async function typeInPrincipal(prompt) {
+  await native('focus');
+  await evaluateMain(`${principalCard}.querySelector('.xterm-helper-textarea').focus()`);
+  for (const character of prompt) {
+    await callMain('Input.dispatchKeyEvent', { type: 'keyDown', key: character, text: character });
+    await callMain('Input.dispatchKeyEvent', { type: 'keyUp', key: character });
+  }
+  await callMain('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+  await callMain('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+}
+
 let exitCode = 1;
+let modelDiagnostic = '';
+const principalCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'ORQUESTRADOR')`;
+const plainOutput = (value) => value.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
 try {
   await until(async () => {
     try { return (await native('windows')).some((item) => !item.url.includes('window=')); } catch { return false; }
@@ -94,6 +138,42 @@ try {
   assert.equal(detected.status, 'available');
   assert.equal(detected.version, kimi.version);
   console.log('PASS agent:list-adapters detecta o Kimi Code via IPC');
+
+  const principal = await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] });
+  assert.equal(principal.role, 'orchestrator');
+  const principalAttach = () => native('invoke', { channel: 'terminal:attach', args: [principal.ptyId] });
+  let principalTrusted = false;
+  await until(async () => {
+    const output = (await principalAttach()).scrollback;
+    if (!principalTrusted && output.includes('Trust this folder?')) {
+      principalTrusted = true;
+      await native('invoke', { channel: 'terminal:write', args: [{ terminalId: principal.ptyId, data: '\r' }] });
+      return false;
+    }
+    return output.includes('Welcome to Kimi Code!');
+  }, 'perfil principal aceito pelo Kimi Code', 90000);
+  assert.equal((await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] })).id, principal.id);
+  console.log('PASS principal real com perfil de leitura, identidade única e TUI interativa');
+
+  if (configuredModel) {
+    const start = (await principalAttach()).scrollback.length;
+    await native('invoke', { channel: 'terminal:write', args: [{ terminalId: principal.ptyId, data: '/status\r' }] });
+    await until(async () => (await principalAttach()).scrollback.slice(start).includes('Permissions'), 'status da principal configurada');
+    if (/Model\s+not set/i.test(plainOutput((await principalAttach()).scrollback.slice(start)))) throw new Error('Modelo não configurado no Kimi para a validação de conversa.');
+    const beforeReply = (await principalAttach()).scrollback.length;
+    const prompt = 'Reply only ATLAS, ORCHESTRATOR and OK joined with underscores. No tools.';
+    await until(() => evaluateMain(`Boolean(${principalCard}?.querySelector('.xterm-helper-textarea'))`), 'xterm principal montado');
+    await typeInPrincipal(prompt);
+    const modelResult = await until(async () => {
+      const reply = plainOutput((await principalAttach()).scrollback.slice(beforeReply));
+      const rendered = await evaluateMain(`${principalCard}?.querySelector('.real-terminal')?.innerText || ''`);
+      modelDiagnostic = `${rendered}\n${reply}`;
+      if (/401 Unauthorized|429 Too Many|Insufficient Balance|APIError|Authentication failed/i.test(modelDiagnostic)) return { error: 'O provedor recusou a conversa; verifique credenciais/quota do Kimi.' };
+      return rendered.includes('ATLAS_ORCHESTRATOR_OK') ? { passed: true } : null;
+    }, 'resposta curta do modelo na principal', 60000);
+    if (modelResult.error) throw new Error(modelResult.error);
+    console.log('PASS conversa real na principal com provedor já configurado e um único prompt curto');
+  }
 
   const agent = await native('invoke', { channel: 'agent:create', args: [{ adapterId: 'kimi-code', name: 'smoke-kimi', cwd: fixture }] });
   assert.equal(agent.state, 'running');
@@ -133,8 +213,26 @@ try {
   assert.equal(finalSnapshot.exit.exitCode, 0);
   console.log('PASS /exit encerra o CLI com código 0 e estado exited');
 
-  assert.ok(fs.existsSync(path.join(kimiHome, 'workspaces.json')) || fs.readdirSync(kimiHome).length > 0, 'KIMI_CODE_HOME isolado recebeu os arquivos da sessão');
-  console.log('PASS KIMI_CODE_HOME isolado usado pelo CLI');
+  if (!configuredModel) {
+    assert.ok(fs.existsSync(path.join(kimiHome, 'workspaces.json')) || fs.readdirSync(kimiHome).length > 0, 'KIMI_CODE_HOME isolado recebeu os arquivos da sessão');
+    console.log('PASS KIMI_CODE_HOME isolado usado pelo CLI');
+  }
+
+  await until(() => evaluateMain(`Boolean(${principalCard})`), 'card principal no projeto');
+  await evaluateMain(`${principalCard}.querySelectorAll('button').forEach(button => { if (button.textContent === 'Pop-up') button.click(); })`);
+  await until(async () => (await native('windows')).some((item) => item.url.includes('window=terminal')), 'pop-up da principal');
+  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: principal.ptyId, data: '/exit\r' }] });
+  await until(() => evaluateMain(`[...${principalCard}.querySelectorAll('button')].some(button => button.textContent === 'Nova execução')`), 'principal encerrada no pop-up');
+  await callMain('Page.reload', {});
+  await until(() => evaluateMain(`[...${principalCard}.querySelectorAll('button')].some(button => button.textContent === 'Nova execução')`), 'principal encerrada após reload com pop-up nativo aberto');
+  await evaluateMain(`[...${principalCard}.querySelectorAll('button')].find(button => button.textContent === 'Nova execução').click()`);
+  const rerun = await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === principal.id && item.ptyId !== principal.ptyId && item.state === 'running'), 'nova run principal');
+  await until(async () => !(await native('windows')).some((item) => item.url.includes('window=terminal')), 'pop-up antigo fechado antes da nova run');
+  await until(() => evaluateMain(`Boolean(${principalCard}.querySelector('.real-terminal .xterm-helper-textarea')) && !${principalCard}.querySelector('.detached-terminal-placeholder')`), 'novo PTY reintegrado');
+  assert.equal(await evaluateMain(`Boolean(${principalCard}.querySelector('.terminal-error'))`), false);
+  assert.equal(rerun.id, principal.id);
+  assert.equal(rerun.runAttempt, 2);
+  console.log('PASS nova execução após saída em pop-up reintegra e conecta PTY novo sem perder identidade');
 
   await native('quit');
   await until(() => child.exitCode !== null, 'primeiro Electron encerrado', 15000);
@@ -149,13 +247,20 @@ try {
   assert.equal(restored.exit.exitCode, 0);
   assert.equal(restored.ptyId, null);
   assert.equal(restored.cwd, fixture);
+  const restoredPrincipal = (await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] }));
+  assert.equal(restoredPrincipal.id, principal.id);
+  assert.equal(restoredPrincipal.archived, true);
+  assert.equal(restoredPrincipal.ptyId, null);
+  assert.equal(restoredPrincipal.runState, 'lost');
   console.log('PASS reinício real do Electron preserva identidade e saída do Kimi sem recriar PTY');
 
-  fs.writeFileSync(path.join(resultsDir, 'agent-result.json'), JSON.stringify({ passed: true, version: kimi.version, fixture: null }, null, 2));
+  fs.writeFileSync(path.join(resultsDir, 'agent-result.json'), JSON.stringify({ passed: true, version: kimi.version, conversation: configuredModel, fixture: null }, null, 2));
   exitCode = 0;
 } catch (error) {
   console.error(`FAIL: ${error.message}`);
+  if (configuredModel && modelDiagnostic) console.error(JSON.stringify({ promptEcho: modelDiagnostic.includes('Reply only'), permissionQuestion: /Allow this|Approve this|Do you want to allow/i.test(modelDiagnostic), setupQuestion: /login|select.*model|configure/i.test(modelDiagnostic), providerError: /quota|rate limit|APIError|authentication|Error:/i.test(modelDiagnostic), pasteMode: /paste|pasted/i.test(modelDiagnostic), renderedCharacters: modelDiagnostic.length }));
   try {
+    if (configuredModel) throw new Error('Saída de diagnóstico do perfil configurado omitida para preservar dados locais.');
     const agents = await native('invoke', { channel: 'agent:list' });
     for (const item of agents) {
       if (!item.ptyId) continue;

@@ -8,7 +8,7 @@ import path from 'node:path';
 const { createAgentHost } = createRequire(import.meta.url)('../electron/agent-host.cjs');
 const { createOperationalStore } = createRequire(import.meta.url)('../electron/operational-store.cjs');
 
-function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [] } = {}) {
+function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [], orchestratorProfile = '/fixture/atlas-orchestrator.md' } = {}) {
   const handlers = new Map();
   const listeners = new Map();
   const ipcMain = {
@@ -19,7 +19,7 @@ function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersi
     ready: Promise.resolve(),
     getDefaultCwd: () => allowedCwds[0],
     isAllowedCwd: (cwd) => allowedCwds.some((allowed) => allowed.toLowerCase() === String(cwd).toLowerCase()),
-    getProjectForCwd: () => ({ id: 'project-a' }),
+    getProjectForCwd: () => projectRecords[0] || ({ id: 'project-a' }),
     getProjects: () => projectRecords,
   };
   const spawns = [];
@@ -51,6 +51,7 @@ function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersi
     transport,
     store,
     onPersistenceError,
+    orchestratorProfile,
     isMainSender: (event) => event.sender === 'main',
     discover: async () => adapters || [{
       id: 'kimi-code',
@@ -244,4 +245,89 @@ test('agent:list restaura histórico autorizado sem PTY e sem duplicar agente at
   reopened.projectHost.isAllowedCwd = (cwd) => cwd === 'C:\\projeto';
   store.startSession({ id: 'private-session', projectId: 'project-a', name: 'Hidden', adapterId: 'kimi-code', cli: 'Kimi Code', version: '2.3.2', cwd: 'C:\\old-worktree', origin: 'user', createdAt: new Date().toISOString() });
   assert.equal(reopened.host.listAgents().length, 1);
+});
+
+function orchestratorFixture(t) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-orchestrator-'));
+  const filename = path.join(directory, 'state.sqlite');
+  let store = createOperationalStore({ filename });
+  const projectRecords = [{ id: 'project-a', name: 'Fixture', path: 'C:\\projeto' }];
+  store.registerProject(projectRecords[0]);
+  t.after(() => {
+    store.close();
+    const resolved = fs.realpathSync(directory);
+    assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
+    assert(path.basename(resolved).startsWith('atlas-orchestrator-'));
+    fs.rmSync(resolved, { recursive: true, force: true });
+  });
+  return { store, projectRecords, reopen: () => { store.close(); store = createOperationalStore({ filename }); store.reconcileRuns(); return store; } };
+}
+
+test('orquestrador concorrente tem uma identidade/run e flags fixadas pelo núcleo', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const { handlers, mainEvent, spawns } = createHarness(fixture);
+  const request = { cwd: 'C:\\projeto', adapterId: 'inventado', args: ['--auto'], name: 'outro' };
+  const [first, second] = await Promise.all([handlers.get('agent:open-orchestrator')(mainEvent, request), handlers.get('agent:open-orchestrator')(mainEvent, request)]);
+  assert.equal(first.id, second.id);
+  assert.equal(first.role, 'orchestrator');
+  assert.equal(first.origin, 'user');
+  assert.equal(first.name, 'ORQUESTRADOR');
+  assert.equal(spawns.length, 1);
+  assert.deepEqual(spawns[0].args, ['--agent-file', '/fixture/atlas-orchestrator.md']);
+  assert.equal(fixture.store.listSessions('project-a').length, 1);
+  assert.equal(fixture.store.listRuns('project-a').length, 1);
+});
+
+test('nova run da principal exige ação explícita e preserva identidade e runs anteriores', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const { handlers, mainEvent, spawns, transport } = createHarness(fixture);
+  const first = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto' });
+  transport.records[0].emitExit(0, null);
+  const ended = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto' });
+  assert.equal(ended.state, 'exited');
+  assert.equal(spawns.length, 1);
+  const next = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', startNewRun: true });
+  assert.equal(next.id, first.id);
+  assert.equal(next.createdAt, first.createdAt);
+  assert.notEqual(next.runId, first.runId);
+  assert.equal(fixture.store.listSessions('project-a').length, 1);
+  const runs = fixture.store.listRuns('project-a');
+  assert.equal(runs.length, 2);
+  assert(runs.some((run) => run.id === first.runId && run.state === 'succeeded'));
+  assert(runs.every((run) => run.cli_version === '2.3.2' && run.cwd === 'C:\\projeto'));
+});
+
+test('reinício mostra principal perdida sem spawn até nova run explícita', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const first = createHarness(fixture);
+  const agent = await first.handlers.get('agent:open-orchestrator')(first.mainEvent, { cwd: 'C:\\projeto' });
+  const reopened = createHarness({ ...fixture, store: fixture.reopen() });
+  const restored = await reopened.handlers.get('agent:open-orchestrator')(reopened.mainEvent, { cwd: 'C:\\projeto' });
+  assert.equal(restored.id, agent.id);
+  assert.equal(restored.archived, true);
+  assert.equal(restored.runState, 'lost');
+  assert.equal(reopened.spawns.length, 0);
+  const next = await reopened.handlers.get('agent:open-orchestrator')(reopened.mainEvent, { cwd: 'C:\\projeto', startNewRun: true });
+  assert.equal(next.id, agent.id);
+  assert.equal(reopened.spawns.length, 1);
+});
+
+test('abrir principal recusa janela secundária e diretório fora do escopo', async (t) => {
+  const { handlers, mainEvent, spawns } = createHarness(orchestratorFixture(t));
+  await assert.rejects(handlers.get('agent:open-orchestrator')({ sender: 'popup' }, { cwd: 'C:\\projeto' }), /não autorizada/);
+  await assert.rejects(handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\outside' }), /pasta autorizada/);
+  assert.equal(spawns.length, 0);
+});
+
+test('consulta de histórico concorrente não engole pedido explícito de nova run', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const { handlers, mainEvent, transport } = createHarness(fixture);
+  await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto' });
+  transport.records[0].emitExit(0, null);
+  const [, restarted] = await Promise.all([
+    handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto' }),
+    handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', startNewRun: true }),
+  ]);
+  assert.equal(restarted.state, 'running');
+  assert.equal(restarted.runAttempt, 2);
 });

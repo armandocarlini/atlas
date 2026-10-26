@@ -57,6 +57,17 @@ const MIGRATIONS = [{
       UNIQUE(project_id, idempotency_key)
     ) STRICT;
   `,
+}, {
+  version: 3,
+  sql: `
+    ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'agent' CHECK(role IN ('agent', 'orchestrator'));
+    CREATE UNIQUE INDEX one_orchestrator_per_project ON sessions(project_id) WHERE role = 'orchestrator';
+    ALTER TABLE agent_runs ADD COLUMN cli_version TEXT;
+    ALTER TABLE agent_runs ADD COLUMN cwd TEXT;
+    ALTER TABLE agent_runs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1;
+    CREATE UNIQUE INDEX run_attempt_per_session ON agent_runs(session_id, attempt);
+    UPDATE agent_runs SET cli_version = (SELECT cli_version FROM sessions WHERE sessions.id = agent_runs.session_id), cwd = (SELECT cwd FROM sessions WHERE sessions.id = agent_runs.session_id);
+  `,
 }];
 
 function taskPayload({ title, description = '', acceptance, idempotencyKey }) {
@@ -170,14 +181,22 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         event({ projectId: id, type: previous ? 'project.updated' : 'project.registered', at });
       });
     },
-    startSession({ id, projectId, name, adapterId, cli, version, cwd, origin, createdAt }) {
+    getOrchestrator: (projectId) => db.prepare("SELECT * FROM sessions WHERE project_id = ? AND role = 'orchestrator'").get(projectId),
+    startSession({ id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, runStartedAt = createdAt, role = 'agent' }) {
       return transaction(db, () => {
         const runId = randomUUID();
-        db.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, projectId, name, adapterId, cli, version, cwd, origin, createdAt);
-        db.prepare(`INSERT INTO agent_runs (id, session_id, state, started_at) VALUES (?, ?, 'running', ?)`).run(runId, id, createdAt);
-        event({ projectId, sessionId: id, runId, type: 'session.created', at: createdAt });
-        event({ projectId, sessionId: id, runId, type: 'run.started', at: createdAt });
-        return { id: runId, version: 1 };
+        const attempt = db.prepare('SELECT coalesce(max(attempt), 0) + 1 AS next FROM agent_runs WHERE session_id = ?').get(id).next;
+        const existing = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
+        if (existing) {
+          if (existing.role !== 'orchestrator' || role !== 'orchestrator' || existing.project_id !== projectId || existing.cwd !== cwd || existing.adapter_id !== adapterId) throw new Error('Identidade de sessão já existente.');
+          db.prepare('UPDATE sessions SET cli_version = ? WHERE id = ?').run(version, id);
+        } else {
+          db.prepare('INSERT INTO sessions (id, project_id, name, adapter_id, cli, cli_version, cwd, origin, created_at, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, role);
+        }
+        db.prepare(`INSERT INTO agent_runs (id, session_id, state, started_at, cli_version, cwd, attempt) VALUES (?, ?, 'running', ?, ?, ?, ?)`).run(runId, id, runStartedAt, version, cwd, attempt);
+        event({ projectId, sessionId: id, runId, type: existing ? 'session.attached' : 'session.created', at: runStartedAt });
+        event({ projectId, sessionId: id, runId, type: 'run.started', at: runStartedAt });
+        return { id: runId, version: 1, attempt };
       });
     },
     finishRun,
@@ -194,7 +213,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     },
     listProjects: () => db.prepare('SELECT * FROM projects ORDER BY created_at, id').all(),
     listSessions: (projectId) => db.prepare('SELECT * FROM sessions WHERE project_id = ? ORDER BY created_at, id').all(projectId),
-    listRuns: (projectId) => db.prepare(`SELECT r.* FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE s.project_id = ? ORDER BY r.started_at, r.id`).all(projectId),
+    listRuns: (projectId) => db.prepare(`SELECT r.* FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE s.project_id = ? ORDER BY s.created_at, s.id, r.attempt`).all(projectId),
     listEvents: (projectId) => db.prepare('SELECT * FROM audit_events WHERE project_id = ? ORDER BY sequence').all(projectId).map((row) => ({ ...row, payload: JSON.parse(row.payload) })),
     async backupTo(destination) {
       if (closed) throw new Error('Banco fechado.');
