@@ -134,4 +134,4 @@ O ATLAS funciona localmente, sem telemetria ou serviço central obrigatório. So
 
 ## Contribuição e licença
 
-Leia [CONTRIBUTING.md](CONTRIBUTING.md) para preparar o ambiente e enviar alterações. Relatos de vulnerabilidade seguem [SECURITY.md](SECURITY.md). Distribuído sob a [licença MIT](LICENSE).
+Leia [CONTRIBUTING.md](CONTRIBUTING.md) para preparar o ambiente e enviar alterações. Para continuidade por agentes, as regras operacionais estão em [AGENTS.md](AGENTS.md) e no [contrato autônomo da v0.1](docs/AUTONOMIA_V0_1.md). Relatos de vulnerabilidade seguem [SECURITY.md](SECURITY.md). Distribuído sob a [licença MIT](LICENSE).
