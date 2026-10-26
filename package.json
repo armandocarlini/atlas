@@ -18,6 +18,8 @@
     "preview": "vite preview",
     "test:desktop": "node scripts/smoke-desktop.mjs",
     "test": "node --test scripts/*.test.mjs",
+    "test:agent": "node --test scripts/agent-*.test.mjs",
+    "smoke:agent": "node scripts/smoke-agent.mjs",
     "check:public": "node scripts/check-public-files.mjs"
   },
   "dependencies": {

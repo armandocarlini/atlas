@@ -118,6 +118,7 @@ function getInitialDockLayout() {
 const initialSessions = [
   {
     id: 'orchestrator',
+    demo: true,
     name: 'ORQUESTRADOR',
     role: 'Planejamento e coordenação',
     origin: 'principal',
@@ -143,6 +144,7 @@ const initialSessions = [
   },
   {
     id: 'manual',
+    demo: true,
     name: 'exploracao-terminal',
     role: 'Validação de PTY',
     origin: 'manual',
@@ -166,6 +168,7 @@ const initialSessions = [
   },
   {
     id: 'core',
+    demo: true,
     name: 'atlas-core',
     role: 'Contratos e persistência',
     origin: 'orquestrador',
@@ -188,6 +191,7 @@ const initialSessions = [
   },
   {
     id: 'qa',
+    demo: true,
     name: 'atlas-qa',
     role: 'Revisão e recuperação',
     origin: 'orquestrador',
@@ -274,7 +278,8 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
           <StatusDot color={session.color} pulse={session.status === 'trabalhando'} />
           <h3>{session.name}</h3>
           <span className={`origin-badge ${session.origin}`}>{session.origin}</span>
-          <span className="session-cli">{session.cli}</span>
+          {session.demo && <span className="origin-badge demo">ilustrativo</span>}
+          <span className="session-cli">{session.version ? `${session.cli} ${session.version}` : session.cli}</span>
         </div>
         <div className="session-actions">
           {!session.ptyId && <span className="token-count">{session.tokens} <span>tokens</span></span>}
@@ -309,9 +314,12 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
   );
 }
 
-function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees, onDirectoryChange, busy }) {
+function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees, onDirectoryChange, busy, adapters = null, loadingAdapters = false }) {
   const dialogRef = useModalFocus();
+  const [error, setError] = useState('');
   const isTerminal = kind === 'terminal';
+  const realAdapters = !isTerminal && Array.isArray(adapters);
+  const availableAdapters = realAdapters ? adapters.filter((adapter) => adapter.status === 'available') : [];
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section ref={dialogRef} className="modal" onMouseDown={(event) => event.stopPropagation()} aria-modal="true" role="dialog" aria-labelledby="new-session-title">
@@ -322,18 +330,25 @@ function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees,
           </div>
           <button className="icon-button" onClick={onClose} title="Fechar"><X size={18} /></button>
         </header>
-        <form onSubmit={(event) => {
+        <form onSubmit={async (event) => {
           event.preventDefault();
           const data = new FormData(event.currentTarget);
-          onCreate({ kind, name: data.get('name'), cli: data.get('cli'), cwd: data.get('cwd') || workingDirectory });
+          setError('');
+          const failure = await onCreate({ kind, name: data.get('name'), cli: data.get('cli'), cwd: data.get('cwd') || workingDirectory });
+          if (failure) setError(failure);
         }}>
           <label>Nome da {isTerminal ? 'janela' : 'sessão'}<input name="name" defaultValue={isTerminal ? 'powershell-local' : 'nova-investigacao'} autoFocus /></label>
-          {!isTerminal && <label>CLI / harness<select name="cli" defaultValue="Claude Code"><option>Claude Code</option><option>Kimi Code</option><option>Codex</option><option>CLI personalizado</option></select></label>}
-          {isTerminal && <label>Worktree ou diretório<select name="cwd" value={workingDirectory} onChange={(event) => onDirectoryChange(event.target.value)}>{worktrees.map((item) => <option value={item.path} key={item.path}>{item.label} — {item.branch || 'diretório autorizado'}</option>)}</select></label>}
+          {!isTerminal && loadingAdapters && <div className="scope-note"><ShieldCheck size={16} /><span>Detectando CLIs de agente no PATH…</span></div>}
+          {!isTerminal && !loadingAdapters && (realAdapters
+            ? <label>CLI / harness detectado<select name="cli" disabled={!availableAdapters.length}>{adapters.map((adapter) => <option key={adapter.id} value={adapter.id} disabled={adapter.status !== 'available'}>{adapter.name}{adapter.version ? ` ${adapter.version}` : ''}{adapter.status !== 'available' ? ' — não encontrado' : ''}</option>)}</select></label>
+            : <label>CLI / harness<select name="cli" defaultValue="Claude Code"><option>Claude Code</option><option>Kimi Code</option><option>Codex</option><option>CLI personalizado</option></select></label>)}
+          <label>Worktree ou diretório<select name="cwd" value={workingDirectory} onChange={(event) => onDirectoryChange(event.target.value)}>{worktrees.map((item) => <option value={item.path} key={item.path}>{item.label} — {item.branch || 'diretório autorizado'}</option>)}</select></label>
           <div className="path-input"><FolderGit2 size={15} /><span>{workingDirectory}</span><CheckCircle2 size={15} /></div>
-          {!isTerminal && <div className="form-grid"><label>Modelo<select defaultValue="Automático"><option>Automático</option><option>Modelo forte</option><option>Modelo econômico</option></select></label><label>Vínculo<select defaultValue="Missão atual"><option>Missão atual</option><option>Somente projeto</option><option>Independente</option></select></label></div>}
-          <div className="scope-note"><ShieldCheck size={16} /><span>{isTerminal ? 'PowerShell real no diretório selecionado, sem identidade de agente.' : 'A sessão nascerá registrada e poderá trocar mensagens com outras sessões autorizadas.'}</span></div>
-          <footer><button type="button" className="button secondary" onClick={onClose}>Cancelar</button><button type="submit" className="button primary" disabled={busy}><Plus size={15} />{busy ? 'Abrindo…' : isTerminal ? 'Abrir terminal' : 'Criar sessão'}</button></footer>
+          {!isTerminal && !realAdapters && !loadingAdapters && <div className="form-grid"><label>Modelo<select defaultValue="Automático"><option>Automático</option><option>Modelo forte</option><option>Modelo econômico</option></select></label><label>Vínculo<select defaultValue="Missão atual"><option>Missão atual</option><option>Somente projeto</option><option>Independente</option></select></label></div>}
+          {realAdapters && !availableAdapters.length && <div className="scope-note error-note" role="alert"><ShieldCheck size={16} /><span>{adapters[0]?.error || 'Nenhum CLI de agente encontrado no PATH.'}</span></div>}
+          <div className="scope-note"><ShieldCheck size={16} /><span>{isTerminal ? 'PowerShell real no diretório selecionado, sem identidade de agente.' : realAdapters ? 'O CLI real inicia interativo neste diretório; permissões e modelo permanecem no harness.' : 'A sessão nascerá registrada e poderá trocar mensagens com outras sessões autorizadas.'}</span></div>
+          {error && <div className="scope-note error-note" role="alert"><ShieldCheck size={16} /><span>{error}</span></div>}
+          <footer><button type="button" className="button secondary" onClick={onClose}>Cancelar</button><button type="submit" className="button primary" disabled={busy || loadingAdapters || (realAdapters && !availableAdapters.length)}><Plus size={15} />{busy ? 'Abrindo…' : isTerminal ? 'Abrir terminal' : 'Criar sessão'}</button></footer>
         </form>
       </section>
     </div>
@@ -480,6 +495,7 @@ export default function App() {
   const [selectedWorktree, setSelectedWorktree] = useState('');
   const [workingDirectory, setWorkingDirectory] = useState(INITIAL_DIRECTORY);
   const [creatingTerminal, setCreatingTerminal] = useState(false);
+  const [adapters, setAdapters] = useState(null);
   const projectSelectionRef = useRef(false);
   const [detachedTerminals, setDetachedTerminals] = useState([]);
   const [activeMission, setActiveMission] = useState('Cockpit interativo');
@@ -624,6 +640,16 @@ export default function App() {
       window.removeEventListener('pointercancel', finishPopupDrag);
     };
   }, []);
+
+  useEffect(() => {
+    if (modal !== 'session' || !desktop?.isDesktop) return undefined;
+    let active = true;
+    setAdapters(null);
+    desktop.listAdapters()
+      .then((items) => { if (active) setAdapters(items); })
+      .catch(() => { if (active) setAdapters([]); });
+    return () => { active = false; };
+  }, [modal]);
 
   function notify(message) {
     setToast(message);
@@ -862,32 +888,34 @@ export default function App() {
     const id = `${kind}-${Date.now()}`;
     const isTerminal = kind === 'terminal';
     let pty = null;
-    if (isTerminal && desktop?.isDesktop) {
+    let agent = null;
+    if (desktop?.isDesktop) {
       setCreatingTerminal(true);
       try {
-        pty = await desktop.createTerminal({ cwd });
+        if (isTerminal) pty = await desktop.createTerminal({ cwd });
+        else agent = await desktop.createAgent({ adapterId: cli, name, cwd });
       } catch (error) {
-        notify(`Não foi possível iniciar o PowerShell: ${error.message}`);
         setCreatingTerminal(false);
-        return;
+        return isTerminal ? `Não foi possível iniciar o PowerShell: ${error.message}` : error.message;
       }
       setCreatingTerminal(false);
     }
     const session = {
       id,
-      ptyId: pty?.id || null,
-      name: name || (isTerminal ? 'terminal-local' : 'nova-sessao'),
-      role: isTerminal ? 'Shell sem identidade de agente' : 'Sessão criada pelo usuário',
+      ptyId: pty?.id || agent?.ptyId || null,
+      name: agent?.name || name || (isTerminal ? 'terminal-local' : 'nova-sessao'),
+      role: isTerminal ? 'Shell sem identidade de agente' : agent ? 'Sessão de agente criada pelo usuário' : 'Sessão criada pelo usuário',
       origin: isTerminal ? 'terminal' : 'manual',
-      cli: isTerminal ? 'PowerShell' : cli,
-      model: isTerminal ? 'shell' : 'automático',
-      effort: isTerminal ? 'local' : 'medium',
-      status: pty ? 'em execução' : 'pronto',
+      cli: agent?.cli || (isTerminal ? 'PowerShell' : cli),
+      version: agent?.version || null,
+      model: isTerminal || agent ? null : 'automático',
+      effort: isTerminal ? 'local' : agent ? null : 'medium',
+      status: pty || agent ? 'em execução' : 'pronto',
       color: isTerminal ? '#8d959d' : '#4ecb8d',
       task: isTerminal ? activeProject : 'Missão cockpit interativo',
       tokens: '0',
       cost: '—',
-      worktree: pty?.cwd || cwd || 'atlas/main',
+      worktree: pty?.cwd || agent?.cwd || cwd || 'atlas/main',
       lines: isTerminal ? [
         { type: 'info', text: 'Windows PowerShell · terminal local ilustrativo' },
         { type: 'command', text: `PS ${cwd}>` },
@@ -901,7 +929,8 @@ export default function App() {
     setSelectedId(id);
     setFocusId(null);
     setModal(null);
-    notify(pty ? 'PowerShell conectado ao PTY' : isTerminal ? 'Terminal ilustrativo adicionado ao grid' : 'Sessão manual conectada à missão');
+    notify(pty ? 'PowerShell conectado ao PTY' : agent ? `${agent.cli} ${agent.version} iniciado na worktree selecionada` : isTerminal ? 'Terminal ilustrativo adicionado ao grid' : 'Sessão manual conectada à missão');
+    return null;
   }
 
   function getColumnStyle(column) {
@@ -1106,7 +1135,7 @@ export default function App() {
         return session ? <div className="detached-terminal-window" style={{ right: 24 + index * 24, top: 72 + index * 24 }} key={id}><SessionCard session={session} selected popup desktop={desktop} theme={theme} onSelect={setSelectedId} onFocus={() => {}} onPopup={toggleTerminalPopup} onExit={updateSessionExit} onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)} /></div> : null;
       })}
 
-      {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} />}
+      {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
       {toast && <div className="toast" role="status"><CheckCircle2 size={15} />{toast}</div>}
     </div>

@@ -1,6 +1,6 @@
 # Continuidade do desenvolvimento
 
-Última atualização: 25/10/2026.
+Última atualização: 26/10/2026.
 
 ## Objetivo e critérios de qualidade
 
@@ -12,7 +12,9 @@ A visão completa está em `ATLAS_PLANEJAMENTO_ARQUITETURA.md`. O produto deve s
 
 O shell Electron funciona com PowerShell real via node-pty/ConPTY e xterm.js. Há descoberta Git somente leitura em pastas autorizadas, branches/worktrees existentes, escolha de diretório para novos terminais, foco/grid, pop-up individual e reintegração preservando o PTY. As colunas laterais podem ser ocultadas; aparência e layout são salvos localmente. O acompanhamento usa uma janela nativa sempre no topo.
 
-Os cards de Claude Code, Codex e Kimi, assim como tarefas, mensagens e evidências, continuam ilustrativos. Ainda não há adaptador real de agente, orquestrador conectado, SQLite ou persistência operacional. A próxima etapa é definir e implementar o primeiro adaptador real com um fluxo vertical verificável, respeitando os requisitos da arquitetura.
+O primeiro adaptador de agente real está integrado: o ATLAS descobre o Kimi Code pelo `PATH` (`electron/agent-adapters.cjs`), inicia o CLI interativo em PTY compartilhado (`electron/pty-transport.cjs`) e registra identidade, versão, diretório e estado `running`/`exited` em memória (`electron/agent-host.cjs`). O modal de nova sessão lista somente CLIs detectados e mostra erros inline sem perder os campos. Os testes de unidade rodam com `npm run test:agent`; o smoke real opt-in (`npm run smoke:agent`) executa o Kimi de verdade com `KIMI_CODE_HOME` isolado, usando apenas `/status` e `/exit`.
+
+Tarefas, mensagens, evidências e os quatro cards iniciais continuam ilustrativos. Ainda não há SQLite, orquestrador conectado ou persistência operacional. O próximo marco é SQLite, migrations e o modelo operacional mínimo, seguido do orquestrador real.
 
 O Kimi foi interrompido durante os testes de dois terminais e descoberta Git. Essa etapa foi concluída: os testes agora são reproduzíveis em `scripts/`, e os marcos confirmados foram atualizados no planejamento. O relatório técnico/visual está em `docs/VALIDACAO_DESKTOP.md`.
 

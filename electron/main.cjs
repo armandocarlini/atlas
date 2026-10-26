@@ -3,11 +3,13 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { createProjectHost } = require('./project-host.cjs');
 const { createTerminalHost } = require('./terminal-host.cjs');
+const { createAgentHost } = require('./agent-host.cjs');
+const { createPtyTransport, registerTransportChannels } = require('./pty-transport.cjs');
 
 let mainWindow = null;
 let panelWindow = null;
 let projectHost = null;
-let terminalHost = null;
+let ptyTransport = null;
 let boundsSaveTimer = null;
 const terminalWindows = new Map();
 
@@ -92,7 +94,7 @@ function createMainWindow() {
     for (const entry of terminalWindows.values()) {
       if (!entry.window.isDestroyed()) entry.window.close();
     }
-    terminalHost?.killAll();
+    ptyTransport?.killAll();
   });
 }
 
@@ -170,7 +172,7 @@ function createTerminalWindow(sessionId, ptyId) {
   });
 
   if (ptyId) {
-    terminalHost?.setPopupResolver(ptyId, () => {
+    ptyTransport?.setPopupResolver(ptyId, () => {
       const current = terminalWindows.get(sessionId);
       return current && !current.window.isDestroyed() ? current.window.webContents : null;
     });
@@ -192,7 +194,7 @@ ipcMain.handle('panels:close', (event) => {
 
 ipcMain.handle('terminal-window:open', (event, { sessionId, ptyId = null } = {}) => {
   if (!mainWindow || event.sender !== mainWindow.webContents || typeof sessionId !== 'string') return false;
-  if (ptyId && !terminalHost?.has(ptyId)) return false;
+  if (ptyId && !ptyTransport?.has(ptyId)) return false;
   createTerminalWindow(sessionId, ptyId);
   return true;
 });
@@ -210,11 +212,24 @@ ipcMain.handle('terminal-window:close', (event, { sessionId } = {}) => {
 
 app.whenReady().then(() => {
   projectHost = createProjectHost({ app, dialog, ipcMain, getMainWindow });
-  terminalHost = createTerminalHost({
+  ptyTransport = createPtyTransport({ getMainWindow });
+  const terminalHost = createTerminalHost({
     ipcMain,
     getMainWindow,
     projectHost,
+    transport: ptyTransport,
+  });
+  registerTransportChannels({
+    ipcMain,
+    transport: ptyTransport,
+    isMainSender: terminalHost.isMainSender,
     getPopupPtyId: (webContents) => getPopupEntry(webContents)?.ptyId || null,
+  });
+  createAgentHost({
+    ipcMain,
+    projectHost,
+    transport: ptyTransport,
+    isMainSender: terminalHost.isMainSender,
   });
   createMainWindow();
   app.on('activate', () => {
@@ -222,7 +237,7 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('before-quit', () => terminalHost?.killAll());
+app.on('before-quit', () => ptyTransport?.killAll());
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
