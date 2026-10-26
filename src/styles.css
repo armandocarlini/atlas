@@ -741,3 +741,7 @@ body { transition: background-color .18s ease, color .18s ease; }
   .left-dock-zone .column-drag-bar .detach-control { display: inline-flex; align-items: center; }
   .git-discovery { display: block; }
 }
+.session-history { padding: 20px; color: var(--text); line-height: 1.6; overflow: auto; }
+.session-history p { color: var(--muted); }
+.session-history dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; }
+.session-history dd { margin: 0; overflow-wrap: anywhere; }

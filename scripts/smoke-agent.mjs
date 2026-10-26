@@ -57,10 +57,14 @@ const env = {
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.VITE_DEV_SERVER_URL;
 
-const child = spawn(electron, [path.join(root, 'scripts/smoke-app.cjs'), `--remote-debugging-port=${port}`], { cwd: fixture, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 let stderr = '';
-child.stderr.on('data', (data) => { stderr = (stderr + data).slice(-12000); });
-child.stdout.resume();
+function launch() {
+  const process = spawn(electron, [path.join(root, 'scripts/smoke-app.cjs'), `--remote-debugging-port=${port}`], { cwd: fixture, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  process.stderr.on('data', (data) => { stderr = (stderr + data).slice(-12000); });
+  process.stdout.resume();
+  return process;
+}
+let child = launch();
 
 async function native(action, fields = {}) {
   const response = await fetch(`http://127.0.0.1:${controlPort}`, { method: 'POST', headers: { Authorization: controlToken }, body: JSON.stringify({ action, ...fields }), signal: AbortSignal.timeout(10000) });
@@ -82,7 +86,7 @@ async function until(check, label, timeout = 60000) {
 let exitCode = 1;
 try {
   await until(async () => {
-    try { return await native('windows'); } catch { return null; }
+    try { return (await native('windows')).some((item) => !item.url.includes('window=')); } catch { return false; }
   }, 'control server', 30000);
 
   const adapters = await native('invoke', { channel: 'agent:list-adapters' });
@@ -132,6 +136,21 @@ try {
   assert.ok(fs.existsSync(path.join(kimiHome, 'workspaces.json')) || fs.readdirSync(kimiHome).length > 0, 'KIMI_CODE_HOME isolado recebeu os arquivos da sessão');
   console.log('PASS KIMI_CODE_HOME isolado usado pelo CLI');
 
+  await native('quit');
+  await until(() => child.exitCode !== null, 'primeiro Electron encerrado', 15000);
+  child = launch();
+  await until(async () => {
+    try { return (await native('windows')).some((item) => !item.url.includes('window=')); } catch { return false; }
+  }, 'Electron reaberto no mesmo perfil', 30000);
+  const restored = (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === agent.id);
+  assert(restored, 'Sessão preservada após reinício');
+  assert.equal(restored.archived, true);
+  assert.equal(restored.runState, 'succeeded');
+  assert.equal(restored.exit.exitCode, 0);
+  assert.equal(restored.ptyId, null);
+  assert.equal(restored.cwd, fixture);
+  console.log('PASS reinício real do Electron preserva identidade e saída do Kimi sem recriar PTY');
+
   fs.writeFileSync(path.join(resultsDir, 'agent-result.json'), JSON.stringify({ passed: true, version: kimi.version, fixture: null }, null, 2));
   exitCode = 0;
 } catch (error) {
@@ -139,6 +158,7 @@ try {
   try {
     const agents = await native('invoke', { channel: 'agent:list' });
     for (const item of agents) {
+      if (!item.ptyId) continue;
       const snapshot = await native('invoke', { channel: 'terminal:attach', args: [item.ptyId] });
       const plain = snapshot.scrollback.replace(/\x1B\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1B[()][0-9A-B]/g, '');
       console.error(`--- scrollback de ${item.name} (estado ${item.state}, exit ${JSON.stringify(item.exit)}, ${snapshot.scrollback.length} bytes):`);
@@ -154,7 +174,12 @@ try {
   await delay(500);
   child.kill();
   await delay(500);
-  if (exitCode === 0) await fs.promises.rm(fixture, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  if (exitCode === 0) {
+    const resolved = fs.realpathSync(fixture);
+    assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
+    assert(path.basename(resolved).startsWith('atlas-agent-smoke-'));
+    await fs.promises.rm(resolved, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
   else console.error(`Fixture preservada para diagnóstico: ${fixture}`);
 }
 process.exit(exitCode);

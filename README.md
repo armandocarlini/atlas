@@ -98,7 +98,7 @@ O `npm start` utiliza o conteúdo gerado em `dist`. Execute `npm run build` nova
 
 O botão **Sessão** lista os CLIs de agente detectados no `PATH` (neste marco, o Kimi Code). A sessão inicia o CLI real e interativo na worktree ou pasta autorizada escolhida, sem flags de autonomia e sem prompt inicial: permissões e modelo permanecem no harness. O card exibe nome, CLI com versão detectada e diretório, e o estado operacional é apenas `running` ou `exited` — nada é inferido do conteúdo do terminal.
 
-Projetos, sessões, runs e eventos são registrados em `atlas.sqlite`, no diretório de dados do aplicativo, sem transcripts. Uma sessão possui identidade própria e uma run representa a tentativa concreta de execução. Ao fechar o aplicativo, seus PTYs são interrompidos; runs sem saída confirmada ficam `lost`, com motivo explícito. Após crash, a próxima abertura reconcilia runs que ficaram ativas. O histórico já permanece no banco, mas a restauração dos cards na UI ainda é um incremento pendente. O aplicativo aceita uma única instância por perfil para impedir reconciliação concorrente de processos vivos.
+Projetos, sessões, runs e eventos são registrados em `atlas.sqlite`, no diretório de dados do aplicativo, sem transcripts. Uma sessão possui identidade própria e uma run representa a tentativa concreta de execução. Ao fechar o aplicativo, seus PTYs são interrompidos; runs sem saída confirmada ficam `lost`, com motivo explícito. Após crash, a próxima abertura reconcilia runs que ficaram ativas. Sessões anteriores de projetos e diretórios ainda autorizados reaparecem como histórico, com resultado e datas, sem abrir processo ou simular uma conversa. O aplicativo aceita uma única instância por perfil para impedir reconciliação concorrente de processos vivos.
 
 ## Validação
 
@@ -115,7 +115,7 @@ npm run test:desktop
 npm run smoke:agent
 ```
 
-Ele inicia o CLI real em uma fixture temporária com `KIMI_CODE_HOME` isolado, envia somente `/status` e `/exit` (sem prompts ao modelo e sem consumo de tokens) e confirma o encerramento limpo com código 0.
+Ele inicia o CLI real em uma fixture temporária com `KIMI_CODE_HOME` isolado, envia somente `/status` e `/exit` (sem prompts ao modelo e sem consumo de tokens) e confirma o encerramento limpo com código 0. Depois fecha e reabre o Electron no mesmo perfil e verifica a identidade e o resultado preservados, sem recriar PTY.
 
 O smoke test abre uma instância Electron com preferências isoladas, cria uma fixture Git temporária e usa PowerShells reais. Valida diretório da worktree, Unicode, resize, Ctrl+C, dois streams independentes, pop-ups, reintegração, acompanhamento sempre no topo, temas, persistência de layout e encerramento dos processos. As janelas de teste podem aparecer durante a execução. A fixture é removida ao concluir com sucesso; em caso de falha, seu caminho é registrado para diagnóstico.
 
