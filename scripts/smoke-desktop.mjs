@@ -232,13 +232,21 @@ try {
   assert((await native('windows')).find((item) => item.url.includes('window=panels')).alwaysOnTop);
   assert.equal(await panel.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#18222b');
   await native('resize', { kind: 'panels', width: 420, height: 700 });
+  // Em escala fracionária (ex.: 125%), o Windows converte DIP em pixels físicos com
+  // arredondamento, então getBounds não devolve exatamente 420x700. Persistimos e
+  // comparamos os limites realmente observados, validando a restauração pelo aplicativo.
+  const panelsBounds = async () => (await native('windows')).find((item) => item.url.includes('window=panels'))?.bounds;
+  const panelsResized = await until(panelsBounds, 'panels bounds after resize');
   await click(panel, '.inspector-tabs button', 'Evidências');
   await click(panel, 'button', 'Reintegrar');
   await until(() => main.evaluate(`Boolean(document.querySelector('[data-column-id=right]'))`), 'panels reattached');
   assert.equal(await main.evaluate(`document.querySelector('.inspector-tabs button.active').textContent.trim()`), 'Evidências');
   await click(main, '[data-column-id=right] .detach-control', 'Pop-up');
   await until(async () => (await pages()).find((item) => item.url.includes('window=panels')), 'panels reopened');
-  assert.equal((await native('windows')).find((item) => item.url.includes('window=panels')).bounds.width, 420);
+  const panelsReopened = await until(panelsBounds, 'panels bounds after reopen');
+  assert(Math.abs(panelsReopened.width - panelsResized.width) <= 8, `largura restaurada: ${panelsReopened.width} vs ${panelsResized.width}`);
+  assert(Math.abs(panelsReopened.height - panelsResized.height) <= 8, `altura restaurada: ${panelsReopened.height} vs ${panelsResized.height}`);
+  assert(Math.abs(panelsResized.width - 420) <= 8, `redimensionamento aplicado: ${panelsResized.width}`);
   await main.evaluate(`window.atlasDesktop.closePanels()`);
   await until(() => main.evaluate(`Boolean(document.querySelector('[data-column-id=right]'))`), 'panels restored');
   console.log('PASS acompanhamento sempre no topo, tema sincronizado, aba e dimensões preservadas');
