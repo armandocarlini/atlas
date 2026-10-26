@@ -36,13 +36,25 @@ Diagnóstico de ambiente resolvido: o Kimi Code 2.3.2 já estava instalado e inc
 
 ## Marco 2b — restauração de histórico
 
-Em validação na branch `codex/restore-session-history`, conforme `docs/PLANO_RESTAURACAO_SESSOES.md`. `agent:list` combina agentes vivos e histórico apenas de projetos e diretórios atualmente autorizados. Cards reais usam o UUID do processo principal; a hidratação mescla os resultados sem apagar terminais criados durante a carga nem duplicar sessões.
+Integrado pelo PR #11 como `36501ad`, após CI Ubuntu e Windows verde na execução 40317740822. `main` foi sincronizada antes de `codex/persistent-tasks`. Conforme `docs/PLANO_RESTAURACAO_SESSOES.md`, `agent:list` combina agentes vivos e histórico apenas de projetos e diretórios atualmente autorizados. Cards reais usam o UUID do processo principal; a hidratação mescla os resultados sem apagar terminais criados durante a carga nem duplicar sessões.
 
 Histórico sem PTY tem indicação textual do resultado, diretório e datas, sem composer, TUI sintética ou tokens fictícios. Restaurar histórico não inicia processo. O smoke desktop usa banco de fixture simulando run interrompida e comprova restauração como `lost` na inicialização e após recarga da UI. O smoke real do Kimi também verifica fechamento e reabertura do Electron no mesmo perfil. As skills de UI foram invocadas, Python 3.14.3 confirmado e a consulta UX de contraste/estado textual validada contra o MASTER.
 
 Evidências locais: `npm test` (39/39), `npm run test:agent` (21/21), build, `check:public`, smoke desktop e smoke real Kimi passaram. O desktop verifica contraste do histórico, ausência de composer/pop-up/métricas fictícias e nenhum spawn na restauração. O smoke real confirma identidade, diretório e saída 0 preservados após reinício físico do Electron. Captura local do histórico revisada, sem versionar imagens ou caminhos pessoais. Revisão independente sem bloqueios; observações sobre reautorizar projetos e saída com sinal foram corrigidas com regressões. O próximo incremento é criar e listar tarefas reais persistentes; isso não exige acessar o modelo.
 
-Tarefas, mensagens, evidências e os quatro cards iniciais continuam ilustrativos. Não há orquestrador conectado. O marco 2 completo, os demais marcos e os 12 passos de aceite da v0.1 permanecem pendentes.
+## Marco 2c — tarefas reais
+
+Em validação conforme `docs/PLANO_TAREFAS.md`: migration 2 adiciona tarefas e comandos de criação. Criar tarefa, registrar comando e emitir evento ocorre em transação; chave de idempotência por projeto e hash de payload impedem duplicação por reenvio. O núcleo fixa ator `user` e estado `backlog`. Não há IPC para concluir, atribuir ou executar tarefas.
+
+O painel Tarefas do desktop usa dados reais do projeto selecionado. Formulário exige título e critérios de aceite, com descrição opcional, limites, foco modal e erros inline. A janela de acompanhamento recebe o mesmo snapshot para leitura. Trocar escopo limpa dados do projeto anterior e descarta respostas de carga atrasadas. Exemplos de mensagens/evidências e o wireframe do navegador continuam explícitos como ilustrativos.
+
+Validação local: instalação limpa `npm ci` reaplicou o patch ConPTY com hashes verificados e terminou sem vulnerabilidades; `npm test` passou 52/52, `npm run test:agent` passou 21/21 e build passou com o aviso já existente de tamanho do bundle. O runtime Electron passou os 13 testes de tarefas/driver. O smoke desktop passou criação pelo formulário, foco em textarea, validação, contraste, isolamento entre projetos, sincronização com pop-up e tarefa/critério preservados após reload e reabertura do banco. A migration 1→2 preserva projetos, sessões, runs e eventos anteriores. O rollback de tarefa/comando/evento tem regressão.
+
+Desvios corrigidos: revisão visual detectou regra CSS antiga ocultando o botão Nova tarefa; a regra foi delimitada e o smoke agora exige controle visível. Revisão de código encontrou conflito entre Ctrl+, e o modal de tarefa; o atalho é bloqueado dentro desse modal, com regressão de foco. O smoke Kimi expôs corrida ConPTY de pipe fechado antes do exit code nativo. A falha foi reproduzida no driver com dois testes vermelhos e corrigida por patch de instalação versionado/checksumado, sem inferir código 0 nem ocultar resultado com retry. Ambas as ordens de eventos e WinPTY têm cobertura. Após a instalação limpa, duas primeiras inicializações simultâneas disputaram a extração sob demanda do Electron (EBUSY); a instalação do binário foi verificada antes da nova validação, sem alterar testes.
+
+O smoke real final do Kimi 2.3.2 passou após essa correção: `/status`, `/exit`, código nativo 0 e reinício do Electron preservando identidade e resultado. Nenhum prompt foi enviado ao modelo. `check:public` passou incluindo os 55 arquivos rastreados. A revisão independente confirmou a correção do driver e do foco, sem bloqueios remanescentes. A integração deste marco depende da CI Ubuntu/Windows do PR.
+
+Não há orquestrador conectado. Os marcos seguintes e os 12 passos de aceite da v0.1 permanecem pendentes.
 
 O Kimi foi interrompido durante os testes de dois terminais e descoberta Git. Essa etapa foi concluída: os testes agora são reproduzíveis em `scripts/`, e os marcos confirmados foram atualizados no planejamento. O relatório técnico/visual está em `docs/VALIDACAO_DESKTOP.md`.
 

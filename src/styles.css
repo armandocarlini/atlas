@@ -29,7 +29,7 @@ body { overflow: hidden; }
 button, input, select { font: inherit; }
 button { color: inherit; }
 button, select { cursor: pointer; }
-button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-text, var(--accent)); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent-text, var(--accent)); outline-offset: 2px; }
 button { border: 0; background: none; }
 ::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -745,3 +745,14 @@ body { transition: background-color .18s ease, color .18s ease; }
 .session-history p { color: var(--muted); }
 .session-history dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; }
 .session-history dd { margin: 0; overflow-wrap: anywhere; }
+.persistent-tasks { padding: 16px; color: var(--text); font-size: 12px; }
+.persistent-tasks .section-title { gap: 8px; }
+.persistent-tasks .section-title button { display: inline-flex; width: auto; height: auto; color: var(--text); letter-spacing: normal; }
+.persistent-tasks p { color: var(--muted); line-height: 1.5; }
+.persistent-tasks .task-text { color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.persistent-task-detail { padding-top: 16px; }
+.persistent-task-detail h2, .persistent-task-detail h3 { overflow-wrap: anywhere; }
+.persistent-task-detail h2 { font-size: 16px; }
+.persistent-task-detail h3 { font-size: 12px; }
+.task-modal form > p { font-size: 12px; color: var(--muted); }
+.task-modal textarea { width: 100%; resize: vertical; min-height: 70px; border: 1px solid var(--border); border-radius: 5px; padding: 10px; color: var(--text); background: var(--surface); font: inherit; }

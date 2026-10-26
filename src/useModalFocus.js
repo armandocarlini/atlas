@@ -9,8 +9,8 @@ export default function useModalFocus() {
     const siblings = [...backdrop.parentElement.children].filter((item) => item !== backdrop);
     const previousInert = siblings.map((item) => item.inert);
     siblings.forEach((item) => { item.inert = true; });
-    const focusable = () => [...dialog.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')].filter((item) => item.getClientRects().length);
-    if (!dialog.contains(document.activeElement)) (dialog.querySelector('input[name="name"]') || focusable()[0])?.focus();
+    const focusable = () => [...dialog.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]')].filter((item) => item.getClientRects().length);
+    if (!dialog.contains(document.activeElement)) (dialog.querySelector('input:not(:disabled), textarea:not(:disabled)') || focusable()[0])?.focus();
     function trapFocus(event) {
       if (event.key !== 'Tab') return;
       const items = focusable();

@@ -87,6 +87,7 @@ const child = spawn(electron, [path.join(root, 'scripts/smoke-app.cjs'), `--remo
 const childExit = new Promise((resolve) => child.once('exit', resolve));
 const connections = [];
 const pids = [];
+let createdTaskId = null;
 let stderr = '';
 child.stderr.on('data', (data) => { stderr = (stderr + data).slice(-12000); });
 child.stdout.resume();
@@ -186,7 +187,32 @@ try {
   assert(await main.evaluate(`document.querySelector('.project-tab.active').textContent.startsWith('Projeto adicional')`), 'Initial hydration overwrote the selected project');
   assert(await main.evaluate(`document.querySelector('.workspace-path span').textContent === ${JSON.stringify(extraProject)}`), 'Initial hydration overwrote the selected directory');
   console.log('PASS seleção do projeto preservada durante inicialização tardia');
+  await until(() => main.evaluate(`Boolean(document.querySelector('.persistent-tasks button:not(:disabled)'))`), 'task project ready');
+  assert(await main.evaluate(`document.querySelector('.persistent-tasks button').getBoundingClientRect().width > 0`), 'New task control must be visible to the user');
+  await click(main, '.persistent-tasks button', 'Nova tarefa');
+  assert.equal(await main.evaluate(`document.activeElement.name`), 'title');
+  await key(main, ',', { code: 'Comma', windowsVirtualKeyCode: 188, modifiers: 2 });
+  assert.equal(await main.evaluate(`document.querySelectorAll('[role=dialog]').length`), 1, 'Appearance shortcut must not stack modal focus traps');
+  assert.equal(await main.evaluate(`document.activeElement.name`), 'title');
+  assert(await main.evaluate(`document.querySelector('.task-modal button[type=submit]').disabled`), 'Empty task must not submit');
+  await key(main, 'Tab', { code: 'Tab', windowsVirtualKeyCode: 9 });
+  assert.equal(await main.evaluate(`document.activeElement.name`), 'description', 'Textarea must participate in modal focus');
+  await main.evaluate(`(() => { for (const [name, value] of Object.entries({ title: 'Tarefa real · smoke', description: 'Escopo da fixture', acceptance: 'Preservar após recarregar e reabrir o banco' })) { const field = document.querySelector('.task-modal [name=' + name + ']'); Object.getOwnPropertyDescriptor(name === 'title' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype, 'value').set.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })); } })()`);
+  const taskModalAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(taskModalAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in task modal');
+  await screenshot(main, 'task-modal');
+  await main.evaluate(`document.querySelector('.task-modal form').requestSubmit()`);
+  await until(() => main.evaluate(`!document.querySelector('.task-modal') && document.querySelector('.persistent-tasks').innerText.includes('Tarefa real · smoke')`), 'task created in panel');
+  const createdTasks = await native('invoke', { channel: 'task:list', args: [{ cwd: extraProject }] });
+  assert.equal(createdTasks.items.length, 1);
+  createdTaskId = createdTasks.items[0].id;
+  assert.equal(createdTasks.items[0].state, 'backlog');
+  console.log('PASS criar tarefa real: foco, textarea, validação, contraste e backlog persistente');
   const target = `.worktree-item[title=${JSON.stringify(worktree)}]`;
+  await click(main, target);
+  await until(() => main.evaluate(`document.querySelector('.persistent-tasks').innerText.includes('Nenhuma tarefa criada')`), 'task scope changed');
+  assert(!(await main.evaluate(`document.querySelector('.persistent-tasks').innerText`)).includes('Tarefa real · smoke'));
+  console.log('PASS tarefas isoladas ao trocar projeto/worktree');
   await click(main, target);
   async function createTerminal(name) {
     await native('focus');
@@ -258,6 +284,11 @@ try {
   const panelPage = await until(async () => (await pages()).find((item) => item.url.includes('window=panels')), 'panel popup');
   const panel = await connect(panelPage);
   await until(() => panel.evaluate(`Boolean(document.querySelector('.native-inspector'))`), 'panel ready');
+  await main.evaluate(`[...document.querySelectorAll('.project-tab')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
+  await until(() => panel.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa real · smoke')`), 'task snapshot synced to popup');
+  assert.equal(await panel.evaluate(`document.querySelectorAll('.persistent-tasks button').length`), 1, 'Popup lists task selection but cannot create tasks');
+  await click(main, target);
+  await until(() => panel.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Nenhuma tarefa criada')`), 'popup task scope follows main');
   assert((await native('windows')).find((item) => item.url.includes('window=panels')).alwaysOnTop);
   assert.equal(await panel.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#18222b');
   await native('resize', { kind: 'panels', width: 420, height: 700 });
@@ -294,6 +325,12 @@ try {
   await screenshot(main, 'terminals-focused');
   await click(main, '.toolbar-actions button', 'Navegação');
   await click(main, '.toolbar-actions button', 'Painéis');
+  await until(() => main.evaluate(`[...document.querySelectorAll('.project-tab')].some(item => item.textContent.startsWith('Projeto adicional'))`), 'project tabs hydrated');
+  await main.evaluate(`[...document.querySelectorAll('.project-tab')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
+  await click(main, '.inspector-tabs button', 'Tarefas');
+  await until(() => main.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa real · smoke')`), 'task restored after renderer reload');
+  assert((await main.evaluate(`document.querySelector('.persistent-tasks').innerText`)).includes('Preservar após recarregar e reabrir o banco'));
+  await screenshot(main, 'task-persisted');
   console.log('PASS ocultar e restaurar as duas colunas');
   await click(main, '.toolbar-actions button', 'Sessão');
   await until(() => main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].some(item => item.textContent.includes('Kimi Code'))`), 'adapters listed in session modal');
@@ -359,12 +396,16 @@ await Promise.race([childExit, new Promise((_, reject) => { exitTimer = setTimeo
 assert(!stderr.includes('AttachConsole failed'), 'Closing an exited PTY must not kill the same console again');
 const persisted = new DatabaseSync(path.join(profile, 'atlas.sqlite'), { readOnly: true });
 try {
-  assert.equal(persisted.prepare('PRAGMA user_version').get().user_version, 1);
+  assert.equal(persisted.prepare('PRAGMA user_version').get().user_version, 2);
   const paths = persisted.prepare('SELECT path FROM projects').all().map((item) => item.path);
   assert(paths.includes(fs.realpathSync(fixture)), 'Initial project must persist in SQLite');
   assert(paths.includes(fs.realpathSync(extraProject)), 'Authorized project must persist in SQLite');
   assert.equal(persisted.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
   assert.equal(persisted.prepare('SELECT state FROM agent_runs WHERE session_id = ?').get('history-fixture').state, 'lost');
+  const persistedTask = persisted.prepare('SELECT title, acceptance, state FROM tasks WHERE id = ?').get(createdTaskId);
+  assert.equal(persistedTask.title, 'Tarefa real · smoke');
+  assert.equal(persistedTask.acceptance, 'Preservar após recarregar e reabrir o banco');
+  assert.equal(persistedTask.state, 'backlog');
 } finally {
   persisted.close();
 }

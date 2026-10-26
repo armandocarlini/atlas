@@ -6,6 +6,7 @@ const { createTerminalHost } = require('./terminal-host.cjs');
 const { createAgentHost } = require('./agent-host.cjs');
 const { createPtyTransport, registerTransportChannels } = require('./pty-transport.cjs');
 const { createOperationalStore, closeOperationalStore } = require('./operational-store.cjs');
+const { createTaskHost } = require('./task-host.cjs');
 
 let mainWindow = null;
 let panelWindow = null;
@@ -240,6 +241,7 @@ app.whenReady().then(async () => {
     store: operationalStore,
   });
   await projectHost.ready;
+  createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
   createMainWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
