@@ -42,6 +42,7 @@ import TerminalView from './TerminalView.jsx';
 import GitDiscovery from './GitDiscovery.jsx';
 import { appearanceTokens, contrastInk } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
+import { agentSession, mergeAgentSessions } from './session-state.js';
 
 const THEME_PRESETS = [
   { name: 'Laranja', color: '#f2994a' },
@@ -282,15 +283,20 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
           <span className="session-cli">{session.version ? `${session.cli} ${session.version}` : session.cli}</span>
         </div>
         <div className="session-actions">
-          {!session.ptyId && <span className="token-count">{session.tokens} <span>tokens</span></span>}
-          <button className="session-control" onClick={(event) => { event.stopPropagation(); onPopup(session); }}>{detached || popup ? 'Reintegrar' : 'Pop-up'}</button>
+          {!session.ptyId && !session.archived && <span className="token-count">{session.tokens} <span>tokens</span></span>}
+          {!session.archived && <button className="session-control" onClick={(event) => { event.stopPropagation(); onPopup(session); }}>{detached || popup ? 'Reintegrar' : 'Pop-up'}</button>}
           {!popup && !detached && <button className="session-control" title="Alternar foco" aria-label={`Focar ${session.name}`} onClick={(event) => { event.stopPropagation(); onFocus(session.id); }}>{focused ? 'Grid' : 'Foco'}</button>}
         </div>
       </header>
 
       {detached ? <div className="detached-terminal-placeholder"><span>Terminal aberto em outra janela.</span><button className="button secondary compact" onClick={() => onPopup(session)}>Reintegrar</button></div> : <>
-        <div className={`terminal-window harness-${harness} ${session.ptyId ? 'real-terminal' : ''}`} aria-label={`Terminal interativo nativo do ${session.cli}`}>
-          {session.ptyId ? <TerminalView terminalId={session.ptyId} desktop={desktop} theme={{ ...theme, ink: getAccentInk(theme.background) }} onExit={(exit) => onExit(session.id, exit)} /> : <>
+        <div className={`terminal-window harness-${harness} ${session.ptyId ? 'real-terminal' : ''}`} aria-label={session.archived ? `Histórico de ${session.name}` : `Terminal interativo nativo do ${session.cli}`}>
+          {session.archived ? <div className="session-history">
+            <strong>Histórico de sessão</strong>
+            <p>{session.status}. Nenhum processo está conectado.</p>
+            <p>O conteúdo do terminal não foi salvo. Abra uma nova sessão para continuar o trabalho.</p>
+            <dl><dt>Diretório</dt><dd>{session.worktree}</dd><dt>Início</dt><dd>{session.createdAt}</dd><dt>Fim registrado</dt><dd>{session.endedAt || 'sem confirmação'}</dd></dl>
+          </div> : session.ptyId ? <TerminalView terminalId={session.ptyId} desktop={desktop} theme={{ ...theme, ink: getAccentInk(theme.background) }} onExit={(exit) => onExit(session.id, exit)} /> : <>
             <div className="terminal-lines">
               <HarnessIntro harness={harness} session={session} />
               {[...session.lines, ...localLines].map((line, index) => (
@@ -307,7 +313,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
         </div>
         <footer className="session-footer">
           <div className="session-state"><StatusDot color={session.color} pulse={session.status === 'trabalhando'} /><span>{session.status}</span></div>
-          <span className="session-task">{session.ptyId ? session.worktree : session.task}</span>
+          <span className="session-task">{session.ptyId || session.archived ? session.worktree : session.task}</span>
         </footer>
       </>}
     </article>
@@ -601,6 +607,15 @@ export default function App() {
   }, [isSecondaryWindow]);
 
   useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow) return undefined;
+    let active = true;
+    desktop.listAgents().then((agents) => {
+      if (active) setSessions((current) => mergeAgentSessions(current, agents));
+    }).catch((error) => notify(`Não foi possível carregar as sessões: ${error.message}`));
+    return () => { active = false; };
+  }, [isSecondaryWindow, projects]);
+
+  useEffect(() => {
     document.body.classList.toggle('native-panel-window', Boolean(isNativePanelWindow));
     document.body.classList.toggle('native-terminal-window', Boolean(isNativeTerminalWindow));
     return () => document.body.classList.remove('native-panel-window', 'native-terminal-window');
@@ -885,7 +900,7 @@ export default function App() {
   }
 
   async function createSession({ kind, name, cli, cwd }) {
-    const id = `${kind}-${Date.now()}`;
+    let id = `${kind}-${Date.now()}`;
     const isTerminal = kind === 'terminal';
     let pty = null;
     let agent = null;
@@ -900,7 +915,8 @@ export default function App() {
       }
       setCreatingTerminal(false);
     }
-    const session = {
+    if (agent) id = agent.id;
+    const session = agent ? agentSession(agent) : {
       id,
       ptyId: pty?.id || agent?.ptyId || null,
       name: agent?.name || name || (isTerminal ? 'terminal-local' : 'nova-sessao'),
@@ -925,7 +941,7 @@ export default function App() {
         { type: 'command', text: '❯ aguardando sua primeira instrução' },
       ],
     };
-    setSessions((current) => [...current, session]);
+    setSessions((current) => [...current.filter((item) => item.id !== id), session]);
     setSelectedId(id);
     setFocusId(null);
     setModal(null);

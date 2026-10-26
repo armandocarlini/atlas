@@ -8,7 +8,7 @@ import path from 'node:path';
 const { createAgentHost } = createRequire(import.meta.url)('../electron/agent-host.cjs');
 const { createOperationalStore } = createRequire(import.meta.url)('../electron/operational-store.cjs');
 
-function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError } = {}) {
+function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [] } = {}) {
   const handlers = new Map();
   const listeners = new Map();
   const ipcMain = {
@@ -20,6 +20,7 @@ function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersi
     getDefaultCwd: () => allowedCwds[0],
     isAllowedCwd: (cwd) => allowedCwds.some((allowed) => allowed.toLowerCase() === String(cwd).toLowerCase()),
     getProjectForCwd: () => ({ id: 'project-a' }),
+    getProjects: () => projectRecords,
   };
   const spawns = [];
   const records = [];
@@ -208,4 +209,39 @@ test('falha ao persistir saída é reportada; callback tardio após fechar banco
   store.closed = true;
   transport.records[0].emitExit(0, 0);
   assert.equal(errors.length, 1);
+});
+
+test('agent:list restaura histórico autorizado sem PTY e sem duplicar agente ativo', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-history-'));
+  const store = createOperationalStore({ filename: path.join(directory, 'history.sqlite') });
+  t.after(() => {
+    store.close();
+    const resolved = fs.realpathSync(directory);
+    assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
+    assert(path.basename(resolved).startsWith('atlas-history-'));
+    fs.rmSync(resolved, { recursive: true, force: true });
+  });
+  const projectRecords = [{ id: 'project-a', name: 'Fixture', path: 'C:\\projeto' }];
+  store.registerProject(projectRecords[0]);
+  const first = createHarness({ store, projectRecords });
+  const agent = await first.handlers.get('agent:create')(first.mainEvent, { adapterId: 'kimi-code' });
+  assert.equal(first.host.listAgents().length, 1);
+  assert.equal(first.host.listAgents()[0].ptyId, 'pty-1');
+  store.reconcileRuns();
+  const reopened = createHarness({ store, projectRecords });
+  const [history] = reopened.handlers.get('agent:list')(reopened.mainEvent);
+  assert.equal(history.id, agent.id);
+  assert.equal(history.runId, agent.runId);
+  assert.equal(history.archived, true);
+  assert.equal(history.ptyId, null);
+  assert.equal(history.runState, 'lost');
+  assert.equal(history.exit, null);
+  assert.equal(reopened.spawns.length, 0);
+  assert.deepEqual(reopened.handlers.get('agent:list')({ sender: 'popup' }), []);
+  const unauthorized = createHarness({ store, projectRecords, allowedCwds: ['C:\\outro'] });
+  assert.deepEqual(unauthorized.host.listAgents(), []);
+  // A project remains authorized while an old linked worktree can be unavailable.
+  reopened.projectHost.isAllowedCwd = (cwd) => cwd === 'C:\\projeto';
+  store.startSession({ id: 'private-session', projectId: 'project-a', name: 'Hidden', adapterId: 'kimi-code', cli: 'Kimi Code', version: '2.3.2', cwd: 'C:\\old-worktree', origin: 'user', createdAt: new Date().toISOString() });
+  assert.equal(reopened.host.listAgents().length, 1);
 });

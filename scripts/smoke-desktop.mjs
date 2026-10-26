@@ -63,6 +63,17 @@ if (process.argv.includes('--git-only')) {
 }
 
 const port = process.env.ATLAS_SMOKE_PORT || '9333';
+// Simulate a previous process crash using only this run's isolated profile.
+const { createOperationalStore } = createRequire(import.meta.url)('../electron/operational-store.cjs');
+const { idFor } = createRequire(import.meta.url)('../electron/git-discovery.cjs');
+const seed = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
+const projectId = idFor(fs.realpathSync(fixture));
+seed.registerProject({ id: projectId, name: path.basename(fixture), path: fs.realpathSync(fixture) });
+seed.startSession({ id: 'history-fixture', projectId, name: 'histórico-fixture', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(fixture), origin: 'user', createdAt: new Date(Date.now() - 60000).toISOString() });
+const extraProjectId = idFor(fs.realpathSync(extraProject));
+seed.registerProject({ id: extraProjectId, name: path.basename(extraProject), path: fs.realpathSync(extraProject) });
+seed.startSession({ id: 'reauthorized-fixture', projectId: extraProjectId, name: 'histórico-reauthorized', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'user', createdAt: new Date(Date.now() - 60000).toISOString() });
+seed.close();
 const endpoint = `http://127.0.0.1:${port}`;
 const electron = createRequire(import.meta.url)('electron');
 const controlPort = Number(port) + 1;
@@ -148,8 +159,25 @@ async function screenshot(cdp, name) {
 try {
   const main = await connect(await until(async () => (await pages()).find((item) => !item.url.includes('window=')), 'main window'));
   await until(() => main.evaluate(`Boolean(document.querySelector('.app-shell'))`), 'React ready');
+  await until(() => main.evaluate(`Boolean(document.querySelector('.session-history'))`), 'persisted session restored');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 1, 'Unauthorized project history must remain hidden');
+  const restoredHistory = await main.evaluate(`(() => { const history = document.querySelector('.session-history'); const card = history.closest('.session-card'); return { text: history.innerText, inputs: card.querySelectorAll('input, textarea').length, popup: [...card.querySelectorAll('button')].some(item => item.textContent === 'Pop-up'), tokens: Boolean(card.querySelector('.token-count')) }; })()`);
+  assert(restoredHistory.text.includes('resultado incerto'));
+  assert(restoredHistory.text.includes(fixture));
+  assert.equal(restoredHistory.inputs, 0);
+  assert.equal(restoredHistory.popup, false);
+  assert.equal(restoredHistory.tokens, false);
+  assert.equal((await native('terminals')).length, 0, 'Restoring history must not spawn a process');
+  await main.evaluate(`document.querySelector('.session-history').closest('.session-card').querySelector('[title="Alternar foco"]').click()`);
+  await screenshot(main, 'session-history');
+  const historyAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(historyAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in restored history');
+  await main.evaluate(`document.querySelector('.session-history').closest('.session-card').querySelector('[title="Alternar foco"]').click()`);
+  console.log('PASS histórico restaurado como lost, sem PTY, composer ou métricas fictícias');
   await native('focus');
   await click(main, '.add-project');
+  await until(() => main.evaluate(`document.querySelectorAll('.session-history').length === 2`), 'history loaded after project authorization without reload');
+  console.log('PASS autorizar projeto restaura histórico adicional sem recarregar a UI');
   await until(() => main.evaluate(`document.querySelectorAll('.worktree-item').length >= 2`), 'Git discovery UI');
   await until(() => main.evaluate(`!document.querySelector('.discovery-heading button').disabled`), 'project loading finished');
   await main.evaluate(`[...document.querySelectorAll('.project-tab')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
@@ -258,6 +286,7 @@ try {
   await main.evaluate(`window.atlasDesktop.closePty(${JSON.stringify(first.id)})`);
   await until(() => main.evaluate(`[...document.querySelectorAll('.session-state')].some(item => item.textContent.includes('encerrado'))`), 'visible exit status');
   await main.call('Page.reload');
+  await until(() => main.evaluate(`document.querySelectorAll('.session-history').length === 2`), 'history restored once after reload');
   await until(() => main.evaluate(`document.querySelector('.app-shell') && document.querySelectorAll('[data-column-id]').length === 1 && getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#18222b'`), 'layout and custom background persisted after reload');
   await until(() => main.evaluate(`window.atlasDesktop.listProjects().then(items => items.some(item => item.path === ${JSON.stringify(extraProject)}))`), 'authorized project restored');
   // UI sessions are intentionally not persisted yet; PTYs are still closed below by id.
@@ -335,6 +364,7 @@ try {
   assert(paths.includes(fs.realpathSync(fixture)), 'Initial project must persist in SQLite');
   assert(paths.includes(fs.realpathSync(extraProject)), 'Authorized project must persist in SQLite');
   assert.equal(persisted.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
+  assert.equal(persisted.prepare('SELECT state FROM agent_runs WHERE session_id = ?').get('history-fixture').state, 'lost');
 } finally {
   persisted.close();
 }

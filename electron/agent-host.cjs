@@ -26,6 +26,31 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     };
   }
 
+  function listAgents() {
+    const current = [...agents.values()].map(describe);
+    if (!store) return current;
+    const activeIds = new Set(current.map((agent) => agent.id));
+    const history = [];
+    for (const project of projectHost.getProjects()) {
+      if (!projectHost.isAllowedCwd(project.path)) continue;
+      const latestRuns = new Map(store.listRuns(project.id).map((run) => [run.session_id, run]));
+      for (const session of store.listSessions(project.id)) {
+        if (activeIds.has(session.id) || !projectHost.isAllowedCwd(session.cwd)) continue;
+        const run = latestRuns.get(session.id);
+        if (!run) continue;
+        history.push({
+          id: session.id, name: session.name, adapterId: session.adapter_id, cli: session.cli,
+          version: session.cli_version, cwd: session.cwd, origin: session.origin,
+          projectId: project.id, ptyId: null, state: 'exited', archived: true,
+          runId: run.id, runState: run.state, reason: run.reason,
+          exit: run.exit_code === null ? null : { exitCode: run.exit_code, signal: run.signal },
+          createdAt: session.created_at, endedAt: run.ended_at,
+        });
+      }
+    }
+    return [...current, ...history];
+  }
+
   async function listAdapters() {
     if (!discoveryPromise) {
       discoveryPromise = discover().finally(() => { discoveryPromise = null; });
@@ -40,7 +65,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
 
   ipcMain.handle('agent:list', (event) => {
     if (!isMainSender(event)) return [];
-    return [...agents.values()].map(describe);
+    return listAgents();
   });
 
   ipcMain.handle('agent:create', async (event, request = {}) => {
@@ -115,7 +140,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
   });
 
   return {
-    listAgents: () => [...agents.values()].map(describe),
+    listAgents,
     getAgent: (id) => agents.get(id),
   };
 }

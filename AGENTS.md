@@ -11,7 +11,7 @@ Leia `docs/AUTONOMIA_V0_1.md`, `docs/CONTINUIDADE.md`, `README.md` e os trechos 
 - Electron, PowerShell via PTY, descoberta Git e janelas nativas funcionam.
 - O adaptador Kimi Code é real: o CLI é detectado pelo `PATH` e inicia sessões interativas em pastas autorizadas, com estado `running`/`exited` e sem flags de autonomia.
 - Tarefas, mensagens, evidências e os quatro cards iniciais do cockpit são ilustrativos. Não os apresente como integrações ativas.
-- A base SQLite registra projetos, sessões, runs e eventos. Tarefas persistentes, restauração de cards, orquestrador e coordenação são próximos incrementos.
+- A base SQLite registra projetos, sessões, runs e eventos. Sessões anteriores de escopos ainda autorizados reaparecem como histórico sem PTY. Tarefas persistentes, orquestrador e coordenação são próximos incrementos.
 - Descoberta Git deve permanecer somente leitura. Não inicialize nem altere repositórios do usuário como parte da descoberta.
 
 ## Autonomia delimitada até a v0.1
