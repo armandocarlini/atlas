@@ -14,6 +14,14 @@ O shell Electron funciona com PowerShell real via node-pty/ConPTY e xterm.js. H�
 
 O primeiro adaptador de agente real está integrado: o ATLAS descobre o Kimi Code pelo `PATH` (`electron/agent-adapters.cjs`), inicia o CLI interativo em PTY compartilhado (`electron/pty-transport.cjs`) e registra identidade, versão, diretório e estado `running`/`exited` em memória (`electron/agent-host.cjs`). O modal de nova sessão lista somente CLIs detectados e mostra erros inline sem perder os campos. Os testes de unidade rodam com `npm run test:agent`; o smoke real opt-in (`npm run smoke:agent`) executa o Kimi de verdade com `KIMI_CODE_HOME` isolado, usando apenas `/status` e `/exit`.
 
+Registro de processo (26/10/2026): o merge do PR #8 (adaptador Kimi) ocorreu com a CI do Ubuntu vermelha por erro de encadeamento de comandos do agente (`gh pr checks --watch | tail` mascarou o status de saída). O log da execução 40310345895 confirma dois testes vermelhos: o resolvedor de executáveis usava `path.join` do host mesmo quando recebia outra plataforma. A correção pendente usa `path.win32`/`path.posix` conforme a plataforma consultada e adiciona regressão POSIX de descoberta.
+
+Plano da correção: preservar a busca pelo PATH e a preferência por executáveis nativos; validar os cenários Windows e POSIX; executar os gates locais e verificar os checks do PR em comando dedicado, sem pipe, antes do merge. A branch foi retomada com três arquivos já modificados pelo trabalho anterior, preservados nesta continuação.
+
+Ambiente da retomada: Windows, Node.js 24.14.0 selecionado somente para os comandos da sessão (o PATH inicial selecionava Node.js 20.20.0, abaixo do requisito). O ai-memory local foi consultado via CLI: responde, mas não contém `default/ATLAS`; a busca global por ATLAS também não retornou páginas. Os documentos versionados fornecem a continuidade nesta máquina.
+
+Evidências locais da correção: `npm test` (19/19), `npm run test:agent` (16/16), `npm run build`, `npm run check:public` e `npm run test:desktop` passaram em Windows. O smoke desktop executou Electron, dois PTYs reais e descoberta Git em fixture temporária, incluindo limpeza dos processos. A execução inicial no sandbox foi bloqueada ao criar a fixture Git; a execução autorizada fora do sandbox passou. A validação nativa em Ubuntu depende da CI do PR.
+
 Tarefas, mensagens, evidências e os quatro cards iniciais continuam ilustrativos. Ainda não há SQLite, orquestrador conectado ou persistência operacional. O próximo marco é SQLite, migrations e o modelo operacional mínimo, seguido do orquestrador real.
 
 O Kimi foi interrompido durante os testes de dois terminais e descoberta Git. Essa etapa foi concluída: os testes agora são reproduzíveis em `scripts/`, e os marcos confirmados foram atualizados no planejamento. O relatório técnico/visual está em `docs/VALIDACAO_DESKTOP.md`.

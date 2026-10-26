@@ -26,16 +26,13 @@ function pathExtensions(env, platform) {
 }
 
 function resolveOnPath(command, { env = process.env, platform = process.platform, existsSync = fs.existsSync } = {}) {
+  const pathImpl = platform === 'win32' ? path.win32 : path.posix;
   const delimiter = platform === 'win32' ? ';' : ':';
   const directories = (env.PATH || '').split(delimiter).filter(Boolean);
   for (const directory of directories) {
     for (const extension of pathExtensions(env, platform)) {
-      const candidate = path.join(directory, platform === 'win32' ? `${command}${extension}` : command);
-      if (extension === '' && platform !== 'win32') {
-        if (existsSync(candidate)) return candidate;
-      } else if (existsSync(candidate)) {
-        return candidate;
-      }
+      const candidate = pathImpl.join(directory, platform === 'win32' ? `${command}${extension}` : command);
+      if (existsSync(candidate)) return candidate;
     }
   }
   return null;

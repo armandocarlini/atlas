@@ -32,6 +32,20 @@ test('descoberta prefere .exe a shims .cmd no Windows', () => {
   assert.equal(resolved, 'C:\\cli\\kimi.exe');
 });
 
+test('descoberta resolve executável sem extensão no POSIX', async () => {
+  const [adapter] = await discoverAdapters({
+    env: { PATH: '/usr/local/bin:/usr/bin' },
+    platform: 'linux',
+    existsSync: (candidate) => candidate === '/usr/bin/kimi',
+    execFileImpl: async (file) => {
+      assert.equal(file, '/usr/bin/kimi');
+      return { stdout: '2.3.2\n', stderr: '' };
+    },
+  });
+  assert.equal(adapter.status, 'available');
+  assert.equal(adapter.executable, '/usr/bin/kimi');
+});
+
 test('adaptador ausente do PATH fica indisponível com erro acionável', async () => {
   const [adapter] = await discoverAdapters({
     env: { PATH: 'C:\\vazio', PATHEXT: '.EXE' },
