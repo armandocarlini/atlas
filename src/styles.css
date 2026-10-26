@@ -680,6 +680,9 @@ body { transition: background-color .18s ease, color .18s ease; }
 .custom-color small, .appearance-intro p, .appearance-preview p { color: var(--muted); }
 .scope-note { background: var(--accent-soft); }
 .scope-note span { color: var(--muted); }
+.scope-note.error-note { background: transparent; border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); color: var(--danger); }
+.scope-note.error-note span { color: var(--text); }
+.origin-badge.demo { border-style: dashed; }
 .toast { color: var(--text); background: var(--surface-raised); border-color: var(--border); }
 
 @media (max-width: 940px) {

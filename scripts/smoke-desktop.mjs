@@ -265,6 +265,15 @@ try {
   await click(main, '.toolbar-actions button', 'Navegação');
   await click(main, '.toolbar-actions button', 'Painéis');
   console.log('PASS ocultar e restaurar as duas colunas');
+  await click(main, '.toolbar-actions button', 'Sessão');
+  await until(() => main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].some(item => item.textContent.includes('Kimi Code'))`), 'adapters listed in session modal');
+  await screenshot(main, 'session-modal');
+  const adapterOption = await main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].map(item => ({ text: item.textContent, disabled: item.disabled }))`);
+  fs.writeFileSync(path.join(resultsDir, 'session-modal-adapters.json'), JSON.stringify(adapterOption, null, 2));
+  assert(adapterOption.every((item) => item.text !== 'Claude Code'), 'modal desktop não deve listar CLIs fictícios');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'session modal closed');
+  console.log('PASS modal de sessão lista somente adaptadores detectados');
   await click(main, '.title-actions button', 'Aparência');
   await click(main, '.background-presets button', 'Névoa');
   assert.equal(await main.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#eef1f4');

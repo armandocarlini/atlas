@@ -9,8 +9,9 @@ Leia `docs/AUTONOMIA_V0_1.md`, `docs/CONTINUIDADE.md`, `README.md` e os trechos 
 ## Limites do incremento atual
 
 - Electron, PowerShell via PTY, descoberta Git e janelas nativas funcionam.
-- Os cards e dados de agentes, tarefas, mensagens e evidências são ilustrativos. Não os apresente como integrações ativas.
-- SQLite, adaptadores reais, orquestrador e coordenação persistente são próximos marcos.
+- O adaptador Kimi Code é real: o CLI é detectado pelo `PATH` e inicia sessões interativas em pastas autorizadas, com estado `running`/`exited` e sem flags de autonomia.
+- Tarefas, mensagens, evidências e os quatro cards iniciais do cockpit são ilustrativos. Não os apresente como integrações ativas.
+- SQLite, orquestrador e coordenação persistente são próximos marcos.
 - Descoberta Git deve permanecer somente leitura. Não inicialize nem altere repositórios do usuário como parte da descoberta.
 
 ## Autonomia delimitada até a v0.1
@@ -23,7 +24,7 @@ Leia `docs/AUTONOMIA_V0_1.md`, `docs/CONTINUIDADE.md`, `README.md` e os trechos 
 ## Testes e regressões
 
 - Gates obrigatórios em cada PR: `npm test`, `npm run build` e `npm run check:public`.
-- Execute também `npm run test:desktop` no Windows e sempre que houver mudanças desktop. Quando adaptadores reais existirem, execute `npm run test:agent` e os futuros testes desses subsistemas.
+- Execute também `npm run test:desktop` no Windows e sempre que houver mudanças desktop, e `npm run test:agent` para mudanças no subsistema de agentes. O smoke real opt-in (`npm run smoke:agent`) exige o Kimi Code instalado e roda com `KIMI_CODE_HOME` isolado.
 - Acrescente testes unitários, de integração e E2E proporcionais a cada alteração. Todo bug corrigido deve ganhar regressão reproduzível. Inclua casos negativos e, conforme o subsistema, concorrência, reinício, migrations, backup/restore e segurança.
 - Não apague ou enfraqueça testes para obter verde, não esconda falhas com retries, não reduza cobertura para contornar regressão e não declare sucesso com testes vermelhos, pulados, ausentes ou timeout.
 - O smoke e testes com CLI usam apenas fixtures temporárias. Não rode testes destrutivos ou comandos de escrita contra projetos reais.

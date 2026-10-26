@@ -9,13 +9,15 @@ Cockpit local para acompanhar e coordenar agentes de código em múltiplos termi
 
 Projeto criado por [Armando Ciciliano Carlini](https://github.com/armandocarlini) como parte do seu portfólio profissional. O foco é construir uma ferramenta local de trabalho com agentes e demonstrar decisões de arquitetura, interação, segurança e validação com evidências reproduzíveis.
 
-**English:** ATLAS is an open-source, local-first desktop cockpit for AI coding workflows. Interactive PowerShell terminals and read-only Git discovery work today; agent orchestration and persistent collaboration are on the roadmap.
+**English:** ATLAS is an open-source, local-first desktop cockpit for AI coding workflows. Interactive PowerShell terminals, read-only Git discovery and a real Kimi Code adapter work today; orchestration and persistent collaboration are on the roadmap.
 
 ## Estado atual
 
-Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY e descoberta Git somente leitura. As sessões de agentes, tarefas, mensagens e evidências exibidas no cockpit ainda são ilustrativas: adaptadores de harnesses, SQLite e orquestração serão implementados nas próximas etapas.
+Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY, descoberta Git somente leitura e o primeiro adaptador de agente real: o ATLAS detecta o Kimi Code no `PATH` e inicia sessões interativas do CLI em pastas autorizadas. Tarefas, mensagens e evidências exibidas no cockpit ainda são ilustrativas; SQLite e orquestração serão implementados nas próximas etapas. Os quatro cards iniciais do cockpit são marcados como ilustrativos e não representam integrações ativas.
 
 Já estão implementados:
+
+- sessões de agente com o Kimi Code real, detectado pelo `PATH` e iniciado em PTY interativo, com versão, diretório e estado (`running`/`exited`) visíveis;
 
 - PowerShell real com `node-pty` e xterm.js, incluindo ANSI, teclado, resize, seleção e scrollback;
 - descoberta de repositórios, branches e worktrees em pastas autorizadas;
@@ -92,13 +94,26 @@ npm start
 
 O `npm start` utiliza o conteúdo gerado em `dist`. Execute `npm run build` novamente depois de alterar o código.
 
+## Sessões de agente
+
+O botão **Sessão** lista os CLIs de agente detectados no `PATH` (neste marco, o Kimi Code). A sessão inicia o CLI real e interativo na worktree ou pasta autorizada escolhida, sem flags de autonomia e sem prompt inicial: permissões e modelo permanecem no harness. O card exibe nome, CLI com versão detectada e diretório, e o estado operacional é apenas `running` ou `exited` — nada é inferido do conteúdo do terminal.
+
 ## Validação
 
 ```powershell
 npm test
 npm run build
+npm run test:agent
 npm run test:desktop
 ```
+
+`npm run test:agent` cobre a descoberta de adaptadores e o ciclo de vida das sessões com duplos de teste. O smoke real do adaptador é opt-in e exige o Kimi Code instalado:
+
+```powershell
+npm run smoke:agent
+```
+
+Ele inicia o CLI real em uma fixture temporária com `KIMI_CODE_HOME` isolado, envia somente `/status` e `/exit` (sem prompts ao modelo e sem consumo de tokens) e confirma o encerramento limpo com código 0.
 
 O smoke test abre uma instância Electron com preferências isoladas, cria uma fixture Git temporária e usa PowerShells reais. Valida diretório da worktree, Unicode, resize, Ctrl+C, dois streams independentes, pop-ups, reintegração, acompanhamento sempre no topo, temas, persistência de layout e encerramento dos processos. As janelas de teste podem aparecer durante a execução. A fixture é removida ao concluir com sucesso; em caso de falha, seu caminho é registrado para diagnóstico.
 
@@ -114,8 +129,11 @@ electron/
   preload.cjs           API IPC estreita e isolada
   project-host.cjs      Pastas autorizadas e projetos
   git-discovery.cjs     Repositórios, branches e worktrees
-  terminal-host.cjs     PTYs, streams e scrollback em memória
-scripts/                Inicialização desktop
+  pty-transport.cjs     Transporte PTY compartilhado e scrollback em memória
+  terminal-host.cjs     Terminais PowerShell
+  agent-adapters.cjs    Metadados e descoberta de CLIs de agente
+  agent-host.cjs        Identidade e ciclo de vida das sessões de agente
+scripts/                Inicialização desktop, testes e smokes
 src/
   App.jsx               Cockpit e estado compartilhado
   TerminalView.jsx      Terminal xterm.js
@@ -130,7 +148,7 @@ A janela principal e os pop-ups usam `BroadcastChannel` para sincronizar o estad
 
 ## Privacidade
 
-O ATLAS funciona localmente, sem telemetria ou serviço central obrigatório. Somente pastas autorizadas são descobertas. A entrada digitada no terminal não é registrada pelo ATLAS; a saída permanece somente em um buffer temporário nesta etapa. Dados de agentes, tarefas, mensagens e evidências continuam ilustrativos e não representam integrações ativas.
+O ATLAS funciona localmente, sem telemetria ou serviço central obrigatório. Somente pastas autorizadas são descobertas e somente nelas os CLIs de agente são iniciados. A entrada digitada no terminal não é registrada pelo ATLAS; a saída permanece somente em um buffer temporário nesta etapa. Tarefas, mensagens e evidências continuam ilustrativas e não representam integrações ativas.
 
 ## Contribuição e licença
 
