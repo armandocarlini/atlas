@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID, createHash } = require('node:crypto');
 const { DatabaseSync, backup } = require('node:sqlite');
+const { createTaskDelegation } = require('./task-delegation.cjs');
 
 const MIGRATIONS = [{
   version: 1,
@@ -104,6 +105,29 @@ const MIGRATIONS = [{
       version INTEGER NOT NULL
     ) STRICT;
     CREATE INDEX agent_requests_by_project ON agent_requests(project_id, created_at);
+  `,
+}, {
+  version: 6,
+  sql: `
+    ALTER TABLE tasks ADD COLUMN assigned_session_id TEXT REFERENCES sessions(id);
+    ALTER TABLE tasks ADD COLUMN claim_run_id TEXT REFERENCES agent_runs(id);
+    ALTER TABLE tasks ADD COLUMN claim_epoch INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE tasks ADD COLUMN blocked_reason TEXT;
+    CREATE TABLE handoffs (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      from_session_id TEXT NOT NULL REFERENCES sessions(id),
+      to_session_id TEXT NOT NULL REFERENCES sessions(id),
+      objective TEXT NOT NULL CHECK(length(objective) BETWEEN 1 AND 2000),
+      context TEXT NOT NULL CHECK(length(context) <= 4000),
+      next_steps TEXT NOT NULL CHECK(length(next_steps) <= 2000),
+      state TEXT NOT NULL CHECK(state IN ('offered', 'accepted', 'rejected', 'canceled')),
+      created_at TEXT NOT NULL, resolved_at TEXT, resolved_by TEXT, reason TEXT,
+      version INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX handoffs_by_project ON handoffs(project_id, created_at);
+    CREATE UNIQUE INDEX one_open_handoff_per_task ON handoffs(task_id) WHERE state = 'offered';
+    CREATE INDEX tasks_by_claim_run ON tasks(claim_run_id) WHERE claim_run_id IS NOT NULL;
   `,
 }];
 
@@ -209,6 +233,9 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     );
   }
 
+  const delegation = createTaskDelegation({ db, now, event, transaction });
+  const { loseClaims, ...delegationApi } = delegation;
+
   function finishRun({ runId, expectedVersion, exitCode, signal = null }) {
     if (!Number.isInteger(exitCode) || (signal !== null && !Number.isInteger(signal))) throw new Error('Saída de processo inválida.');
     return transaction(db, () => {
@@ -223,6 +250,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       const state = exitCode === 0 && !signal ? 'succeeded' : 'failed';
       db.prepare(`UPDATE agent_runs SET state = ?, version = version + 1, ended_at = ?, exit_code = ?, signal = ? WHERE id = ?`).run(state, at, exitCode, signal, runId);
       event({ projectId: run.project_id, sessionId: run.session_id, runId, type: `run.${state}`, payload: { exitCode, signal }, at });
+      loseClaims(runId, at);
       return true;
     });
   }
@@ -241,14 +269,14 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         const id = randomUUID();
         const commandId = randomUUID();
         const at = now();
-        const task = { id, projectId: request.projectId, ...payload, state: 'backlog', version: 1, createdBy: 'user', createdAt: at, updatedAt: at };
-        db.prepare('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, request.projectId, payload.title, payload.description, payload.acceptance, 'backlog', 1, 'user', at, at);
+        const task = { id, projectId: request.projectId, ...payload, state: 'backlog', version: 1, createdBy: 'user', createdAt: at, updatedAt: at, assignedSessionId: null, assigneeName: null, claimRunId: null, claimEpoch: 0, blockedReason: null };
+        db.prepare('INSERT INTO tasks (id, project_id, title, description, acceptance, state, version, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, request.projectId, payload.title, payload.description, payload.acceptance, 'backlog', 1, 'user', at, at);
         db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'task.create', id, encoded, hash, request.idempotencyKey, 'completed', 'user', at, at, JSON.stringify(task), commandId);
         event({ projectId: request.projectId, type: 'task.created', payload: { taskId: id }, correlationId: commandId, at });
         return task;
       });
     },
-    listTasks: (projectId) => db.prepare(`SELECT id, project_id AS projectId, title, description, acceptance, state, version, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt FROM tasks WHERE project_id = ? ORDER BY created_at, id`).all(projectId).map((row) => ({ ...row })),
+    ...delegationApi,
     sendMessage(request) {
       const payload = messagePayload(request);
       // Ator auditado do comando: o usuário pela interface ou a sessão de agente pela ponte MCP.
@@ -416,6 +444,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         for (const run of active) {
           db.prepare(`UPDATE agent_runs SET state = 'lost', version = version + 1, ended_at = ?, reason = ? WHERE id = ?`).run(at, reason, run.id);
           event({ projectId: run.project_id, sessionId: run.session_id, runId: run.id, type: 'run.lost', payload: { reason }, at });
+          loseClaims(run.id, at);
         }
         // Aprovação persistida não autoriza repetir um spawn após interrupção.
         // Um processo pode ter iniciado antes do crash: mantenha o histórico,

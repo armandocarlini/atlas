@@ -13,7 +13,7 @@ Projeto criado por [Armando Ciciliano Carlini](https://github.com/armandocarlini
 
 ## Estado atual
 
-Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY e descoberta Git somente leitura. O ATLAS detecta o Kimi Code no `PATH` e abre uma sessão principal real de planejamento no projeto autorizado, além das sessões manuais. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`, e o painel Mensagens registra descobertas estruturadas entre sessões reais do projeto, com entrega e leitura persistidas. Com o consentimento explícito do usuário, o ATLAS registra o servidor MCP `atlas` no `mcp.json` do Kimi. Cada sessão iniciada pelo ATLAS recebe então ferramentas restritas ao próprio projeto para listar sessões e tarefas e ler, marcar e enviar mensagens; fora do ATLAS a entrada fica inerte. A sessão principal pode pedir novos agentes; cada pedido aparece no workspace com propósito, validade e política, e o agente só é iniciado, com origem `orchestrator`, depois da aprovação do usuário. Delegação de tarefas pelo orquestrador, execução de tarefas, handoffs e evidências estruturadas permanecem nos próximos marcos. Os quatro cards de demonstração aparecem somente no navegador e não representam integrações ativas.
+Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY e descoberta Git somente leitura. O ATLAS detecta o Kimi Code no `PATH` e abre uma sessão principal real de planejamento no projeto autorizado, além das sessões manuais. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`, e o painel Mensagens registra descobertas estruturadas entre sessões reais do projeto, com entrega e leitura persistidas. Com o consentimento explícito do usuário, o ATLAS registra o servidor MCP `atlas` no `mcp.json` do Kimi. Cada sessão iniciada pelo ATLAS recebe então ferramentas restritas ao próprio projeto para listar sessões e tarefas e ler, marcar e enviar mensagens; fora do ATLAS a entrada fica inerte. A sessão principal pode pedir novos agentes; cada pedido aparece no workspace com propósito, validade e política, e o agente só é iniciado, com origem `orchestrator`, depois da aprovação do usuário. A principal também delega tarefas existentes por handoff: o agente de destino aceita ou recusa pelas ferramentas do ATLAS, informa progresso e bloqueios, e o painel Tarefas mostra oferta, responsável e bloqueio, com cancelar oferta e devolver tarefa. Delegar não amplia permissões nem conclui tarefas. Worktrees sob política, revisão, conclusão e evidências estruturadas permanecem nos próximos marcos. Os quatro cards de demonstração aparecem somente no navegador e não representam integrações ativas.
 
 Já estão implementados:
 
@@ -107,7 +107,7 @@ Projetos, sessões, runs e eventos são registrados em `atlas.sqlite`, no diret�
 
 Ao abrir um projeto autorizado sem principal anterior, o desktop inicia o Kimi interativo com um perfil de planejamento do ATLAS. O perfil permite apenas ferramentas de leitura; modelo e permissões permanecem no harness, sem flags de autonomia nem prompt inicial. A principal aparece antes das sessões manuais do projeto e não substitui seu terminal.
 
-Há uma identidade principal por projeto. Depois de saída ou interrupção, **Nova execução** cria outra tentativa com essa identidade, sem prometer retomada da conversa nativa. Se estiver em pop-up, o ATLAS reintegra a janela antes de conectar o novo PTY. Abrir novamente um projeto com histórico não ressuscita processos automaticamente. Delegação entre sessões ainda não está conectada.
+Há uma identidade principal por projeto. Depois de saída ou interrupção, **Nova execução** cria outra tentativa com essa identidade, sem prometer retomada da conversa nativa. Se estiver em pop-up, o ATLAS reintegra a janela antes de conectar o novo PTY. Abrir novamente um projeto com histórico não ressuscita processos automaticamente. A delegação de tarefas acontece por handoff e exige o aceite do agente de destino.
 
 ## Tarefas do projeto
 
@@ -161,7 +161,8 @@ electron/
   agent-adapters.cjs    Metadados e descoberta de CLIs de agente
   agent-host.cjs        Identidade e ciclo de vida das sessões de agente
   operational-store.cjs SQLite, migrations, runs e eventos persistentes
-  task-host.cjs         Criação e listagem de tarefas em escopo autorizado
+  task-host.cjs         Tarefas em escopo autorizado; cancelar oferta e devolver tarefa
+  task-delegation.cjs   Handoffs, claim com fencing, progresso e bloqueio de tarefas
   message-host.cjs      Envio, listagem e leitura de mensagens entre sessões
   mcp-host.cjs          Ferramentas do ATLAS por sessão via pipe local e token por run
   atlas-mcp-bridge.cjs  Servidor MCP stdio iniciado pelo Kimi; inerte fora do ATLAS
@@ -174,7 +175,7 @@ src/
   App.jsx               Cockpit e estado compartilhado
   TerminalView.jsx      Terminal xterm.js
   GitDiscovery.jsx      Árvore Git na navegação
-  PersistentTasks.jsx   Painel e modal de tarefas reais
+  PersistentTasks.jsx   Painel e modal de tarefas reais, com execução delegada
   SessionMessages.jsx   Painel e modal de mensagens reais
   KimiIntegration.jsx   Status, aviso e diálogo de consentimento da integração MCP
   AgentRequests.jsx     Pedidos de agente da principal aguardando decisão

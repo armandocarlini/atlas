@@ -247,6 +247,7 @@ app.whenReady().then(async () => {
     store: operationalStore,
     onConnectionChange: (sessionId, connected) => sendToMain('agent:atlas-tools', { sessionId, connected }),
     onAgentRequest: (projectId) => sendToMain('agent-request:changed', { projectId }),
+    onTaskChange: (projectId) => sendToMain('task:changed', { projectId }),
   });
   try {
     await toolsHost.listen();
@@ -262,6 +263,7 @@ app.whenReady().then(async () => {
     store: operationalStore,
     orchestratorProfile: ensureOrchestratorProfile(app.getPath('userData')),
     mcpHost,
+    onRunEnded: (projectId) => sendToMain('task:changed', { projectId }),
   });
   createIntegrationHost({ ipcMain, isMainSender: terminalHost.isMainSender });
   createAgentRequestHost({
@@ -273,7 +275,7 @@ app.whenReady().then(async () => {
     onChange: (projectId) => sendToMain('agent-request:changed', { projectId }),
   });
   await projectHost.ready;
-  createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
+  createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
   createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
   createMainWindow();
   app.on('activate', () => {

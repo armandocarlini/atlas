@@ -8,7 +8,7 @@ import path from 'node:path';
 const { createAgentHost } = createRequire(import.meta.url)('../electron/agent-host.cjs');
 const { createOperationalStore } = createRequire(import.meta.url)('../electron/operational-store.cjs');
 
-function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [], orchestratorProfile = '/fixture/atlas-orchestrator.md', mcpHost } = {}) {
+function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [], orchestratorProfile = '/fixture/atlas-orchestrator.md', mcpHost, onRunEnded } = {}) {
   const handlers = new Map();
   const listeners = new Map();
   const ipcMain = {
@@ -53,6 +53,7 @@ function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersi
     onPersistenceError,
     orchestratorProfile,
     mcpHost,
+    onRunEnded,
     isMainSender: (event) => event.sender === 'main',
     discover: async () => adapters || [{
       id: 'kimi-code',
@@ -340,6 +341,7 @@ function fakeMcpHost() {
     endpoint: '\\\\.\\pipe\\atlas-mcp-teste',
     grants,
     register(grant) { counter += 1; const token = `token-${counter}`; grants.set(token, { ...grant, connected: false }); return token; },
+    bindRun(token, runId) { const grant = grants.get(token); if (grant) grant.runId = runId; },
     revoke(token) { grants.delete(token); },
     isConnected: (sessionId) => [...grants.values()].some((grant) => grant.sessionId === sessionId && grant.connected),
   };
@@ -390,4 +392,20 @@ test('agente aprovado nasce com origem orchestrator e conta como ativo só enqua
   assert.equal(host.countActive({ projectId: 'project-a', origin: 'user' }), 0);
   transport.records[0].emitExit(0);
   assert.equal(host.countActive({ projectId: 'project-a', origin: 'orchestrator' }), 0);
+});
+
+test('token da run é vinculado à run persistida e o fim da run avisa o projeto', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-agent-store-'));
+  const store = createOperationalStore({ filename: path.join(directory, 'atlas.sqlite') });
+  t.after(() => { store.close(); fs.rmSync(directory, { recursive: true, force: true }); });
+  const project = { id: 'project-a', name: 'Fixture', path: 'C:\\projeto' };
+  store.registerProject(project);
+  const mcpHost = fakeMcpHost();
+  const ended = [];
+  const { handlers, transport, mainEvent } = createHarness({ store, mcpHost, projectRecords: [project], onRunEnded: (projectId) => ended.push(projectId) });
+  const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: project.path });
+  assert.equal(mcpHost.grants.get('token-1').runId, agent.runId);
+  assert.equal(store.listRuns('project-a')[0].id, agent.runId);
+  transport.records[0].emitExit(0);
+  assert.deepEqual(ended, ['project-a']);
 });

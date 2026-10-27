@@ -95,6 +95,8 @@ const childExit = new Promise((resolve) => child.once('exit', resolve));
 const connections = [];
 const pids = [];
 let createdTaskId = null;
+let offeredTaskId = null;
+let blockedTaskId = null;
 let stderr = '';
 child.stderr.on('data', (data) => { stderr = (stderr + data).slice(-12000); });
 child.stdout.resume();
@@ -446,6 +448,48 @@ try {
   await click(main, '.agent-request button', 'Dispensar');
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'failed request dismissed');
   console.log('PASS pedidos de agente da principal: conteúdo, validade, política, recusa e falha honesta sem CLI');
+  // Delegação semeada como a principal e um agente da fixture fariam pela ponte MCP:
+  // uma oferta aberta e uma tarefa aceita e bloqueada. O usuário cancela e devolve.
+  const delegationStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
+  try {
+    const agentRun = delegationStore.startSession({ id: 'smoke-agente', projectId: extraProjectId, name: 'agente-fixture', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'orchestrator', createdAt: new Date().toISOString() });
+    offeredTaskId = delegationStore.createTask({ projectId: extraProjectId, title: 'Delegada aberta', acceptance: 'Oferta visível', idempotencyKey: 'smoke-delegation-task-01' }).id;
+    blockedTaskId = delegationStore.createTask({ projectId: extraProjectId, title: 'Delegada bloqueada', acceptance: 'Bloqueio visível', idempotencyKey: 'smoke-delegation-task-02' }).id;
+    delegationStore.offerHandoff({ projectId: extraProjectId, fromSessionId: 'smoke-orchestrator', toSessionId: 'smoke-agente', taskId: offeredTaskId, objective: 'Revisar a divergência ANSI.\nSegunda linha do objetivo.', nextSteps: 'Escrever a regressão primeiro.', idempotencyKey: 'smoke-delegation-offer-01' });
+    const accepted = delegationStore.offerHandoff({ projectId: extraProjectId, fromSessionId: 'smoke-orchestrator', toSessionId: 'smoke-agente', taskId: blockedTaskId, objective: 'Corrigir o resize.', idempotencyKey: 'smoke-delegation-offer-02' });
+    delegationStore.acceptHandoff({ projectId: extraProjectId, handoffId: accepted.id, sessionId: 'smoke-agente', runId: agentRun.id });
+    delegationStore.updateTask({ projectId: extraProjectId, taskId: blockedTaskId, sessionId: 'smoke-agente', runId: agentRun.id, kind: 'blocked', note: 'Falta o fixture de terminal.' });
+  } finally {
+    delegationStore.close();
+  }
+  await native('send', { channel: 'task:changed', payload: { projectId: extraProjectId } });
+  const queueItem = (title) => `[...document.querySelectorAll('.task-queue .queue-item')].find(item => item.innerText.includes(${JSON.stringify(title)}))`;
+  await until(() => main.evaluate(`Boolean(${queueItem('Delegada bloqueada')})`), 'delegated tasks listed');
+  assert.match(await main.evaluate(`${queueItem('Delegada aberta')}.innerText`), /Pronta/);
+  assert.match(await main.evaluate(`${queueItem('Delegada bloqueada')}.innerText`), /Bloqueada · agente-fixture/);
+  await main.evaluate(`${queueItem('Delegada aberta')}.click()`);
+  await until(() => main.evaluate(`document.querySelector('.task-assignment')?.innerText.includes('Oferecida a agente-fixture')`), 'open offer shown');
+  const offerText = await main.evaluate(`document.querySelector('.task-assignment').innerText`);
+  assert(offerText.includes('Segunda linha do objetivo.') && offerText.includes('Escrever a regressão primeiro.') && offerText.includes('Aguardando o agente aceitar'), 'Offer shows objective, next steps and pending state');
+  // Regressão: avisos do workspace eram espremidos na linha 1fr da grade e se sobrepunham.
+  const notices = await main.evaluate(`[...document.querySelectorAll('.workspace-notices > *')].map(item => { const rect = item.getBoundingClientRect(); return { name: item.className, top: rect.top, bottom: rect.bottom, height: rect.height, scroll: item.scrollHeight }; })`);
+  assert(notices.length >= 2, `Expected stacked workspace notices, got ${JSON.stringify(notices)}`);
+  for (const [index, notice] of notices.entries()) {
+    assert(notice.height > 0 && notice.scroll <= notice.height + 1, `Workspace notice clipped: ${JSON.stringify(notice)}`);
+    if (index) assert(notice.top >= notices[index - 1].bottom - 1, `Workspace notices overlap: ${JSON.stringify(notices)}`);
+  }
+  await screenshot(main, 'task-offer');
+  await click(main, '.task-assignment button', 'Cancelar oferta');
+  await until(() => main.evaluate(`document.querySelector('.task-assignment')?.innerText.includes('Sem execução atribuída')`), 'offer canceled');
+  await main.evaluate(`${queueItem('Delegada bloqueada')}.click()`);
+  await until(() => main.evaluate(`document.querySelector('.task-assignment')?.innerText.includes('Falta o fixture de terminal.')`), 'blocked task shown');
+  assert((await main.evaluate(`document.querySelector('.task-assignment').innerText`)).includes('Responsável: agente-fixture'));
+  const delegationAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(delegationAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in task delegation');
+  await screenshot(main, 'task-blocked');
+  await click(main, '.task-assignment button', 'Devolver tarefa');
+  await until(() => main.evaluate(`${queueItem('Delegada bloqueada')}?.innerText.includes('Pronta') && document.querySelector('.task-assignment')?.innerText.includes('Sem execução atribuída')`), 'task released to ready');
+  console.log('PASS delegação de tarefa: oferta, responsável, bloqueio, cancelamento e devolução pelo usuário');
   await click(main, '.title-actions button', 'Aparência');
   await click(main, '.background-presets button', 'Névoa');
   assert.equal(await main.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#eef1f4');
@@ -514,6 +558,9 @@ try {
   const persistedMessage = persisted.prepare('SELECT subject FROM messages').get();
   assert.equal(persistedMessage.subject, 'Descoberta da fixture');
   assert(persisted.prepare('SELECT read_at FROM message_deliveries').get().read_at, 'Message read state must persist in SQLite');
+  const delegated = persisted.prepare('SELECT id, state, assigned_session_id, claim_epoch FROM tasks WHERE id IN (?, ?) ORDER BY title').all(offeredTaskId, blockedTaskId);
+  assert.deepEqual(delegated.map((item) => [item.state, item.assigned_session_id, item.claim_epoch]), [['ready', null, 0], ['ready', null, 2]]);
+  assert.deepEqual(persisted.prepare('SELECT state, resolved_by FROM handoffs ORDER BY created_at, rowid').all().map((item) => [item.state, item.resolved_by]), [['canceled', 'user'], ['accepted', 'agent:smoke-agente']]);
 } finally {
   persisted.close();
 }

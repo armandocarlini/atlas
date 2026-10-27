@@ -24,7 +24,8 @@ async function harness(t) {
   };
   const changes = [];
   const agentRequests = [];
-  const host = createMcpHost({ store, onConnectionChange: (sessionId, connected) => changes.push([sessionId, connected]), onAgentRequest: (projectId) => agentRequests.push(projectId) });
+  const taskChanges = [];
+  const host = createMcpHost({ store, onConnectionChange: (sessionId, connected) => changes.push([sessionId, connected]), onAgentRequest: (projectId) => agentRequests.push(projectId), onTaskChange: (projectId) => taskChanges.push(projectId) });
   await host.listen();
   const tokens = {
     orchestratorA: host.register({ projectId: 'project-a', sessionId: 'orchestrator-a', runId: runs.orchestratorA.id, role: 'orchestrator' }),
@@ -38,7 +39,7 @@ async function harness(t) {
     store.close();
     fs.rmSync(directory, { recursive: true, force: true });
   });
-  return { store, host, tokens, changes, children, agentRequests };
+  return { store, host, tokens, runs, session, changes, children, agentRequests, taskChanges };
 }
 
 function rawClient(endpoint) {
@@ -139,7 +140,7 @@ test('handshake real conecta a sessão e lista as ferramentas do ATLAS', async (
   assert.deepEqual(changes, [['orchestrator-a', true]]);
   assert.equal(host.isConnected('manual-a'), false);
   const tools = (await bridge.rpc('tools/list')).result.tools;
-  assert.deepEqual(tools.map((tool) => tool.name), TOOLS.map((tool) => tool.name));
+  assert.deepEqual(tools.map((tool) => tool.name), TOOLS.filter((tool) => !tool.roles || tool.roles.includes('orchestrator')).map((tool) => tool.name));
   for (const tool of tools) assert.equal(tool.inputSchema.type, 'object');
   bridge.child.stdin.end();
   await until(() => !host.isConnected('orchestrator-a'), 'desconexão ao encerrar a ponte');
@@ -386,4 +387,94 @@ test('principal pede agente pela ponte: pedido pendente, aviso à interface e st
   const foreign = await other.call('agents_request_status', { requestId: asked.value.requestId });
   assert.equal(foreign.isError, true);
   assert.match(foreign.text, /não encontrado neste projeto/);
+});
+
+test('ferramentas de delegação seguem o papel: principal oferece, agente responde', async (t) => {
+  const { host, tokens, children } = await harness(t);
+  const manual = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.manualA });
+  const orchestrator = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.orchestratorA });
+  await manual.initialize();
+  await orchestrator.initialize();
+  const agentTools = (await manual.rpc('tools/list')).result.tools.map((tool) => tool.name);
+  const principalTools = (await orchestrator.rpc('tools/list')).result.tools.map((tool) => tool.name);
+  for (const name of ['handoffs_pending', 'handoffs_accept', 'handoffs_reject', 'tasks_update', 'tasks_release']) {
+    assert(agentTools.includes(name) && !principalTools.includes(name), name);
+  }
+  for (const name of ['tasks_delegate', 'handoffs_cancel']) assert(principalTools.includes(name) && !agentTools.includes(name), name);
+  const refused = await manual.call('tasks_delegate', { taskId: 'x', toSessionId: 'manual-a', objective: 'Profundidade 2.' });
+  assert.match(refused.text, /Somente a sessão principal/);
+  const principalAccept = await orchestrator.call('handoffs_accept', { handoffId: 'x' });
+  assert.match(principalAccept.text, /sessões de agente que recebem tarefas/);
+});
+
+test('delegação pela ponte real: oferta, pendência não confiável, aceite, progresso, bloqueio e devolução', async (t) => {
+  const { store, host, tokens, runs, session, children, taskChanges } = await harness(t);
+  const created = store.createTask({ projectId: 'project-a', title: 'Corrigir ANSI', acceptance: 'Regressão passa', idempotencyKey: 'tarefa-ansi-0001' });
+  const otherRun = session('outro-a', 'project-a', 'agent');
+  const otherToken = host.register({ projectId: 'project-a', sessionId: 'outro-a', runId: otherRun.id, role: 'agent' });
+  const orchestrator = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.orchestratorA });
+  const manual = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.manualA });
+  const other = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: otherToken });
+  await Promise.all([orchestrator.initialize(), manual.initialize(), other.initialize()]);
+
+  const offered = await orchestrator.call('tasks_delegate', { taskId: created.id, toSessionId: 'manual-a', objective: 'Corrigir a divergência ANSI.', nextSteps: 'Escrever a regressão primeiro.', idempotencyKey: 'oferta-ansi-01' });
+  assert.equal(offered.isError, false, offered.text);
+  assert.equal(offered.value.state, 'offered');
+  assert.match(offered.value.note, /ainda não aceitou/);
+  assert.equal((await orchestrator.call('tasks_delegate', { taskId: created.id, toSessionId: 'manual-a', objective: 'Corrigir a divergência ANSI.', nextSteps: 'Escrever a regressão primeiro.', idempotencyKey: 'oferta-ansi-01' })).value.handoffId, offered.value.handoffId);
+
+  assert.deepEqual((await other.call('handoffs_pending', {})).value.handoffs, [], 'outra sessão não vê a oferta');
+  const pending = (await manual.call('handoffs_pending', {})).value;
+  assert.match(pending.notice, /não confiável/);
+  assert.deepEqual(pending.handoffs.map(({ id, taskTitle, acceptance, fromName, objective }) => ({ id, taskTitle, acceptance, fromName, objective })), [
+    { id: offered.value.handoffId, taskTitle: 'Corrigir ANSI', acceptance: 'Regressão passa', fromName: 'sessao-orchestrator-a', objective: 'Corrigir a divergência ANSI.' },
+  ]);
+  assert.match((await other.call('handoffs_accept', { handoffId: offered.value.handoffId })).text, /Somente a sessão de destino/);
+
+  // Argumento extra é ignorado: a sessão responsável vem do token da ponte.
+  const claimed = await manual.call('handoffs_accept', { handoffId: offered.value.handoffId, sessionId: 'outro-a' });
+  assert.equal(claimed.isError, false, claimed.text);
+  assert.equal(store.getTask('project-a', created.id).assignedSessionId, 'manual-a');
+  assert.deepEqual(claimed.value, { taskId: created.id, title: 'Corrigir ANSI', acceptance: 'Regressão passa', state: 'in_progress', claimEpoch: 1 });
+  assert.equal(store.getTask('project-a', created.id).claimRunId, runs.manualA.id);
+
+  assert.equal((await manual.call('tasks_update', { taskId: created.id, kind: 'progress', note: 'Regressão escrita.' })).value.state, 'in_progress');
+  assert.match((await other.call('tasks_update', { taskId: created.id, kind: 'progress', note: 'Intrusão.' })).text, /não é responsável/);
+  const blocked = await manual.call('tasks_update', { taskId: created.id, kind: 'blocked', note: 'Sem fixture.' });
+  assert.deepEqual(blocked.value, { taskId: created.id, state: 'blocked', blockedReason: 'Sem fixture.' });
+  const listed = (await orchestrator.call('tasks_list', {})).value;
+  assert.match(listed.notice, /não confiável/);
+  assert.deepEqual(listed.tasks.map(({ state, assignedSessionId, assigneeName, blockedReason, openHandoff, mine }) => ({ state, assignedSessionId, assigneeName, blockedReason, openHandoff, mine })), [
+    { state: 'blocked', assignedSessionId: 'manual-a', assigneeName: 'sessao-manual-a', blockedReason: 'Sem fixture.', openHandoff: null, mine: false },
+  ]);
+  const released = await manual.call('tasks_release', { taskId: created.id, reason: 'Precisa de outra sessão.' });
+  assert.deepEqual(released.value, { taskId: created.id, state: 'ready' });
+
+  const second = await orchestrator.call('tasks_delegate', { taskId: created.id, toSessionId: 'outro-a', objective: 'Assumir a correção.' });
+  assert.equal((await orchestrator.call('tasks_list', {})).value.tasks[0].openHandoff.id, second.value.handoffId);
+  assert.equal((await orchestrator.call('handoffs_cancel', { handoffId: second.value.handoffId })).value.state, 'canceled');
+  const third = await orchestrator.call('tasks_delegate', { taskId: created.id, toSessionId: 'outro-a', objective: 'Assumir a correção.' });
+  assert.equal((await other.call('handoffs_reject', { handoffId: third.value.handoffId, reason: 'Fora do meu escopo.' })).value.state, 'rejected');
+  assert(taskChanges.length >= 9 && taskChanges.every((projectId) => projectId === 'project-a'));
+  assert.deepEqual(store.listEvents('project-b').filter((item) => item.type.startsWith('handoff') || item.type.startsWith('task.')), [], 'outro projeto intocado');
+});
+
+test('regressão: a principal vê claim perdido, recusa com motivo e repetição de chave já resolvida', async (t) => {
+  const { store, host, tokens, runs, children } = await harness(t);
+  const lost = store.createTask({ projectId: 'project-a', title: 'Perdida', acceptance: 'Aceite', idempotencyKey: 'tarefa-perdida-01' });
+  const refused = store.createTask({ projectId: 'project-a', title: 'Recusada', acceptance: 'Aceite', idempotencyKey: 'tarefa-recusada-01' });
+  const orchestrator = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.orchestratorA });
+  await orchestrator.initialize();
+  const rejectedOffer = await orchestrator.call('tasks_delegate', { taskId: refused.id, toSessionId: 'manual-a', objective: 'Assumir.', idempotencyKey: 'oferta-recusada-01' });
+  store.rejectHandoff({ projectId: 'project-a', handoffId: rejectedOffer.value.handoffId, sessionId: 'manual-a', reason: 'Fora do escopo.' });
+  const replay = await orchestrator.call('tasks_delegate', { taskId: refused.id, toSessionId: 'manual-a', objective: 'Assumir.', idempotencyKey: 'oferta-recusada-01' });
+  assert.equal(replay.value.state, 'rejected');
+  assert.match(replay.value.note, /já foi usada; a oferta está rejected/);
+  const accepted = await orchestrator.call('tasks_delegate', { taskId: lost.id, toSessionId: 'manual-a', objective: 'Assumir.' });
+  store.acceptHandoff({ projectId: 'project-a', handoffId: accepted.value.handoffId, sessionId: 'manual-a', runId: runs.manualA.id });
+  store.finishRun({ runId: runs.manualA.id, expectedVersion: 1, exitCode: 1 });
+  const tasks = new Map((await orchestrator.call('tasks_list', {})).value.tasks.map((task) => [task.title, task]));
+  assert.equal(tasks.get('Perdida').state, 'in_progress');
+  assert.equal(tasks.get('Perdida').claimActive, false);
+  assert.deepEqual(tasks.get('Recusada').lastClosedHandoff, { id: rejectedOffer.value.handoffId, toSessionId: 'manual-a', state: 'rejected', reason: 'Fora do escopo.' });
 });

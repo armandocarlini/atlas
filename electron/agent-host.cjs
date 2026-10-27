@@ -4,7 +4,7 @@ const { discoverAdapters } = require('./agent-adapters.cjs');
 // Ciclo de vida de sessões de agente neste marco: identidade gerada no
 // processo principal, cwd validado, PTY real e estado mínimo em memória.
 // O estado operacional é apenas running/exited; nada é inferido do ANSI.
-function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, store, onPersistenceError = console.error, orchestratorProfile, mcpHost = null }) {
+function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, store, onPersistenceError = console.error, orchestratorProfile, mcpHost = null, onRunEnded = () => {} }) {
   const agents = new Map();
   const pendingOrchestrators = new Map();
   let discoveryPromise = null;
@@ -136,6 +136,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       run = store?.startSession(agent);
       agent.runId = run?.id;
       agent.runAttempt = run?.attempt;
+      if (atlasToken && run) mcpHost.bindRun(atlasToken, run.id);
     } catch (error) {
       if (atlasToken) mcpHost.revoke(atlasToken);
       transport.close(record);
@@ -149,6 +150,8 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       if (store && !store.closed) {
         try {
           store.finishRun({ runId: run.id, expectedVersion: run.version, exitCode, signal });
+          // O fim da run tira o claim das tarefas dela; a interface precisa recarregar.
+          onRunEnded(agent.projectId);
         } catch (error) {
           onPersistenceError(new Error(`Não foi possível persistir a saída da run ${run.id}: ${error.message}`));
         }
