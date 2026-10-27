@@ -193,7 +193,7 @@ test('migration 6→7 preserva pedidos anteriores sem tarefa nem worktree', (t) 
 
 test('listagem mostra caminho e branch planejados só para pedidos pendentes com worktree', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-worktree-list-'));
-  const store = createOperationalStore({ filename: path.join(directory, 'list.sqlite') });
+  const store = createOperationalStore({ filename: path.join(directory, 'list.sqlite'), now: () => '2026-10-27T12:00:00.000Z' });
   t.after(() => { store.close(); fs.rmSync(directory, { recursive: true, force: true }); });
   const project = { id: 'project-a', name: 'Projeto', path: '/fixture/a', repositories: [] };
   store.registerProject(project);
@@ -203,7 +203,12 @@ test('listagem mostra caminho e branch planejados só para pedidos pendentes com
   const task = store.createTask({ projectId: 'project-a', title: 'T', acceptance: 'A', idempotencyKey: 'tarefa-lista-01' });
   store.requestAgent({ projectId: 'project-a', requestedBy: 'principal', name: 'com-worktree', purpose: 'P.', taskId: task.id, worktree: true, idempotencyKey: 'pedido-lista-01' });
   store.requestAgent({ projectId: 'project-a', requestedBy: 'principal', name: 'sem-worktree', purpose: 'P.', idempotencyKey: 'pedido-lista-02' });
-  const list = async () => (await handlers.get('agent-request:list')({}, { cwd: '/fixture/a' })).items;
+  // Regressão: pedidos no mesmo milissegundo empatam em created_at e a ordem cai no UUID; buscar pelo nome, não pela posição.
+  const list = async () => {
+    const items = (await handlers.get('agent-request:list')({}, { cwd: '/fixture/a' })).items;
+    assert.equal(items.length, 2);
+    return [items.find((item) => item.name === 'com-worktree'), items.find((item) => item.name === 'sem-worktree')];
+  };
   let [withWorktree, plain] = await list();
   assert.match(withWorktree.plannedWorktree.error, /não tem repositório Git/);
   assert.equal(plain.plannedWorktree, undefined);
