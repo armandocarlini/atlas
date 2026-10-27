@@ -29,6 +29,7 @@ Leia `docs/AUTONOMIA_V0_1.md`, `docs/CONTINUIDADE.md`, `README.md` e os trechos 
 - Acrescente testes unitários, de integração e E2E proporcionais a cada alteração. Todo bug corrigido deve ganhar regressão reproduzível. Inclua casos negativos e, conforme o subsistema, concorrência, reinício, migrations, backup/restore e segurança.
 - Não apague ou enfraqueça testes para obter verde, não esconda falhas com retries, não reduza cobertura para contornar regressão e não declare sucesso com testes vermelhos, pulados, ausentes ou timeout.
 - O smoke e testes com CLI usam apenas fixtures temporárias. Não rode testes destrutivos ou comandos de escrita contra projetos reais.
+- Delegue a execução das suítes (gates, `test:desktop`, `test:agent` e smokes) a um subagente de modelo inferior: no Claude, Sonnet 5.5 com esforço medium; no Codex, 5.6 sol com esforço high; no Kimi, Kimi K2.8 com esforço high. O subagente devolve só comando, resultado, testes que falharam e as primeiras linhas de cada erro. O agente principal continua escrevendo o teste de regressão, decidindo a correção e conferindo o resumo antes de declarar verde. Se o ambiente não tiver subagentes, rode as suítes com `rtk` e registre que não houve delegação.
 - Registre comandos, ambiente, evidências e limites no PR/documentação. Testes bloqueiam regressões conhecidas e reduzem risco; não garantem ausência total de bugs.
 
 ## Interface obrigatória
