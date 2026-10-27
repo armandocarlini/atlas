@@ -73,6 +73,7 @@ function createTaskDelegation({ db, now, event, transaction }) {
 
   return {
     getTask,
+    requireClaim,
     listTasks: (projectId) => db.prepare(`${TASK_SELECT} WHERE t.project_id = ? ORDER BY t.created_at, t.id`).all(projectId).map(plain),
     getHandoff,
     listHandoffs: (projectId) => db.prepare(`${HANDOFF_SELECT} WHERE h.project_id = ? ORDER BY h.created_at, h.id`).all(projectId).map(plain),

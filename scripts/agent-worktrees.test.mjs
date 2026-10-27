@@ -229,3 +229,24 @@ test('regressão: aprovação recusa quando a tarefa deixou de estar disponível
   assert.deepEqual(calls, [], 'nenhum efeito Git');
   assert.equal(store.getAgentRequest('project-a', request.id).state, 'pending', 'usuário ainda pode recusar');
 });
+
+test('segurança: descoberta não executa fsmonitor de .git forjado em worktree do ATLAS', async (t) => {
+  const { discoverRepositories } = require('../electron/git-discovery.cjs');
+  const { repo, directory, project } = repository(t);
+  const created = await createWorktree(planWorktree({ project, taskId: TASK_ID }));
+  const marker = path.join(directory, 'descoberta-executou.txt').replaceAll('\\', '/');
+  const hook = path.join(directory, 'hook.sh').replaceAll('\\', '/');
+  fs.writeFileSync(hook, `#!/bin/sh\necho x > "${marker}"\n`, { mode: 0o755 });
+  // O agente troca o .git da worktree por um repositório próprio com fsmonitor.
+  fs.rmSync(path.join(created.path, '.git'));
+  git(created.path, 'init', '--quiet');
+  git(created.path, 'config', 'core.fsmonitor', hook);
+  if (fs.existsSync(marker)) fs.rmSync(marker);
+  const result = await discoverRepositories(directory);
+  assert.equal(fs.existsSync(marker), false, 'descoberta não pode executar o hook forjado');
+  assert.equal(result.repositories.length, 1, 'a pasta .atlas-worktrees não vira repositório candidato');
+  const listed = result.repositories[0].worktrees.find((item) => item.path.toLowerCase().endsWith('task-3f2a9c1b'));
+  assert(listed, 'worktree continua listada pelo repositório principal');
+  assert.equal(listed.status?.branch ?? listed.branch, 'atlas/task-3f2a9c1b');
+  assert.equal(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
+});

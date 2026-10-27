@@ -768,6 +768,22 @@ body { transition: background-color .18s ease, color .18s ease; }
 .handoff-text > span { color: var(--muted); font-size: 11px; }
 .handoff-text p { padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
 .task-warning { color: var(--warning); font-size: 12px; line-height: 1.5; }
+.evidence-commands { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.evidence-commands li { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.evidence-commands code { overflow-wrap: anywhere; font-family: var(--mono); }
+.evidence-git { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; font-size: 12px; }
+.evidence-git dt { color: var(--muted); }
+.evidence-git dd { margin: 0; overflow-wrap: anywhere; }
+.danger-text { color: var(--danger); }
+.warning-text { color: var(--warning); }
+.review-decision { display: grid; gap: 8px; justify-self: stretch; }
+.review-decision label { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+.review-decision textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; resize: vertical; }
+.review-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.evidence-review { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
+.evidence-review h3 { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.evidence-detail { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.evidence-review-state, .evidence-footnote { margin: 0; color: var(--muted); font-size: 12px; }
 .task-modal form > p { font-size: 12px; color: var(--muted); }
 .task-modal textarea { width: 100%; resize: vertical; min-height: 70px; border: 1px solid var(--border); border-radius: 5px; padding: 10px; color: var(--text); background: var(--surface); font: inherit; }
 .integration-status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font: 11px var(--mono); }

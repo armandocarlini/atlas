@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   createTask: (request) => ipcRenderer.invoke('task:create', request),
   cancelHandoff: (request) => ipcRenderer.invoke('task:cancel-handoff', request),
   releaseTask: (request) => ipcRenderer.invoke('task:release', request),
+  decideReview: (request) => ipcRenderer.invoke('task:review-decide', request),
   onTasksChanged: (callback) => subscribe('task:changed', callback),
   sendMessage: (request) => ipcRenderer.invoke('message:send', request),
   listMessages: (request) => ipcRenderer.invoke('message:list', request),

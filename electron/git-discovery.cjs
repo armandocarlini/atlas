@@ -4,7 +4,12 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { promisify } = require('node:util');
 
+const { SAFE_CONFIG, resolveWorktreeGitDir } = require('./git-evidence.cjs');
+
 const execFileAsync = promisify(execFile);
+// Pastas de worktrees criadas pelo ATLAS: agentes escrevem nelas, inclusive no
+// `.git`. Elas entram pela lista do repositório principal, nunca como candidatas.
+const ATLAS_WORKTREES_SUFFIX = '.atlas-worktrees';
 const IGNORED_DIRECTORIES = new Set([
   '.git', '.hg', '.svn', '.next', '.nuxt', '.output', '.turbo', '.venv',
   'node_modules', 'dist', 'build', 'coverage', 'target', 'vendor', 'venv',
@@ -14,8 +19,11 @@ function idFor(value) {
   return createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
 
+// Descoberta somente leitura: sem locks opcionais e sem configurações que executam
+// comandos. Worktrees vinculadas usam o diretório Git do repositório principal.
 async function runGit(cwd, args, options = {}) {
-  const { stdout } = await execFileAsync('git', ['--no-optional-locks', '-C', cwd, ...args], {
+  const location = options.gitDir ? [`--git-dir=${options.gitDir}`, `--work-tree=${cwd}`] : ['-C', cwd];
+  const { stdout } = await execFileAsync('git', ['--no-optional-locks', ...SAFE_CONFIG, ...location, ...args], {
     encoding: 'utf8',
     windowsHide: true,
     timeout: options.timeout || 8000,
@@ -58,7 +66,7 @@ async function findRepositoryCandidates(rootPath, options) {
 
     if (depth >= options.maxDepth) continue;
     for (const entry of entries) {
-      if (!entry.isDirectory() || entry.isSymbolicLink() || IGNORED_DIRECTORIES.has(entry.name.toLowerCase())) continue;
+      if (!entry.isDirectory() || entry.isSymbolicLink() || IGNORED_DIRECTORIES.has(entry.name.toLowerCase()) || entry.name.toLowerCase().endsWith(ATLAS_WORKTREES_SUFFIX)) continue;
       queue.push({ directory: path.join(directory, entry.name), depth: depth + 1 });
     }
   }
@@ -111,9 +119,9 @@ function parseStatus(output) {
   return status;
 }
 
-async function readLastCommit(worktreePath) {
+async function readLastCommit(worktreePath, gitDir) {
   try {
-    const output = await runGit(worktreePath, ['log', '-1', '--format=%H%x00%h%x00%cI%x00%s']);
+    const output = await runGit(worktreePath, ['log', '-1', '--format=%H%x00%h%x00%cI%x00%s'], { gitDir });
     const [hash, shortHash, date, subject] = output.trimEnd().split('\0');
     return hash ? { hash, shortHash, date, subject: subject || '' } : null;
   } catch {
@@ -138,9 +146,11 @@ async function inspectRepository(candidatePath) {
     let currentPath = recordPath;
     let statusError = null;
     let status = null;
+    let gitDir;
     try {
       currentPath = await canonicalPath(recordPath);
-      status = parseStatus(await runGit(currentPath, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal']));
+      if (index > 0) gitDir = resolveWorktreeGitDir(records[0].path, currentPath, commonDir);
+      status = parseStatus(await runGit(currentPath, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal', '--ignore-submodules=all'], { gitDir }));
     } catch (error) {
       statusError = error.message;
     }
@@ -156,7 +166,7 @@ async function inspectRepository(candidatePath) {
       isMain: index === 0,
       status,
       statusError,
-      lastCommit: statusError ? null : await readLastCommit(currentPath),
+      lastCommit: statusError ? null : await readLastCommit(currentPath, gitDir),
     };
   }));
   const mainWorktree = worktrees.find((worktree) => worktree.isMain) || worktrees[0];

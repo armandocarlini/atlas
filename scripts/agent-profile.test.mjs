@@ -25,6 +25,7 @@ test('perfil principal é estático, local ao perfil do app e limitado à leitur
   assert(!PROFILE.includes('  - Bash'));
   assert(PROFILE.includes('mcp__atlas__tasks_delegate') && PROFILE.includes('não afirme que ele assumiu'), 'principal delega sem afirmar aceite');
   assert(PROFILE.includes('worktree: true') && PROFILE.includes('remover worktrees'), 'principal conhece a worktree por tarefa e seus limites');
+  assert(PROFILE.includes('só o usuário conclui') && PROFILE.includes('estado done'), 'principal não afirma conclusão antes do aceite');
   fs.writeFileSync(filename, 'modified prompt');
   assert.equal(ensureOrchestratorProfile(directory), filename);
   assert.equal(fs.readFileSync(filename, 'utf8'), PROFILE);

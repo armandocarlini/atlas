@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createHash, randomBytes, randomUUID } = require('node:crypto');
+const gitEvidence = require('./git-evidence.cjs');
 
 // Ponto local de ferramentas do ATLAS para a ponte MCP de cada sessão Kimi.
 // Sem porta de rede: named pipe no Windows, socket Unix nos demais sistemas.
@@ -96,6 +97,25 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, reason: { type: 'string', maxLength: 1000 } }, required: ['taskId', 'reason'], additionalProperties: false },
   },
   {
+    name: 'tasks_request_review',
+    roles: ['agent'],
+    description: 'Pede ao usuário a revisão de uma tarefa sob responsabilidade desta sessão, com resumo e os comandos executados com exit code (declaração do agente). O ATLAS anexa um retrato Git da worktree da tarefa coletado por ele mesmo. Só o usuário conclui a tarefa ou pede ajustes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string' },
+        summary: { type: 'string', maxLength: 2000 },
+        commands: {
+          type: 'array',
+          maxItems: 20,
+          items: { type: 'object', properties: { command: { type: 'string', maxLength: 300 }, exitCode: { type: 'integer' } }, required: ['command', 'exitCode'], additionalProperties: false },
+        },
+      },
+      required: ['taskId', 'summary'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'sessions_list',
     description: 'Lista as sessões de agente do projeto desta sessão no ATLAS, com papel, origem e estado da última run.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -147,7 +167,7 @@ function agentIdempotencyKey(sessionId, key) {
   return `s${createHash('sha256').update(sessionId).digest('hex').slice(0, 12)}-${key}`;
 }
 
-function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange = () => {}, onAgentRequest = () => {}, onTaskChange = () => {}, helloTimeoutMs = HELLO_TIMEOUT_MS }) {
+function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange = () => {}, onAgentRequest = () => {}, onTaskChange = () => {}, helloTimeoutMs = HELLO_TIMEOUT_MS, collectGitEvidence = gitEvidence.collectGitEvidence }) {
   const grants = new Map();
   const sockets = new Set();
   let server = null;
@@ -216,6 +236,7 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
     },
     tasks_list(grant) {
       const handoffs = store.listHandoffs(grant.projectId);
+      const reviews = new Map(store.listReviews(grant.projectId).map((review) => [review.taskId, review]));
       const open = new Map(handoffs.filter((handoff) => handoff.state === 'offered').map((handoff) => [handoff.taskId, handoff]));
       const closed = new Map(handoffs.filter((handoff) => handoff.state !== 'offered').map((handoff) => [handoff.taskId, handoff]));
       return {
@@ -227,6 +248,7 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
           openHandoff: open.has(id) ? { id: open.get(id).id, toSessionId: open.get(id).toSessionId } : null,
           lastClosedHandoff: closed.has(id) ? { id: closed.get(id).id, toSessionId: closed.get(id).toSessionId, state: closed.get(id).state, reason: closed.get(id).reason } : null,
           mine: assignedSessionId === grant.sessionId,
+          lastReview: reviews.has(id) ? { id: reviews.get(id).id, state: reviews.get(id).state, note: reviews.get(id).note } : null,
         })),
       };
     },
@@ -273,6 +295,26 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
       const task = store.updateTask({ projectId: grant.projectId, taskId: text(args.taskId), sessionId: grant.sessionId, runId: grant.runId, kind: args.kind, note: args.note });
       onTaskChange(grant.projectId);
       return { taskId: task.id, state: task.state, blockedReason: task.blockedReason };
+    },
+    // Coleta o retrato Git antes de gravar; falha de coleta vira evidência honesta de indisponibilidade.
+    async tasks_request_review(grant, args) {
+      const taskId = text(args.taskId);
+      // Pré-checagem antes de rodar o Git; a transação do store continua sendo a garantia.
+      const current = store.getTask(grant.projectId, taskId);
+      if (!current || current.assignedSessionId !== grant.sessionId || current.claimRunId !== grant.runId) throw new Error('Esta sessão não detém o claim atual da tarefa.');
+      const worktree = store.listWorktrees(grant.projectId).find((item) => item.taskId === taskId);
+      let git;
+      if (!worktree) git = { unavailable: 'Tarefa sem worktree registrada pelo ATLAS.' };
+      else {
+        try {
+          git = await collectGitEvidence(worktree);
+        } catch (error) {
+          git = gitEvidence.unavailableEvidence(error, worktree.path);
+        }
+      }
+      const review = store.requestReview({ projectId: grant.projectId, taskId, sessionId: grant.sessionId, runId: grant.runId, summary: args.summary, commands: args.commands ?? [], git });
+      onTaskChange(grant.projectId);
+      return { reviewId: review.id, taskId, state: 'in_review', note: 'Revisão pedida. Só o usuário conclui a tarefa ou pede ajustes; acompanhe por tasks_list.' };
     },
     tasks_release(grant, args) {
       const task = store.releaseTask({ projectId: grant.projectId, taskId: text(args.taskId), actor: `agent:${grant.sessionId}`, sessionId: grant.sessionId, runId: grant.runId, reason: args.reason });
@@ -367,11 +409,16 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
           continue;
         }
         const id = request.id ?? null;
+        let result;
         try {
-          reply({ id, result: handle(request, connection) });
+          result = handle(request, connection);
         } catch (error) {
           reply({ id, error: error.message });
+          continue;
         }
+        // Ferramentas que consultam o Git respondem de forma assíncrona.
+        if (result && typeof result.then === 'function') result.then((value) => reply({ id, result: value }), (error) => reply({ id, error: error.message }));
+        else reply({ id, result });
       }
     });
     socket.on('error', () => {});

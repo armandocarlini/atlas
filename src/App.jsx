@@ -43,7 +43,7 @@ import GitDiscovery from './GitDiscovery.jsx';
 import { appearanceTokens, contrastInk } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
 import { agentSession, mergeAgentSessions, sessionExit } from './session-state.js';
-import { PersistentTaskPanel, NewTaskModal } from './PersistentTasks.jsx';
+import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
 import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
 import { AgentRequestsPanel } from './AgentRequests.jsx';
@@ -410,7 +410,7 @@ function AppearanceModal({ theme, onChange, onClose }) {
 
 const PANEL_LABELS = { task: 'Tarefas', messages: 'Mensagens', evidence: 'Evidências' };
 
-function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReorderPanel, columnDragOver, columnDragging, onColumnPointerDown, style, detached = false, native = false, onToggleDetach, onPopupPointerDown, onHideColumn, taskPanel, messagesPanel, unreadMessages }) {
+function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReorderPanel, columnDragOver, columnDragging, onColumnPointerDown, style, detached = false, native = false, onToggleDetach, onPopupPointerDown, onHideColumn, taskPanel, messagesPanel, evidencePanel, unreadMessages }) {
   const [dragOverPanel, setDragOverPanel] = useState(null);
   const activePanel = panels.includes(tab) ? tab : panels[0];
   return (
@@ -489,15 +489,14 @@ function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReord
         <div className="message-card"><div className="message-route"><span>orquestrador</span><Send size={12} /><span>atlas-core</span></div><p>Priorize o caso de entrega duplicada antes de submeter a revisão.</p><small>ATL-031 · 8 min · lida</small></div>
       </section>)}
 
-      {activePanel === 'evidence' && <section className="evidence-panel">
-        {taskPanel && <p className="scope-note">Evidências ilustrativas · integração pendente.</p>}
+      {activePanel === 'evidence' && (evidencePanel || <section className="evidence-panel">
         <div className="section-kicker"><span>ENTREGA VERIFICÁVEL</span><ShieldCheck size={15} /></div>
         <h2>{activeTask.id}</h2>
         <div className="evidence-item"><GitBranch size={16} /><div><strong>Worktree e diff</strong><span>atlas/session-messages</span><small>base 8f31a2c · 6 arquivos alterados</small></div><ChevronRight size={14} /></div>
         <div className="evidence-item"><TestTube2 size={16} /><div><strong>Testes de contrato</strong><span className="success-text">17 aprovados</span><small>node 24 · ambiente local</small></div><ChevronRight size={14} /></div>
         <div className="evidence-item"><FileCode2 size={16} /><div><strong>Handoff estruturado</strong><span>handoff #0042</span><small>objetivo, decisões e próximos passos</small></div><ChevronRight size={14} /></div>
         <div className="evidence-note"><ShieldCheck size={17} /><p>Uma run concluída não marca a tarefa como pronta automaticamente.</p></div>
-      </section>}
+      </section>)}
         </div>
       </> : null}
     </aside>
@@ -862,6 +861,18 @@ export default function App() {
     }
   }
 
+  async function decideReview(review, decision, note) {
+    try {
+      await desktop.decideReview({ cwd: workingDirectory, reviewId: review.id, decision, note });
+      notify(decision === 'accept' ? 'Tarefa concluída após sua revisão' : 'Ajustes pedidos ao responsável');
+      return null;
+    } catch (error) {
+      return cleanIpcError(error);
+    } finally {
+      await reloadTasks();
+    }
+  }
+
   async function releaseTask(task) {
     try {
       await desktop.releaseTask({ cwd: workingDirectory, taskId: task.id });
@@ -900,7 +911,8 @@ export default function App() {
     }
   }
 
-  const persistentTaskPanel = desktop?.isDesktop ? <PersistentTaskPanel state={taskState} onNew={isSecondaryWindow ? undefined : () => setTaskModalOpen(true)} onCancelHandoff={isSecondaryWindow ? undefined : cancelHandoff} onRelease={isSecondaryWindow ? undefined : releaseTask} /> : null;
+  const persistentTaskPanel = desktop?.isDesktop ? <PersistentTaskPanel state={taskState} onNew={isSecondaryWindow ? undefined : () => setTaskModalOpen(true)} onCancelHandoff={isSecondaryWindow ? undefined : cancelHandoff} onRelease={isSecondaryWindow ? undefined : releaseTask} onDecideReview={isSecondaryWindow ? undefined : decideReview} /> : null;
+  const taskEvidencePanel = desktop?.isDesktop ? <TaskEvidencePanel state={taskState} /> : null;
   const sessionMessagesPanel = desktop?.isDesktop ? <SessionMessagesPanel state={messageState} readOnly={isSecondaryWindow} onMarkRead={markMessageRead} /> : null;
 
   useEffect(() => {
@@ -1264,6 +1276,7 @@ export default function App() {
           activeTask={activeTask}
           taskPanel={persistentTaskPanel}
           messagesPanel={sessionMessagesPanel}
+          evidencePanel={taskEvidencePanel}
           unreadMessages={messageState.items.filter((message) => !message.readAt).length}
           onTaskSelect={(task) => {
             setActiveTask(task);
@@ -1429,6 +1442,7 @@ export default function App() {
           activeTask={activeTask} onTaskSelect={setActiveTask}
           taskPanel={persistentTaskPanel}
           messagesPanel={sessionMessagesPanel}
+          evidencePanel={taskEvidencePanel}
           unreadMessages={messageState.items.filter((message) => !message.readAt).length}
           tab={inspectorTab} onTabChange={setInspectorTab}
           panels={docks.right} onReorderPanel={reorderPanel}
@@ -1451,6 +1465,7 @@ export default function App() {
           activeTask={activeTask} onTaskSelect={setActiveTask}
           taskPanel={persistentTaskPanel}
           messagesPanel={sessionMessagesPanel}
+          evidencePanel={taskEvidencePanel}
           unreadMessages={messageState.items.filter((message) => !message.readAt).length}
           tab={inspectorTab} onTabChange={setInspectorTab}
           panels={docks.right} onReorderPanel={reorderPanel}

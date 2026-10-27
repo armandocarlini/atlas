@@ -3,6 +3,7 @@ const path = require('node:path');
 const { randomUUID, createHash } = require('node:crypto');
 const { DatabaseSync, backup } = require('node:sqlite');
 const { createTaskDelegation } = require('./task-delegation.cjs');
+const { createTaskReview } = require('./task-review.cjs');
 
 const MIGRATIONS = [{
   version: 1,
@@ -143,6 +144,30 @@ const MIGRATIONS = [{
     ) STRICT;
     CREATE INDEX worktrees_by_project ON worktrees(project_id, created_at);
   `,
+}, {
+  version: 8,
+  sql: `
+    CREATE TABLE reviews (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      requested_by TEXT NOT NULL REFERENCES sessions(id), run_id TEXT REFERENCES agent_runs(id),
+      state TEXT NOT NULL CHECK(state IN ('pending', 'accepted', 'changes_requested')),
+      summary TEXT NOT NULL CHECK(length(summary) BETWEEN 1 AND 2000),
+      created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT, note TEXT,
+      version INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX reviews_by_project ON reviews(project_id, created_at);
+    CREATE UNIQUE INDEX one_pending_review_per_task ON reviews(task_id) WHERE state = 'pending';
+    CREATE TABLE evidence (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      task_id TEXT NOT NULL REFERENCES tasks(id), review_id TEXT REFERENCES reviews(id),
+      kind TEXT NOT NULL CHECK(kind IN ('agent_report', 'git_snapshot')),
+      source TEXT NOT NULL CHECK(source IN ('agent', 'system')),
+      session_id TEXT REFERENCES sessions(id), run_id TEXT REFERENCES agent_runs(id),
+      payload TEXT NOT NULL CHECK(json_valid(payload)), created_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX evidence_by_project ON evidence(project_id, created_at);
+  `,
 }];
 
 // Política padrão da v0.1 para pedidos de agente feitos pela sessão principal.
@@ -258,7 +283,8 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   }
 
   const delegation = createTaskDelegation({ db, now, event, transaction });
-  const { loseClaims, ...delegationApi } = delegation;
+  const { loseClaims, requireClaim, ...delegationApi } = delegation;
+  const review = createTaskReview({ db, now, event, transaction, requireClaim, getTask: delegation.getTask });
 
   function finishRun({ runId, expectedVersion, exitCode, signal = null }) {
     if (!Number.isInteger(exitCode) || (signal !== null && !Number.isInteger(signal))) throw new Error('Saída de processo inválida.');
@@ -301,6 +327,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       });
     },
     ...delegationApi,
+    ...review,
     sendMessage(request) {
       const payload = messagePayload(request);
       // Ator auditado do comando: o usuário pela interface ou a sessão de agente pela ponte MCP.
