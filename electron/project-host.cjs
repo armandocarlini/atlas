@@ -2,10 +2,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { discoverRepositories, idFor } = require('./git-discovery.cjs');
 
-function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
+// Projetos são publicados assim que as raízes autorizadas são lidas; a varredura
+// Git de cada um segue em paralelo e avisa a interface ao terminar. Um projeto
+// grande (muitas worktrees) não segura a janela nem os demais projetos.
+function createProjectHost({ app, dialog, ipcMain, getMainWindow, store, onChange = () => {}, discover = discoverRepositories }) {
   const settingsFile = path.join(app.getPath('userData'), 'atlas-projects.json');
   const initialRoot = process.cwd();
   const projects = new Map();
+  // Varredura mais recente pedida por raiz: resultado antigo não sobrescreve um novo.
+  const generations = new Map();
+  const rootScans = new Map();
   let authorizedRoots = [];
   let scanPromise = null;
 
@@ -31,17 +37,31 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
     fs.renameSync(temporary, settingsFile);
   }
 
-  async function scanRoot(root) {
-    const project = { id: idFor(root), name: path.basename(root), path: root, repositories: [], errors: [], truncated: false, scannedAt: null };
+  function placeholder(root) {
+    const id = idFor(root);
+    if (!projects.has(id)) projects.set(id, { id, name: path.basename(root), path: root, repositories: [], errors: [], truncated: false, scannedAt: null, scanning: true });
+    return projects.get(id);
+  }
+
+  function scanRoot(root) {
+    const generation = (generations.get(root) || 0) + 1;
+    generations.set(root, generation);
+    const project = { id: idFor(root), name: path.basename(root), path: root, repositories: [], errors: [], truncated: false, scannedAt: null, scanning: false };
     store?.registerProject(project);
-    try {
-      const result = await discoverRepositories(root);
-      Object.assign(project, result, { scannedAt: new Date().toISOString() });
-    } catch (error) {
-      project.errors = [{ path: root, message: error.message }];
-    }
-    projects.set(project.id, project);
-    return project;
+    const scan = (async () => {
+      try {
+        const result = await discover(root);
+        Object.assign(project, result, { scannedAt: new Date().toISOString() });
+      } catch (error) {
+        project.errors = [{ path: root, message: error.message }];
+      }
+      if (generations.get(root) !== generation) return projects.get(project.id) || project;
+      projects.set(project.id, project);
+      onChange(project);
+      return project;
+    })();
+    rootScans.set(root, scan);
+    return scan;
   }
 
   async function scanAll() {
@@ -64,15 +84,47 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
     return scanPromise;
   }
 
-  const ready = (async () => {
-    authorizedRoots = readRoots();
-    await scanAll();
-  })();
+  const inside = (parent, child) => {
+    const relative = path.relative(parent, child);
+    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  };
 
+  // Raízes lidas e projetos publicados (ainda sem worktrees): basta para abrir a janela.
+  // A varredura de cada raiz já começa aqui, para que `readyFor` espere só a dela.
+  let initialScan = null;
+  const rootsReady = (async () => {
+    const resolved = await Promise.all(readRoots().map((root) => fs.promises.realpath(root).catch(() => null)));
+    authorizedRoots = [...new Set(resolved.filter(Boolean))];
+    for (const root of authorizedRoots) placeholder(root);
+    initialScan = Promise.all(authorizedRoots.map(scanRoot));
+    scanPromise = initialScan.finally(() => { scanPromise = null; });
+  })();
+  // Varredura inicial completa, para quem depende de todas as worktrees descobertas.
+  const ready = rootsReady.then(() => initialScan);
+
+  const normalize = (value) => (process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value));
+
+  // Espera só o projeto que contém o diretório. Fora das raízes (por exemplo uma
+  // worktree ao lado do repositório), espera a varredura inicial completa.
+  async function readyFor(cwd) {
+    await rootsReady;
+    if (typeof cwd === 'string') {
+      const target = normalize(cwd);
+      const root = authorizedRoots.find((item) => inside(normalize(item), target));
+      if (root && rootScans.has(root)) {
+        await rootScans.get(root);
+        return;
+      }
+    }
+    await ready;
+  }
+
+  // Lista imediata: projetos ainda em varredura vêm com `scanning: true` e são
+  // atualizados por `onChange` quando terminam.
   ipcMain.handle('project:list', async (event) => {
     if (!isMainSender(event)) return [];
-    await ready;
-    return scanAll();
+    await rootsReady;
+    return [...projects.values()];
   });
 
   ipcMain.handle('project:refresh', async (event) => {
@@ -83,7 +135,7 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
 
   ipcMain.handle('project:add', async (event) => {
     if (!isMainSender(event)) return null;
-    await ready;
+    await rootsReady;
     const window = getMainWindow();
     const result = await dialog.showOpenDialog(window, {
       title: 'Autorizar pasta de projeto no ATLAS',
@@ -96,20 +148,17 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
 
   // Cadastro de pasta já canonicalizada, pelo diálogo ou por "Abrir no ATLAS" confirmado.
   async function authorizeRoot(root) {
-    await ready;
+    await rootsReady;
     if (!authorizedRoots.includes(root)) authorizedRoots.push(root);
     saveRoots();
     await scanRoot(root);
     return [...projects.values()];
   }
 
-  const inside = (parent, child) => {
-    const relative = path.relative(parent, child);
-    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-  };
-
   return {
     ready,
+    rootsReady,
+    readyFor,
     authorizeRoot,
     // Projetos já autorizados dentro do caminho: aviso antes de cadastrar uma pasta mais ampla.
     getProjectsInside: (cwd) => {
@@ -141,6 +190,14 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
       if (scanPromise) await scanPromise.catch(() => {});
       return scanAll();
     },
+    // Revarre um único projeto, por exemplo depois de criar a worktree de uma tarefa.
+    refreshRoot: async (root) => {
+      await rootsReady;
+      const target = normalize(root);
+      const match = authorizedRoots.find((item) => normalize(item) === target);
+      if (!match) throw new Error('Projeto fora das pastas autorizadas.');
+      return scanRoot(match);
+    },
     getProjects: () => [...projects.values()],
     getDefaultCwd: () => authorizedRoots[0] || initialRoot,
     getProjectForCwd: (cwd) => {
@@ -169,4 +226,9 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
   };
 }
 
-module.exports = { createProjectHost };
+// Espera só o projeto do diretório; duplos de teste podem expor apenas `ready`.
+function waitForCwd(projectHost, cwd) {
+  return projectHost.readyFor ? projectHost.readyFor(cwd) : projectHost.ready;
+}
+
+module.exports = { createProjectHost, waitForCwd };

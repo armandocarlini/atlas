@@ -83,7 +83,8 @@ function hostHarness(t, { adapterError = null, createAgent, worktrees } = {}) {
   const calls = [];
   const projectHost = {
     ready: Promise.resolve(),
-    refresh: async () => { calls.push('refresh'); for (const item of created) allowed.add(item); },
+    // Só o projeto da tarefa é revarrido depois de criar a worktree.
+    refreshRoot: async (root) => { calls.push(`refresh:${root}`); for (const item of created) allowed.add(item); },
     isAllowedCwd: (cwd) => allowed.has(cwd),
     getProjectForCwd: (cwd) => (cwd === '/fixture/a' ? project : null),
   };
@@ -128,7 +129,7 @@ test('aprovação confirma o CLI, cria e registra a worktree e inicia o agente n
   const { store, task, ask, approve, calls, spawns } = hostHarness(t);
   const request = ask();
   const result = await approve(request);
-  assert.deepEqual(calls, ['adapter', 'create', 'refresh']);
+  assert.deepEqual(calls, ['adapter', 'create', 'refresh:/fixture/a'], 'revarre só o projeto da tarefa');
   assert.equal(spawns[0].cwd, `/fixture/a.atlas-worktrees/task-${task.id.slice(0, 8)}`);
   assert.equal(result.agent.cwd, spawns[0].cwd);
   assert.deepEqual(result.request.worktree, { path: spawns[0].cwd, branch: `atlas/task-${task.id.slice(0, 8)}` });

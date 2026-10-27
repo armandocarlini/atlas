@@ -1,8 +1,10 @@
+const { waitForCwd } = require('./project-host.cjs');
+
 function createMessageHost({ ipcMain, projectHost, store, isMainSender }) {
   async function projectForRequest(event, request) {
     if (!isMainSender(event)) throw new Error('Janela não autorizada a acessar mensagens.');
     if (!request || typeof request !== 'object' || typeof request.cwd !== 'string') throw new Error('Informe uma pasta autorizada.');
-    await projectHost.ready;
+    await waitForCwd(projectHost, request.cwd);
     if (!projectHost.isAllowedCwd(request.cwd)) throw new Error('Selecione uma pasta autorizada.');
     const project = projectHost.getProjectForCwd(request.cwd);
     if (!project) throw new Error('Projeto não encontrado para a pasta selecionada.');

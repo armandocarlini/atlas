@@ -69,6 +69,10 @@ const server = http.createServer(async (request, response) => {
     response.end(JSON.stringify({ error: error.message }));
   }
 });
+// Smokes ficam ociosos enquanto rodam CLIs reais; o keep-alive padrão (5 s) fechava o
+// socket que o fetch seguinte reaproveitava, e a chamada falhava com ECONNRESET.
+server.keepAliveTimeout = 10 * 60 * 1000;
+server.headersTimeout = server.keepAliveTimeout + 1000;
 if (!secondInstance) server.listen(Number(process.env.ATLAS_SMOKE_CONTROL_PORT), '127.0.0.1');
 app.on('will-quit', () => server.close());
 if (process.env.ATLAS_SMOKE_NO_CLI === '1') {

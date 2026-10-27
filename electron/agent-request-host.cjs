@@ -1,6 +1,7 @@
 const { AGENT_REQUEST_POLICY } = require('./operational-store.cjs');
 const path = require('node:path');
 const worktreeManager = require('./worktree-manager.cjs');
+const { waitForCwd } = require('./project-host.cjs');
 
 // Aprovação, pelo usuário, dos agentes pedidos pela sessão principal. A decisão
 // vale apenas para o payload exibido e é revalidada no ponto de execução:
@@ -12,7 +13,7 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
   async function projectForRequest(event, request) {
     if (!isMainSender(event)) throw new Error('Janela não autorizada a decidir pedidos de agente.');
     if (!request || typeof request !== 'object' || typeof request.cwd !== 'string') throw new Error('Informe uma pasta autorizada.');
-    await projectHost.ready;
+    await waitForCwd(projectHost, request.cwd);
     if (!projectHost.isAllowedCwd(request.cwd)) throw new Error('Selecione uma pasta autorizada.');
     const project = projectHost.getProjectForCwd(request.cwd);
     if (!project || !projectHost.isAllowedCwd(project.path)) throw new Error('Projeto não encontrado para a pasta selecionada.');
@@ -56,7 +57,8 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     const created = await worktrees.createWorktree(plan);
     try {
       store.recordWorktree({ projectId: project.id, requestId: approved.id, taskId: approved.taskId, repositoryPath: created.repositoryPath, path: created.path, branch: created.branch, baseCommit: created.baseCommit });
-      await projectHost.refresh();
+      // Só o projeto da tarefa: os demais não precisam ser varridos de novo.
+      await (projectHost.refreshRoot ? projectHost.refreshRoot(project.path) : projectHost.refresh());
       if (!projectHost.isAllowedCwd(created.path)) throw new Error('A descoberta Git não encontrou a worktree criada.');
     } catch (error) {
       error.message = `Worktree criada em ${created.path}, mas não foi possível usá-la: ${error.message}`;

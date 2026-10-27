@@ -4,7 +4,9 @@ const { execFile } = require('node:child_process');
 const { kimiHome } = require('./kimi-mcp-config.cjs');
 const { orchestratorInstructions } = require('./orchestrator-profile.cjs');
 
-const VERSION_TIMEOUT_MS = 5000;
+// A primeira execução de um CLI pode passar de 4 s (OpenCode pelo shim .cmd, com o
+// antivírus examinando o binário); com 5 s ele aparecia como indisponível.
+const VERSION_TIMEOUT_MS = 15000;
 const MODELS_TIMEOUT_MS = 30000;
 // O modelo vai como argumento do CLI, que no Windows pode ser um shim .cmd
 // interpretado pelo cmd.exe: só caracteres sem significado para o shell.

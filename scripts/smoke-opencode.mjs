@@ -165,6 +165,9 @@ try {
   failed = false;
 } catch (error) {
   console.error(error.message);
+  // Falha de rede no canal de controle costuma significar que o Electron saiu: diga como.
+  if (error.cause) console.error(`causa: ${error.cause.code || error.cause.message}`);
+  console.error(`Electron: ${child.exitCode === null ? 'ainda em execução' : `saiu com código ${child.exitCode}`}`);
   if (stderr) console.error(stderr.slice(-4000));
   process.exitCode = 1;
 } finally {

@@ -664,13 +664,25 @@ export default function App() {
     setProjectsLoading(true);
     Promise.all([desktop.listProjects(), desktop.getTerminalDefaults()]).then(([items, defaults]) => {
       if (!active) return;
-      setProjects((current) => current.length ? current : items);
+      // Projetos já atualizados por `project:changed` antes desta resposta prevalecem.
+      setProjects((current) => items.map((item) => current.find((project) => project.id === item.id && !project.scanning) || item));
       if (items[0] && !projectSelectionRef.current) setActiveProject(items[0].name);
       if (defaults?.cwd) setWorkingDirectory((current) => current === INITIAL_DIRECTORY ? defaults.cwd : current);
     }).catch((error) => notify(`Não foi possível descobrir os projetos: ${error.message}`)).finally(() => {
       if (active) setProjectsLoading(false);
     });
     return () => { active = false; };
+  }, [isSecondaryWindow]);
+
+  // A varredura Git de cada projeto termina no seu tempo; a janela não espera todas.
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow || !desktop.onProjectChanged) return undefined;
+    return desktop.onProjectChanged((project) => {
+      if (!project?.id) return;
+      setProjects((current) => current.some((item) => item.id === project.id)
+        ? current.map((item) => (item.id === project.id ? project : item))
+        : [...current, project]);
+    });
   }, [isSecondaryWindow]);
 
   useEffect(() => {
@@ -1456,7 +1468,7 @@ export default function App() {
                 {missions.map((mission) => <button key={mission.name} className={activeMission === mission.name ? 'active' : ''} onClick={() => setActiveMission(mission.name)}><StatusDot color={mission.color} pulse={activeMission === mission.name} /><span>{mission.name}</span><small>{mission.count}</small></button>)}
               </div>
             </div>}
-            <GitDiscovery projects={projects} selectedWorktree={selectedWorktree} onSelect={selectWorktree} onRefresh={refreshProjects} loading={projectsLoading} />
+            <GitDiscovery projects={projects} selectedWorktree={selectedWorktree} onSelect={selectWorktree} onRefresh={refreshProjects} loading={projectsLoading || projects.some((project) => project.scanning)} />
             <div className="sidebar-section pinned-section">
               <div className="sidebar-heading"><span>ATALHOS</span></div>
               <button className="sidebar-link"><Keyboard size={14} /><span>Comandos e teclas</span><kbd>?</kbd></button>

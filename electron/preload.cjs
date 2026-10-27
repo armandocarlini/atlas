@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   closeTerminalWindow: (sessionId) => ipcRenderer.invoke('terminal-window:close', { sessionId }),
   onTerminalWindowClosed: (callback) => subscribe('terminal-window:closed', callback),
   listAdapters: () => ipcRenderer.invoke('agent:list-adapters'),
+  onProjectChanged: (callback) => subscribe('project:changed', callback),
   listAgentModels: (request) => ipcRenderer.invoke('agent:list-models', request),
   createAgent: (request) => ipcRenderer.invoke('agent:create', request),
   listAgents: () => ipcRenderer.invoke('agent:list'),

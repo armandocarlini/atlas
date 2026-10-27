@@ -14,10 +14,9 @@ O aceite dos 12 passos foi demonstrado em 27/10/2026 (`docs/historico/ACEITE_V0_
 
 São correções da v0.1, sem mudar o escopo do produto.
 
-1. **Abertura e início de agente sem esperar a varredura Git de todos os projetos.** A janela deve aparecer antes da varredura. Depois de criar uma worktree, deve ser revarrido só o projeto afetado.
-2. **Aviso do Kimi só quando há sessão Kimi.** O aviso de ferramentas não conectadas não deve aparecer para sessões OpenCode.
-3. **Revisar os PRs do Dependabot** (#22, #23, #25). Revisar cada um separadamente, com `npm run dist:win` e o job Package verdes, porque mexem no empacotamento validado.
-4. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). Investigar na próxima ocorrência; não reexecutar às cegas.
+1. **Aviso do Kimi só quando há sessão Kimi.** O aviso de ferramentas não conectadas não deve aparecer para sessões OpenCode.
+2. **Revisar os PRs do Dependabot** (#22, #23, #25). Revisar cada um separadamente, com `npm run dist:win` e o job Package verdes, porque mexem no empacotamento validado.
+3. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). Investigar na próxima ocorrência; não reexecutar às cegas.
 
 ## Próximo — v0.2 (cada item precisa de plano aprovado)
 

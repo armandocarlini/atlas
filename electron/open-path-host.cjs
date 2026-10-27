@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { waitForCwd } = require('./project-host.cjs');
 
 // "Abrir no ATLAS" (marco 6a). O caminho chega como argumento de processo
 // (`--atlas-open=<pasta>`), na primeira instância ou na segunda, que só repassa
@@ -61,7 +62,7 @@ function createOpenPathHost({ ipcMain, projectHost, isMainSender, notify = () =>
       publish({ kind: 'error', message: `Não foi possível abrir a pasta recebida: ${error.message}` });
       return latest;
     }
-    await projectHost.ready;
+    await waitForCwd(projectHost, resolved);
     const project = projectHost.getProjectContaining(resolved);
     if (project) {
       // Subpasta de um projeto abre o projeto; pasta autorizada (raiz ou worktree) vira o diretório ativo.

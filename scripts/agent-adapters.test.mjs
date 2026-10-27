@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
 
-const { ADAPTERS, discoverAdapters, parseVersion, resolveOnPath } = createRequire(import.meta.url)('../electron/agent-adapters.cjs');
+const { ADAPTERS, VERSION_TIMEOUT_MS, discoverAdapters, parseVersion, resolveOnPath } = createRequire(import.meta.url)('../electron/agent-adapters.cjs');
 
 const kimi = ADAPTERS.find((adapter) => adapter.id === 'kimi-code');
 
@@ -71,7 +71,9 @@ test('timeout do --version gera erro acionável', async () => {
     },
   });
   assert.equal(adapter.status, 'unavailable');
-  assert.match(adapter.error, /não respondeu em 5s/);
+  assert.match(adapter.error, /não respondeu em 15s/);
+  // Regressão: a primeira execução do OpenCode pelo shim levou 4,5 s e o limite era 5 s.
+  assert(VERSION_TIMEOUT_MS >= 10000);
   assert.match(adapter.error, /kimi\.exe/);
 });
 
