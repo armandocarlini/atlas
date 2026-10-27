@@ -325,7 +325,10 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       transaction(db, () => expirePending(projectId, now()));
       return db.prepare('SELECT * FROM agent_requests WHERE project_id = ? ORDER BY created_at, id').all(projectId).map(agentRequestRow);
     },
-    getAgentRequest: (projectId, requestId) => agentRequestRow(db.prepare('SELECT * FROM agent_requests WHERE id = ? AND project_id = ?').get(requestId, projectId)),
+    getAgentRequest(projectId, requestId) {
+      transaction(db, () => expirePending(projectId, now()));
+      return agentRequestRow(db.prepare('SELECT * FROM agent_requests WHERE id = ? AND project_id = ?').get(requestId, projectId));
+    },
     // Aprovação vinculada ao payload exibido e à validade, verificada no momento da execução.
     approveAgentRequest({ projectId, requestId, payloadHash }) {
       return transaction(db, () => {
@@ -406,6 +409,14 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         for (const run of active) {
           db.prepare(`UPDATE agent_runs SET state = 'lost', version = version + 1, ended_at = ?, reason = ? WHERE id = ?`).run(at, reason, run.id);
           event({ projectId: run.project_id, sessionId: run.session_id, runId: run.id, type: 'run.lost', payload: { reason }, at });
+        }
+        // Aprovação persistida não autoriza repetir um spawn após interrupção.
+        // Um processo pode ter iniciado antes do crash: mantenha o histórico,
+        // sem inferir sucesso nem criar outra sessão automaticamente.
+        for (const request of db.prepare("SELECT * FROM agent_requests WHERE state = 'approved'").all()) {
+          const error = 'Inicialização interrompida. Confira o histórico de sessões antes de solicitar outro agente.';
+          db.prepare("UPDATE agent_requests SET state = 'failed', error = ?, version = version + 1 WHERE id = ?").run(error, request.id);
+          event({ projectId: request.project_id, sessionId: request.requested_by, type: 'approval.failed', payload: { requestId: request.id, error, reason }, correlationId: request.id, at });
         }
         return active.length;
       });

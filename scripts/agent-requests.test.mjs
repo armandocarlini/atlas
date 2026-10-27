@@ -88,6 +88,34 @@ test('pedido expira após a validade, libera vaga e não pode mais ser aprovado'
   for (let index = 0; index < AGENT_REQUEST_POLICY.maxPending; index += 1) ask({ name: `novo-${index}` });
 });
 
+test('consulta de status expira pedido sem depender da listagem da interface', (t) => {
+  const { ask, store, clock } = harness(t);
+  const request = ask();
+  clock.at = START + AGENT_REQUEST_POLICY.ttlMs;
+  assert.equal(store.getAgentRequest('project-a', request.id).state, 'expired');
+  assert.equal(store.getAgentRequest('project-a', request.id).state, 'expired');
+  assert.equal(store.listEvents('project-a').filter((item) => item.type === 'approval.resolved' && item.payload.decision === 'expired').length, 1);
+});
+
+test('reinício reconcilia aprovação interrompida sem repetir spawn nem inventar sucesso', (t) => {
+  const { ask, store, filename } = harness(t);
+  const request = ask();
+  store.approveAgentRequest({ projectId: 'project-a', requestId: request.id, payloadHash: request.payloadHash });
+  store.close();
+  const reopened = createOperationalStore({ filename });
+  try {
+    reopened.reconcileRuns();
+    const restored = reopened.getAgentRequest('project-a', request.id);
+    assert.equal(restored.state, 'failed');
+    assert.match(restored.error, /interrompida/);
+    assert.equal(restored.sessionId, null);
+    assert.equal(restored.resolvedBy, 'user');
+    reopened.reconcileRuns();
+    assert.equal(reopened.listEvents('project-a').filter((item) => item.type === 'approval.failed').length, 1);
+    assert.equal(reopened.listSessions('project-a').length, 2);
+  } finally { reopened.close(); }
+});
+
 test('aprovação pela interface inicia agente com origem orchestrator e conclui o pedido', async (t) => {
   const { ask, call, spawns, changes, store } = harness(t);
   const request = ask();
