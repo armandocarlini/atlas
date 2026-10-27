@@ -62,7 +62,7 @@ Validação local: `npm test` 61/61, build, `check:public`, smoke desktop comple
 
 ## Marco 4a — mensagens estruturadas
 
-Conforme `docs/PLANO_MENSAGENS.md`: migration 4 cria `messages` e `message_deliveries`; o comando `message.send` usa chave de idempotência por projeto com hash de payload e emite `message.sent`; a leitura é idempotente e emite `message.read` uma única vez. Remetente e destinatário devem ser sessões persistidas do mesmo projeto. IPC `message:send/list/mark-read` restrito à janela principal e a pastas autorizadas, espelhando `task-host.cjs`.
+Integrado pelo PR #14 como `0f07e13`, após CI Ubuntu e Windows verde na execução 40424432705. Conforme `docs/PLANO_MENSAGENS.md`: migration 4 cria `messages` e `message_deliveries`; o comando `message.send` usa chave de idempotência por projeto com hash de payload e emite `message.sent`; a leitura é idempotente e emite `message.read` uma única vez. Remetente e destinatário devem ser sessões persistidas do mesmo projeto. IPC `message:send/list/mark-read` restrito à janela principal e a pastas autorizadas, espelhando `task-host.cjs`.
 
 No desktop, a sessão manual real ganha a ação **Descoberta** (modal com foco, validação inline, limites e preservação dos campos em erro) dirigida à principal do projeto. O painel Mensagens passa a listar dados reais do projeto selecionado, com rota, datas, contagem textual de não lidas anunciada com `role=status` e marcar como lida ao clicar; a aba mostra o total real de não lidas. Nada é digitado no terminal do destinatário: a mensagem é registro visível, não entrada para o modelo. O navegador mantém os cards ilustrativos. Skills ui-ux-pro-max e apple-design invocadas antes do trabalho de UI.
 
@@ -70,7 +70,30 @@ Validação local no Windows: `npm test` 71/71 (10 testes novos de mensagens cob
 
 Retomada após a quota do Kimi esgotar antes do commit: a revisão do diff não encontrou bloqueios, e os gates foram repetidos (`npm test` 71/71, `npm run test:agent` 27/27, build, `check:public`, `npm run test:desktop`). A primeira repetição do `npm run smoke:agent` falhou no passo "nova run principal": `kimi --version` excedeu o timeout de 5 s da descoberta. A causa foi ambiental: o CLI se autoatualizou de 2.3.2 para 2.3.3 durante o smoke, e o `kimi.exe` foi substituído no meio da execução, com a versão anterior preservada em `.bak`. A primeira execução do binário novo passou do limite. Com o binário estável, `--version` responde em 1,1–1,7 s, e o smoke completo passou 10/10 com o Kimi 2.3.3. O timeout e os testes não foram alterados. Limite conhecido: a autoatualização do CLI não é controlada pelo smoke.
 
-Servidor MCP, criação de agente pelo orquestrador, handoffs, delegação de tarefas e worktrees sob política continuam pendentes nas subdivisões seguintes do marco 4.
+## Marco 4b-1 — ponte MCP do ATLAS com consentimento
+
+Conforme `docs/PLANO_MCP.md`. O Kimi Code 2.3.3 só lê servidores MCP do `mcp.json` global (ou de `$KIMI_CODE_HOME`) e do `.kimi-code/mcp.json` do projeto. Alterar o repositório do usuário foi descartado. Entre a configuração global e uma `KIMI_CODE_HOME` separada (com novo login), o usuário escolheu a **entrada global com consentimento explícito**.
+
+Uma sonda em fixture temporária confirmou que o Kimi inicia o servidor stdio como filho direto do PTY, repassa o ambiente da sessão e fala JSON-RPC por linha (`2025-11-25`). Com isso, cada run de agente recebe `ATLAS_MCP_ENDPOINT` e um token aleatório no ambiente do PTY. A ponte (`electron/atlas-mcp-bridge.cjs`, executada pelo Electron em modo Node) repassa as chamadas ao processo principal por named pipe, sem porta de rede. O host (`electron/mcp-host.cjs`) deriva projeto e sessão somente do token, revogado na saída ou em falha de spawn ou persistência. As ferramentas são `sessions_list`, `tasks_list`, `messages_unread`, `messages_mark_read` e `messages_send`, todas limitadas ao projeto da sessão. O conteúdo das mensagens volta marcado como não confiável. O perfil da principal libera `mcp__atlas__*` e continua sem ferramentas de escrita.
+
+A interface mostra o estado na subbarra, um aviso dispensável e um diálogo de consentimento com o arquivo e o conteúdo exatos, efeitos, cancelar, conectar e remover. O card ganha o texto "ATLAS conectado" somente após o handshake real da ponte. Instalar ou remover pela IPC exige `confirm: true`. Entradas `atlas` alheias e JSON inválido nunca são sobrescritos.
+
+Validação local no Windows (Node.js 24.14.0, Kimi Code 2.3.3), com a execução das suítes delegada a um subagente conforme `AGENTS.md`: `npm test` 105/105, `npm run test:agent` 60/60, build, `check:public` (71 arquivos), `npm run test:desktop` 17/17 e `npm run smoke:agent` 15/15, repetidos depois das correções da revisão. O smoke desktop usa `KIMI_CODE_HOME` de fixture com outro servidor pré-existente e confere conteúdo exato, foco inicial na ação segura, foco preso, cancelar sem escrita, conectar, remover só a entrada do ATLAS e contraste. O smoke real instala pela IPC confirmada na home isolada e comprova o handshake da ponte iniciada pelo Kimi na sessão manual e na nova run da principal com perfil `mcp__atlas__*`, a revogação do token na saída e a integração preservada após reinício. Nenhum prompt foi enviado ao modelo. Uma validação manual em fixture repetiu o caminho Kimi → `mcp.json` → ponte → host antes da UI (handshake em cerca de 5,7 s).
+
+Uma revisão independente confirmou o modelo de identidade (projeto, remetente e chamador vêm só do token) e apontou defeitos corrigidos antes do PR, cada um com regressão quando reproduzível:
+
+- Uma linha `null` no pipe lançava exceção não tratada no processo principal. Agora pedidos que não são objeto recebem erro, e o teste comprova que nenhuma exceção escapa.
+- Mensagens enviadas pela ponte eram auditadas como `user`. O comando e o evento agora registram `agent:<sessão>`, e o store recusa ator alheio.
+- Chaves de idempotência de agentes ganham o prefixo da sessão e não colidem entre sessões nem com comandos do usuário.
+- Instalação e remoção verificam e gravam a partir da mesma leitura do `mcp.json`. Um arquivo mantido como link é atualizado no destino.
+- O socket POSIX fica em diretório privado, e conexões que não se identificam são encerradas por tempo limite.
+- A ponte tolera mensagens nulas e repete o `hello` após reconexão.
+- O PTY recebe endpoint e token explicitamente vazios quando não há concessão.
+- A confirmação de instalar ou remover parte do próprio diálogo. Após uma falha, o estado é relido e a mensagem sai sem o prefixo do Electron. O foco permanece no diálogo durante a ação.
+
+Limites: o token fica no ambiente do processo do Kimi, ao alcance de comandos do próprio agente (fronteira: o usuário local, a mesma do SQLite). A entrada aponta para o Electron e o script do clone atual, e muda para `outdated` se o ATLAS mudar de pasta. O instalador do marco 6 define o caminho estável. A chamada de ferramenta pelo modelo depende do smoke opt-in com provedor configurado.
+
+Criação de agente pelo orquestrador sob política e aprovação (4b-2), delegação e claim de tarefas, handoffs e worktrees (4c) continuam pendentes.
 
 O Kimi foi interrompido durante os testes de dois terminais e descoberta Git. Essa etapa foi concluída: os testes agora são reproduzíveis em `scripts/`, e os marcos confirmados foram atualizados no planejamento. O relatório técnico/visual está em `docs/VALIDACAO_DESKTOP.md`.
 

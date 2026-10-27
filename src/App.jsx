@@ -45,6 +45,7 @@ import useModalFocus from './useModalFocus.js';
 import { agentSession, mergeAgentSessions, sessionExit } from './session-state.js';
 import { PersistentTaskPanel, NewTaskModal } from './PersistentTasks.jsx';
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
+import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
 
 const THEME_PRESETS = [
   { name: 'Laranja', color: '#f2994a' },
@@ -255,7 +256,7 @@ function HarnessIntro({ harness, session }) {
   );
 }
 
-function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onExit, onRestart, onSendDiscovery, desktop, theme, detached = false, popup = false }) {
+function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
@@ -283,6 +284,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
           <span className={`origin-badge ${session.origin}`}>{session.origin}</span>
           {session.demo && <span className="origin-badge demo">ilustrativo</span>}
           <span className="session-cli">{session.version ? `${session.cli} ${session.version}` : session.cli}</span>
+          {atlasConnected && !session.exited && <span className="origin-badge atlas-tools" title="Ferramentas do ATLAS conectadas a esta sessão pelo MCP">ATLAS conectado</span>}
         </div>
         <div className="session-actions">
           {!session.ptyId && !session.archived && <span className="token-count">{session.tokens} <span>tokens</span></span>}
@@ -516,6 +518,10 @@ export default function App() {
   const [messageState, setMessageState] = useState({ projectId: null, items: [], loading: false, error: '' });
   const [messageModal, setMessageModal] = useState(null);
   const [orchestratorStatus, setOrchestratorStatus] = useState({ loading: false, error: '' });
+  const [kimiIntegration, setKimiIntegration] = useState(null);
+  const [integrationModalOpen, setIntegrationModalOpen] = useState(false);
+  const [integrationNoticeDismissed, setIntegrationNoticeDismissed] = useState(false);
+  const [toolConnections, setToolConnections] = useState({});
   const [inspectorTab, setInspectorTab] = useState('task');
   const [initialDockLayout] = useState(getInitialDockLayout);
   const [docks, setDocks] = useState(initialDockLayout.docks);
@@ -626,6 +632,51 @@ export default function App() {
     });
     return () => { active = false; };
   }, [isSecondaryWindow]);
+
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow || !desktop.getKimiIntegration) return undefined;
+    let active = true;
+    setKimiIntegration({ loading: true });
+    desktop.getKimiIntegration().then((status) => {
+      if (active) setKimiIntegration(status);
+    }).catch((error) => {
+      if (active) setKimiIntegration({ state: 'invalid', error: error.message, file: '', entryText: '' });
+    });
+    const unsubscribe = desktop.onAtlasToolsConnection?.(({ sessionId, connected }) => {
+      setToolConnections((current) => ({ ...current, [sessionId]: connected }));
+    });
+    return () => { active = false; unsubscribe?.(); };
+  }, [isSecondaryWindow]);
+
+  async function refreshKimiIntegration() {
+    setKimiIntegration(await desktop.getKimiIntegration());
+  }
+
+  // Ações do diálogo de consentimento: a confirmação parte só daqui. Após falha,
+  // o estado é relido para que subbarra e diálogo reflitam o arquivo atual.
+  async function changeKimiIntegration(action) {
+    try {
+      return await action({ confirm: true });
+    } catch (error) {
+      await refreshKimiIntegration().catch(() => {});
+      throw new Error(error.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
+    }
+  }
+
+  async function installKimiIntegration() {
+    const status = await changeKimiIntegration(desktop.installKimiIntegration);
+    setKimiIntegration(status);
+    setIntegrationModalOpen(false);
+    notify('Ferramentas do ATLAS conectadas ao Kimi. Inicie uma nova execução para carregá-las.');
+  }
+
+  async function removeKimiIntegration() {
+    const status = await changeKimiIntegration(desktop.removeKimiIntegration);
+    setKimiIntegration(status);
+    setIntegrationModalOpen(false);
+    setIntegrationNoticeDismissed(true);
+    notify('Integração do ATLAS removida da configuração do Kimi.');
+  }
 
   useEffect(() => {
     if (!desktop?.isDesktop || isSecondaryWindow) return undefined;
@@ -1213,8 +1264,12 @@ export default function App() {
           </div>
           <div className="mission-subbar">
             <div><StatusDot color="#f2994a" /><span>{projectSessions.length} sessões neste projeto</span></div>
-            <span>{desktop?.isDesktop ? 'Histórico e sessões locais' : 'Wireframe ilustrativo'}</span>
+            {desktop?.isDesktop && !isSecondaryWindow && kimiIntegration
+              ? <KimiIntegrationStatus status={kimiIntegration} onManage={() => setIntegrationModalOpen(true)} />
+              : <span>{desktop?.isDesktop ? 'Histórico e sessões locais' : 'Wireframe ilustrativo'}</span>}
           </div>
+
+          {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModalOpen(true)} onDismiss={() => setIntegrationNoticeDismissed(true)} />}
 
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.loading && <p className="scope-note" role="status">Abrindo sessão principal…</p>}
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.error && <div className="scope-note error-note" role="alert"><span>{orchestratorStatus.error}</span><button className="button secondary compact" onClick={() => restartOrchestrator()}>Tentar novamente</button></div>}
@@ -1233,6 +1288,7 @@ export default function App() {
               onPopup={toggleTerminalPopup}
               onExit={updateSessionExit}
               onRestart={restartOrchestrator}
+              atlasConnected={toolConnections[session.id] ?? session.atlasTools}
               onSendDiscovery={desktop?.isDesktop && projectSessions.some((session) => session.roleKind === 'orchestrator') ? (session) => setMessageModal({ session }) : undefined}
               onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
             />)}
@@ -1282,6 +1338,7 @@ export default function App() {
       {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
       {taskModalOpen && <NewTaskModal projectName={taskState.projectName} cwd={workingDirectory} onCreate={createTask} onClose={() => setTaskModalOpen(false)} />}
+      {integrationModalOpen && kimiIntegration && !kimiIntegration.loading && <KimiIntegrationModal status={kimiIntegration} onInstall={installKimiIntegration} onRemove={removeKimiIntegration} onRefresh={refreshKimiIntegration} onClose={() => setIntegrationModalOpen(false)} />}
       {messageModal && <NewMessageModal projectName={currentProject?.name || activeProject} fromName={messageModal.session.name} toName={projectSessions.find((session) => session.roleKind === 'orchestrator')?.name || 'principal'} onSend={sendDiscovery} onClose={() => setMessageModal(null)} />}
       {toast && <div className="toast" role="status"><CheckCircle2 size={15} />{toast}</div>}
     </div>

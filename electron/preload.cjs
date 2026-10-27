@@ -41,4 +41,8 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   sendMessage: (request) => ipcRenderer.invoke('message:send', request),
   listMessages: (request) => ipcRenderer.invoke('message:list', request),
   markMessageRead: (request) => ipcRenderer.invoke('message:mark-read', request),
+  onAtlasToolsConnection: (callback) => subscribe('agent:atlas-tools', callback),
+  getKimiIntegration: () => ipcRenderer.invoke('integration:kimi-mcp-status'),
+  installKimiIntegration: (request) => ipcRenderer.invoke('integration:kimi-mcp-install', request),
+  removeKimiIntegration: (request) => ipcRenderer.invoke('integration:kimi-mcp-remove', request),
 });

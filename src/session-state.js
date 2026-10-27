@@ -18,6 +18,7 @@ export function agentSession(agent) {
     status, color: archived ? '#8d959d' : '#4ecb8d', worktree: agent.cwd,
     archived, runState: agent.runState, reason: agent.reason, createdAt: agent.createdAt,
     endedAt: agent.endedAt, model: null, effort: null, lines: [],
+    atlasTools: !archived && Boolean(agent.atlasTools),
   };
 }
 

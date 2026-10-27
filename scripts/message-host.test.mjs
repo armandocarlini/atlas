@@ -162,3 +162,10 @@ test('migration 3 para 4 preserva dados e habilita mensagens', (t) => {
   } finally { upgraded.close(); }
   reopen();
 });
+
+test('IPC da interface sempre audita o usuário, mesmo se o renderer enviar outro ator', async (t) => {
+  const { call, store } = harness(t);
+  const message = await call('message:send', { ...request, idempotencyKey: 'discovery-ator-01', actor: 'agent:orchestrator-a' });
+  const event = store.listEvents('project-a').find((item) => item.type === 'message.sent' && item.payload.messageId === message.id);
+  assert.equal(event.payload.actor, 'user');
+});
