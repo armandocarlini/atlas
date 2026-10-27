@@ -48,6 +48,8 @@ const server = http.createServer(async (request, response) => {
     if (command.action === 'terminals') result = terminals;
     if (command.action === 'defaults-resolved') result = defaultsResolved;
     if (command.action === 'focus') { window.restore(); window.show(); window.focus(); }
+    // Reenvia um aviso do processo principal à janela (somente teste).
+    if (command.action === 'send') window.webContents.send(command.channel, command.payload);
     if (command.action === 'resize') { window.setSize(command.width, command.height); result = window.getContentBounds(); }
     if (command.action === 'invoke') {
       // Invoca um handler IPC como se fosse a janela principal (somente teste).

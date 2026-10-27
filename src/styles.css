@@ -784,3 +784,12 @@ body { transition: background-color .18s ease, color .18s ease; }
 .button.secondary.danger:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface-raised)); }
 .session-header .origin-badge.atlas-tools { color: var(--success); }
 .integration-modal:focus { outline: none; }
+.agent-requests { display: grid; gap: 10px; margin: 10px 12px 0; }
+.agent-request { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 6px; background: var(--surface-raised); color: var(--text); }
+.agent-request h3 { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.agent-request-purpose { display: grid; gap: 4px; }
+.agent-request-purpose > span { color: var(--muted); font-size: 11px; }
+.agent-request-purpose p { margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-request-policy { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.agent-request-error { margin: 0; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+.agent-request-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }

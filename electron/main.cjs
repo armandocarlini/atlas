@@ -10,6 +10,7 @@ const { createTaskHost } = require('./task-host.cjs');
 const { createMessageHost } = require('./message-host.cjs');
 const { createMcpHost } = require('./mcp-host.cjs');
 const { createIntegrationHost } = require('./integration-host.cjs');
+const { createAgentRequestHost } = require('./agent-request-host.cjs');
 const { ensureOrchestratorProfile } = require('./orchestrator-profile.cjs');
 
 let mainWindow = null;
@@ -238,12 +239,14 @@ app.whenReady().then(async () => {
     isMainSender: terminalHost.isMainSender,
     getPopupPtyId: (webContents) => getPopupEntry(webContents)?.ptyId || null,
   });
+  const sendToMain = (channel, payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+  };
   // Sem o pipe local, os agentes continuam funcionando, só sem ferramentas do ATLAS.
   const toolsHost = createMcpHost({
     store: operationalStore,
-    onConnectionChange: (sessionId, connected) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:atlas-tools', { sessionId, connected });
-    },
+    onConnectionChange: (sessionId, connected) => sendToMain('agent:atlas-tools', { sessionId, connected }),
+    onAgentRequest: (projectId) => sendToMain('agent-request:changed', { projectId }),
   });
   try {
     await toolsHost.listen();
@@ -251,7 +254,7 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error('Não foi possível abrir o canal local de ferramentas do ATLAS:', error);
   }
-  createAgentHost({
+  const agentHost = createAgentHost({
     ipcMain,
     projectHost,
     transport: ptyTransport,
@@ -261,6 +264,14 @@ app.whenReady().then(async () => {
     mcpHost,
   });
   createIntegrationHost({ ipcMain, isMainSender: terminalHost.isMainSender });
+  createAgentRequestHost({
+    ipcMain,
+    projectHost,
+    store: operationalStore,
+    isMainSender: terminalHost.isMainSender,
+    agentHost,
+    onChange: (projectId) => sendToMain('agent-request:changed', { projectId }),
+  });
   await projectHost.ready;
   createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
   createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });

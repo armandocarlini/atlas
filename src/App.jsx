@@ -46,6 +46,12 @@ import { agentSession, mergeAgentSessions, sessionExit } from './session-state.j
 import { PersistentTaskPanel, NewTaskModal } from './PersistentTasks.jsx';
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
 import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
+import { AgentRequestsPanel } from './AgentRequests.jsx';
+
+// Mensagem de erro do processo principal sem o prefixo técnico do IPC do Electron.
+function cleanIpcError(error) {
+  return String(error?.message || error).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+}
 
 const THEME_PRESETS = [
   { name: 'Laranja', color: '#f2994a' },
@@ -522,6 +528,10 @@ export default function App() {
   const [integrationModalOpen, setIntegrationModalOpen] = useState(false);
   const [integrationNoticeDismissed, setIntegrationNoticeDismissed] = useState(false);
   const [toolConnections, setToolConnections] = useState({});
+  const [agentRequestState, setAgentRequestState] = useState({ projectId: null, items: [], policy: null, error: '' });
+  const [agentRequestErrors, setAgentRequestErrors] = useState({});
+  const agentRequestSequence = useRef(0);
+  const agentRequestScope = useRef({ projectId: null, cwd: '' });
   const [inspectorTab, setInspectorTab] = useState('task');
   const [initialDockLayout] = useState(getInitialDockLayout);
   const [docks, setDocks] = useState(initialDockLayout.docks);
@@ -659,7 +669,7 @@ export default function App() {
       return await action({ confirm: true });
     } catch (error) {
       await refreshKimiIntegration().catch(() => {});
-      throw new Error(error.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
+      throw new Error(cleanIpcError(error));
     }
   }
 
@@ -734,8 +744,61 @@ export default function App() {
     }).catch((error) => {
       if (active) setMessageState({ projectId: project.id, items: [], loading: false, error: error.message });
     });
+    setAgentRequestState({ projectId: project?.id || null, items: [], policy: null, error: '' });
+    setAgentRequestErrors({});
+    if (project && desktop.listAgentRequests) reloadAgentRequests(workingDirectory);
+    else agentRequestSequence.current += 1;
     return () => { active = false; };
   }, [isSecondaryWindow, projects, workingDirectory]);
+
+  agentRequestScope.current = { projectId: agentRequestState.projectId, cwd: workingDirectory };
+
+  // Respostas atrasadas de outro projeto ou de carga anterior são descartadas.
+  function reloadAgentRequests(cwd = agentRequestScope.current.cwd) {
+    const sequence = ++agentRequestSequence.current;
+    return desktop.listAgentRequests({ cwd }).then((state) => {
+      if (sequence === agentRequestSequence.current) setAgentRequestState({ ...state, error: '' });
+    }).catch((error) => {
+      if (sequence === agentRequestSequence.current) setAgentRequestState((current) => ({ ...current, error: cleanIpcError(error) }));
+    });
+  }
+
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow || !desktop.onAgentRequestsChanged) return undefined;
+    return desktop.onAgentRequestsChanged(({ projectId }) => {
+      if (projectId && projectId === agentRequestScope.current.projectId) reloadAgentRequests();
+    });
+  }, [isSecondaryWindow]);
+
+  function clearAgentRequestError(requestId) {
+    setAgentRequestErrors((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== requestId)));
+  }
+
+  async function approveAgentRequest(request) {
+    clearAgentRequestError(request.id);
+    try {
+      const { agent } = await desktop.approveAgentRequest({ cwd: workingDirectory, requestId: request.id, payloadHash: request.payloadHash });
+      setSessions((current) => mergeAgentSessions(current, [agent]));
+      setSelectedId(agent.id);
+      notify(`Agente ${agent.name} iniciado a pedido da sessão principal`);
+    } catch (error) {
+      setAgentRequestErrors((current) => ({ ...current, [request.id]: cleanIpcError(error) }));
+    } finally {
+      await reloadAgentRequests();
+    }
+  }
+
+  async function rejectAgentRequest(request) {
+    clearAgentRequestError(request.id);
+    try {
+      await desktop.rejectAgentRequest({ cwd: workingDirectory, requestId: request.id });
+      notify(`Pedido de agente ${request.name} recusado`);
+    } catch (error) {
+      setAgentRequestErrors((current) => ({ ...current, [request.id]: cleanIpcError(error) }));
+    } finally {
+      await reloadAgentRequests();
+    }
+  }
 
   async function createTask(request) {
     try {
@@ -1270,6 +1333,7 @@ export default function App() {
           </div>
 
           {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModalOpen(true)} onDismiss={() => setIntegrationNoticeDismissed(true)} />}
+          {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}
 
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.loading && <p className="scope-note" role="status">Abrindo sessão principal…</p>}
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.error && <div className="scope-note error-note" role="alert"><span>{orchestratorStatus.error}</span><button className="button secondary compact" onClick={() => restartOrchestrator()}>Tentar novamente</button></div>}

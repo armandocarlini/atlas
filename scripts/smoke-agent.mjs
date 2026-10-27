@@ -284,6 +284,45 @@ try {
     console.log('PASS nova run da principal carrega a ponte MCP do ATLAS com perfil mcp__atlas__*');
   }
 
+  // Pedido da principal real semeado no banco do perfil isolado (sem prompt ao
+  // modelo); o caminho MCP do pedido é coberto pelos testes com ponte e host reais.
+  const { createOperationalStore } = require('../electron/operational-store.cjs');
+  const liveStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
+  let seededRequest;
+  try {
+    seededRequest = liveStore.requestAgent({ projectId: rerun.projectId, requestedBy: principal.id, name: 'agente-da-principal', purpose: 'Agente pedido pela principal no smoke real.', idempotencyKey: 'smoke-agent-request-01' });
+  } finally {
+    liveStore.close();
+  }
+  await native('send', { channel: 'agent-request:changed', payload: { projectId: rerun.projectId } });
+  await until(() => evaluateMain(`document.querySelector('.agent-request')?.innerText.includes('Novo agente: agente-da-principal')`), 'pedido da principal exibido para decisão');
+  await evaluateMain(`document.querySelector('.agent-request button.primary').click()`);
+  const delegated = await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.name === 'agente-da-principal' && item.state === 'running'), 'agente aprovado iniciado', 30000);
+  assert.equal(delegated.origin, 'orchestrator');
+  assert.equal(delegated.role, 'agent');
+  assert.equal(delegated.cwd, fixture);
+  const fulfilled = (await native('invoke', { channel: 'agent-request:list', args: [{ cwd: fixture }] })).items.find((item) => item.id === seededRequest.id);
+  assert.equal(fulfilled.state, 'fulfilled');
+  assert.equal(fulfilled.sessionId, delegated.id);
+  const delegatedCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'agente-da-principal')`;
+  await until(() => evaluateMain(`${delegatedCard}?.querySelector('.origin-badge')?.textContent === 'orquestrador'`), 'card do agente aprovado com origem orquestrador');
+  if (integrationActive) await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === delegated.id)?.atlasTools === true, 'ponte MCP no agente aprovado', 30000);
+  await until(() => evaluateMain(`document.querySelectorAll('.agent-request').length === 0`), 'pedido resolvido sai da fila');
+  const delegatedAttach = () => native('invoke', { channel: 'terminal:attach', args: [delegated.ptyId] });
+  let delegatedTrusted = false;
+  await until(async () => {
+    const output = (await delegatedAttach()).scrollback;
+    if (!delegatedTrusted && output.includes('Trust this folder?')) {
+      delegatedTrusted = true;
+      await native('invoke', { channel: 'terminal:write', args: [{ terminalId: delegated.ptyId, data: '\r' }] });
+      return false;
+    }
+    return output.includes('Welcome to Kimi Code!');
+  }, 'TUI do agente aprovado', 90000);
+  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: delegated.ptyId, data: '/exit\r' }] });
+  await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === delegated.id)?.state === 'exited', 'agente aprovado encerrado');
+  console.log('PASS pedido da principal aprovado pela interface inicia o Kimi real com origem orchestrator e ponte conectada');
+
   await native('quit');
   await until(() => child.exitCode !== null, 'primeiro Electron encerrado', 15000);
   child = launch();
@@ -312,6 +351,11 @@ try {
     assert.equal(path.basename(JSON.parse(fs.readFileSync(path.join(kimiHome, 'mcp.json'), 'utf8')).mcpServers.atlas.args[0]), 'atlas-mcp-bridge.cjs');
     console.log('PASS integração MCP permanece instalada após reinício');
   }
+  const restoredDelegated = (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === delegated.id);
+  assert.equal(restoredDelegated?.origin, 'orchestrator', 'origem do agente aprovado preservada após reinício');
+  const restoredRequest = (await native('invoke', { channel: 'agent-request:list', args: [{ cwd: fixture }] })).items.find((item) => item.id === seededRequest.id);
+  assert.equal(restoredRequest.state, 'fulfilled');
+  console.log('PASS pedido atendido e origem do agente preservados após reinício');
 
   fs.writeFileSync(path.join(resultsDir, 'agent-result.json'), JSON.stringify({ passed: true, version: kimi.version, conversation: configuredModel, fixture: null }, null, 2));
   exitCode = 0;

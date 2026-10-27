@@ -380,3 +380,14 @@ test('sem host MCP o PTY recebe endpoint e token vazios, sem herdar os do própr
   assert.deepEqual(spawns[0].env, { ATLAS_MCP_ENDPOINT: '', ATLAS_MCP_TOKEN: '' });
   assert.equal(agent.atlasTools, false);
 });
+
+test('agente aprovado nasce com origem orchestrator e conta como ativo só enquanto roda', async () => {
+  const { host, transport } = createHarness();
+  const agent = await host.createAgent({ adapterId: 'kimi-code', name: 'revisor', cwd: 'C:\\projeto' }, { origin: 'orchestrator' });
+  assert.equal(agent.origin, 'orchestrator');
+  assert.equal(agent.role, 'agent');
+  assert.equal(host.countActive({ projectId: 'project-a', origin: 'orchestrator' }), 1);
+  assert.equal(host.countActive({ projectId: 'project-a', origin: 'user' }), 0);
+  transport.records[0].emitExit(0);
+  assert.equal(host.countActive({ projectId: 'project-a', origin: 'orchestrator' }), 0);
+});

@@ -74,7 +74,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     return listAgents();
   });
 
-  async function createAgent(request = {}, { role = 'agent', existing = null } = {}) {
+  async function createAgent(request = {}, { role = 'agent', existing = null, origin = 'user' } = {}) {
     await projectHost.ready;
 
     const adapters = await listAdapters();
@@ -122,7 +122,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       cli: adapter.name,
       version: adapter.version,
       cwd,
-      origin: 'user',
+      origin,
       ptyId: record.id,
       state: 'running',
       exit: null,
@@ -188,6 +188,8 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
   return {
     listAgents,
     getAgent: (id) => agents.get(id),
+    createAgent,
+    countActive: ({ projectId, origin }) => [...agents.values()].filter((agent) => agent.projectId === projectId && agent.origin === origin && agent.state === 'running').length,
   };
 }
 

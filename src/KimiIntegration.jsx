@@ -80,7 +80,7 @@ export function KimiIntegrationModal({ status, onInstall, onRemove, onRefresh, o
         </div>
         <ul className="integration-effects">
           <li><span>Vale para todas as sessões do Kimi. Fora do ATLAS o servidor não expõe ferramentas.</span></li>
-          <li><span>No ATLAS, cada sessão acessa só sessões, tarefas e mensagens do próprio projeto. Não há ferramentas para criar agentes, executar comandos ou alterar arquivos.</span></li>
+          <li><span>No ATLAS, cada sessão acessa só sessões, tarefas e mensagens do próprio projeto. A sessão principal pode pedir novos agentes, que só começam após sua aprovação. Não há ferramentas para executar comandos ou alterar arquivos.</span></li>
           <li><span>O Kimi continua pedindo sua aprovação antes de cada ferramenta, conforme suas regras de permissão.</span></li>
           <li><span>Sessões já abertas precisam de nova execução para carregar as ferramentas.</span></li>
         </ul>
