@@ -504,6 +504,49 @@ try {
   await click(main, '.agent-request button', 'Recusar');
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'worktree request rejected');
   console.log('PASS pedido com worktree mostra tarefa e recusa honesta sem repositório Git');
+  // Revisão semeada como o agente e o host fariam pela ponte MCP; o usuário pede
+  // ajustes, recebe nova revisão e conclui. Só a decisão dele leva a done.
+  const reviewStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
+  const reviewRunId = () => reviewStore.listRuns(extraProjectId).find((run) => run.session_id === 'smoke-agente' && run.state === 'running').id;
+  const snapshot = { worktreePath: 'C:\\fixture\\wt', expectedBranch: 'atlas/task-smoke001', branch: 'atlas/task-smoke001', baseCommit: 'a1b2c3d4e5', headCommit: 'f6e7d8c9b0', commits: 2, diff: { files: 3, insertions: 41, deletions: 7 }, uncommittedFiles: 1 };
+  try {
+    const offerForReview = reviewStore.offerHandoff({ projectId: extraProjectId, fromSessionId: 'smoke-orchestrator', toSessionId: 'smoke-agente', taskId: offeredTaskId, objective: 'Concluir com revisão.', idempotencyKey: 'smoke-review-offer-01' });
+    reviewStore.acceptHandoff({ projectId: extraProjectId, handoffId: offerForReview.id, sessionId: 'smoke-agente', runId: reviewRunId() });
+    reviewStore.requestReview({ projectId: extraProjectId, taskId: offeredTaskId, sessionId: 'smoke-agente', runId: reviewRunId(), summary: 'Regressão escrita e correção aplicada.', commands: [{ command: 'npm test', exitCode: 0 }, { command: 'npm run lint', exitCode: 1 }], git: snapshot });
+  } finally {
+    reviewStore.close();
+  }
+  await native('send', { channel: 'task:changed', payload: { projectId: extraProjectId } });
+  await until(() => main.evaluate(`${queueItem('Delegada aberta')}?.innerText.includes('Em revisão')`), 'task in review listed');
+  await main.evaluate(`${queueItem('Delegada aberta')}.click()`);
+  await until(() => main.evaluate(`document.querySelector('.task-assignment')?.innerText.includes('Verificado pelo ATLAS no Git')`), 'review evidence shown');
+  const reviewText = await main.evaluate(`document.querySelector('.task-assignment').innerText`);
+  assert(reviewText.includes('Declarado pelo agente') && reviewText.includes('npm run lint') && reviewText.includes('exit 1'), 'Agent declaration with exit codes');
+  assert(reviewText.includes('2 desde a1b2c3d4 até f6e7d8c9') && reviewText.includes('3 arquivos, +41 −7') && reviewText.includes('1 arquivos fora dos commits'), `System Git snapshot shown: ${reviewText}`);
+  const reviewAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(reviewAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in task review');
+  await screenshot(main, 'task-review');
+  await click(main, '.review-actions button', 'Pedir ajustes');
+  await main.evaluate(`(() => { const field = document.querySelector('.review-decision textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, 'Corrigir o lint antes de concluir.'); field.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await click(main, '.review-actions button', 'Enviar pedido de ajustes');
+  await until(() => main.evaluate(`${queueItem('Delegada aberta')}?.innerText.includes('Em andamento') && document.querySelector('.task-assignment')?.innerText.includes('Corrigir o lint antes de concluir.')`), 'changes requested back to agent');
+  const secondReviewStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
+  try {
+    const runId = secondReviewStore.listRuns(extraProjectId).find((run) => run.session_id === 'smoke-agente' && run.state === 'running').id;
+    secondReviewStore.requestReview({ projectId: extraProjectId, taskId: offeredTaskId, sessionId: 'smoke-agente', runId, summary: 'Lint corrigido.', commands: [{ command: 'npm run lint', exitCode: 0 }], git: { unavailable: 'Tarefa sem worktree registrada pelo ATLAS.' } });
+  } finally {
+    secondReviewStore.close();
+  }
+  await native('send', { channel: 'task:changed', payload: { projectId: extraProjectId } });
+  await until(() => main.evaluate(`document.querySelector('.task-assignment')?.innerText.includes('Lint corrigido.')`), 'second review shown');
+  await click(main, '.review-actions button', 'Aceitar e concluir');
+  await until(() => main.evaluate(`${queueItem('Delegada aberta')}?.innerText.includes('Concluída') && document.querySelector('.task-assignment')?.innerText.includes('Concluída por você')`), 'task done after user review');
+  await click(main, '.inspector-tabs button', 'Evidências');
+  await until(() => main.evaluate(`document.querySelectorAll('.evidence-review').length === 2`), 'real evidence listed');
+  assert(!(await main.evaluate(`document.querySelector('.evidence-panel').innerText`)).includes('ilustrativas'), 'Desktop evidence is real, not illustrative');
+  await screenshot(main, 'task-evidence');
+  await click(main, '.inspector-tabs button', 'Tarefas');
+  console.log('PASS revisão de tarefa: declaração do agente, retrato Git do sistema, ajustes e conclusão só pelo usuário');
   await click(main, '.title-actions button', 'Aparência');
   await click(main, '.background-presets button', 'Névoa');
   assert.equal(await main.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#eef1f4');
@@ -573,8 +616,10 @@ try {
   assert.equal(persistedMessage.subject, 'Descoberta da fixture');
   assert(persisted.prepare('SELECT read_at FROM message_deliveries').get().read_at, 'Message read state must persist in SQLite');
   const delegated = persisted.prepare('SELECT id, state, assigned_session_id, claim_epoch FROM tasks WHERE id IN (?, ?) ORDER BY title').all(offeredTaskId, blockedTaskId);
-  assert.deepEqual(delegated.map((item) => [item.state, item.assigned_session_id, item.claim_epoch]), [['ready', null, 0], ['ready', null, 2]]);
-  assert.deepEqual(persisted.prepare('SELECT state, resolved_by FROM handoffs ORDER BY created_at, rowid').all().map((item) => [item.state, item.resolved_by]), [['canceled', 'user'], ['accepted', 'agent:smoke-agente']]);
+  assert.deepEqual(delegated.map((item) => [item.state, item.assigned_session_id, item.claim_epoch]), [['done', 'smoke-agente', 1], ['ready', null, 2]]);
+  assert.deepEqual(persisted.prepare('SELECT state, resolved_by FROM handoffs ORDER BY created_at, rowid').all().map((item) => [item.state, item.resolved_by]), [['canceled', 'user'], ['accepted', 'agent:smoke-agente'], ['accepted', 'agent:smoke-agente']]);
+  assert.deepEqual(persisted.prepare('SELECT state FROM reviews ORDER BY created_at, rowid').all().map((item) => item.state), ['changes_requested', 'accepted']);
+  assert.equal(persisted.prepare("SELECT count(*) AS total FROM evidence WHERE source = 'system'").get().total, 2);
 } finally {
   persisted.close();
 }
