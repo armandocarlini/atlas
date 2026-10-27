@@ -381,7 +381,7 @@ test('principal pede agente pela ponte: pedido pendente, aviso à interface e st
   const stored = store.getAgentRequest('project-a', asked.value.requestId);
   assert.equal(stored.requestedBy, 'orchestrator-a');
   const status = await orchestrator.call('agents_request_status', { requestId: asked.value.requestId });
-  assert.deepEqual(status.value, { requestId: asked.value.requestId, name: 'revisor-ansi', state: 'pending', expiresAt: stored.expiresAt, sessionId: null, error: null });
+  assert.deepEqual(status.value, { requestId: asked.value.requestId, name: 'revisor-ansi', state: 'pending', expiresAt: stored.expiresAt, sessionId: null, error: null, taskId: null, worktree: null });
   const other = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.orchestratorB });
   await other.initialize();
   const foreign = await other.call('agents_request_status', { requestId: asked.value.requestId });

@@ -801,5 +801,10 @@ body { transition: background-color .18s ease, color .18s ease; }
 .agent-request-purpose > span { color: var(--muted); font-size: 11px; }
 .agent-request-purpose p { margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-request-policy { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.agent-request-worktree { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; font-size: 12px; line-height: 1.5; }
+.agent-request-worktree > span { color: var(--muted); font-size: 11px; }
+.agent-request-worktree dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 0; }
+.agent-request-worktree dt { color: var(--muted); }
+.agent-request-worktree dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
 .agent-request-error { margin: 0; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
 .agent-request-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }

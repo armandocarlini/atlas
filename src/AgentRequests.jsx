@@ -27,9 +27,21 @@ function AgentRequestCard({ request, policy, requesterName, error, onApprove, on
       <span>Propósito, escrito pela sessão principal</span>
       <p>{request.purpose}</p>
     </div>
+    {request.taskTitle && <p className="agent-request-policy">Tarefa: <strong>{request.taskTitle}</strong></p>}
+    {request.useWorktree && pending && (request.plannedWorktree?.error
+      ? <p className="agent-request-error">{request.plannedWorktree.error}</p>
+      : request.plannedWorktree && <div className="agent-request-worktree">
+        <span>Ao aprovar, o ATLAS cria uma worktree Git para esta tarefa</span>
+        <dl>
+          <dt>Caminho</dt><dd>{request.plannedWorktree.path}</dd>
+          <dt>Branch nova</dt><dd>{request.plannedWorktree.branch}, a partir do HEAD atual</dd>
+        </dl>
+        {request.plannedWorktree.outsideProject && <span>Fica fora da pasta autorizada do projeto, ao lado do repositório.</span>}
+        <span>O agente nasce nessa worktree. O ATLAS não remove worktrees nem branches automaticamente.</span>
+      </div>)}
     <p className="agent-request-policy">
       {pending ? `Vale até ${formatTime(request.expiresAt)}. ` : ''}
-      Inicia o Kimi Code interativo no diretório do projeto, sem flags de autonomia nem prompt inicial; permissões continuam no harness.
+      Inicia o Kimi Code interativo {request.useWorktree ? 'na worktree da tarefa' : 'no diretório do projeto'}, sem flags de autonomia nem prompt inicial; permissões continuam no harness.
       {policy ? ` Política: até ${policy.maxActiveAgents} agentes da principal em execução.` : ''}
     </p>
     {error && <p className="agent-request-error" role="alert">{error}</p>}

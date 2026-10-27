@@ -188,8 +188,17 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     return operation;
   });
 
+  // Confirma o CLI antes de efeitos fora do ATLAS, como criar uma worktree.
+  async function requireAdapter(adapterId) {
+    const adapter = (await listAdapters()).find((item) => item.id === adapterId);
+    if (!adapter) throw new Error('Adaptador desconhecido. Atualize a lista de CLIs detectados.');
+    if (adapter.status !== 'available') throw new Error(adapter.error || `${adapter.name} não está disponível.`);
+    return adapter;
+  }
+
   return {
     listAgents,
+    requireAdapter,
     getAgent: (id) => agents.get(id),
     createAgent,
     countActive: ({ projectId, origin }) => [...agents.values()].filter((agent) => agent.projectId === projectId && agent.origin === origin && agent.state === 'running').length,

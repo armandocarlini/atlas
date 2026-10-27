@@ -5,7 +5,7 @@
 //
 // Uso: npm run smoke:agent
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,6 +41,14 @@ const profile = path.join(fixture, 'profile');
 const kimiHome = path.join(fixture, 'kimi-home');
 fs.mkdirSync(profile);
 fs.mkdirSync(kimiHome);
+// A fixture é um repositório Git com commit para o pedido com worktree por tarefa.
+const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=ATLAS Smoke', '-c', 'user.email=smoke@atlas.invalid', '-c', 'commit.gpgsign=false', '-C', cwd, ...args], { encoding: 'utf8', windowsHide: true }).trim();
+git(fixture, 'init', '--quiet', '--initial-branch=main');
+fs.writeFileSync(path.join(fixture, 'LEIA.md'), 'fixture do smoke real\n');
+fs.writeFileSync(path.join(fixture, '.gitignore'), 'profile/\nkimi-home/\n');
+git(fixture, 'add', 'LEIA.md', '.gitignore');
+git(fixture, 'commit', '--quiet', '-m', 'Fixture inicial');
+const worktreesRoot = `${fixture}.atlas-worktrees`;
 fs.writeFileSync(path.join(resultsDir, 'agent-result.json'), JSON.stringify({ passed: false, status: 'running', fixture }));
 
 const port = process.env.ATLAS_SMOKE_AGENT_PORT || '9444';
@@ -323,6 +331,43 @@ try {
   await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === delegated.id)?.state === 'exited', 'agente aprovado encerrado');
   console.log('PASS pedido da principal aprovado pela interface inicia o Kimi real com origem orchestrator e ponte conectada');
 
+  // Pedido ligado a uma tarefa com worktree: a aprovação cria a worktree Git real
+  // ao lado da fixture e o Kimi nasce nela.
+  const worktreeStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
+  let worktreeRequest;
+  let worktreeTask;
+  try {
+    worktreeTask = worktreeStore.createTask({ projectId: rerun.projectId, title: 'Tarefa em worktree', acceptance: 'Trabalho isolado na branch da tarefa', idempotencyKey: 'smoke-agent-task-wt-01' });
+    worktreeRequest = worktreeStore.requestAgent({ projectId: rerun.projectId, requestedBy: principal.id, name: 'executor-worktree', purpose: 'Executar a tarefa em worktree.', taskId: worktreeTask.id, worktree: true, idempotencyKey: 'smoke-agent-request-wt-01' });
+  } finally {
+    worktreeStore.close();
+  }
+  const expectedBranch = `atlas/task-${worktreeTask.id.replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase()}`;
+  await native('send', { channel: 'agent-request:changed', payload: { projectId: rerun.projectId } });
+  await until(() => evaluateMain(`document.querySelector('.agent-request')?.innerText.includes(${JSON.stringify(expectedBranch)})`), 'pedido com worktree mostra a branch planejada');
+  await evaluateMain(`document.querySelector('.agent-request button.primary').click()`);
+  const isolated = await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.name === 'executor-worktree' && item.state === 'running'), 'agente iniciado na worktree', 60000);
+  const worktreePath = fs.realpathSync(path.join(worktreesRoot, `task-${expectedBranch.slice('atlas/task-'.length)}`));
+  assert.equal(path.resolve(isolated.cwd).toLowerCase(), worktreePath.toLowerCase());
+  assert.equal(git(worktreePath, 'rev-parse', '--abbrev-ref', 'HEAD'), expectedBranch);
+  assert.equal(git(fixture, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main', 'repositório principal intocado');
+  const worktreeFulfilled = (await native('invoke', { channel: 'agent-request:list', args: [{ cwd: fixture }] })).items.find((item) => item.id === worktreeRequest.id);
+  assert.equal(worktreeFulfilled.state, 'fulfilled');
+  assert.equal(worktreeFulfilled.worktree.branch, expectedBranch);
+  let isolatedTrusted = false;
+  await until(async () => {
+    const output = (await native('invoke', { channel: 'terminal:attach', args: [isolated.ptyId] })).scrollback;
+    if (!isolatedTrusted && output.includes('Trust this folder?')) {
+      isolatedTrusted = true;
+      await native('invoke', { channel: 'terminal:write', args: [{ terminalId: isolated.ptyId, data: '\r' }] });
+      return false;
+    }
+    return output.includes('Welcome to Kimi Code!');
+  }, 'TUI do agente na worktree', 90000);
+  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: isolated.ptyId, data: '/exit\r' }] });
+  await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === isolated.id)?.state === 'exited', 'agente da worktree encerrado');
+  console.log('PASS pedido com worktree aprovado cria a worktree Git real da tarefa e inicia o Kimi nela');
+
   await native('quit');
   await until(() => child.exitCode !== null, 'primeiro Electron encerrado', 15000);
   child = launch();
@@ -387,6 +432,13 @@ try {
     assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
     assert(path.basename(resolved).startsWith('atlas-agent-smoke-'));
     await fs.promises.rm(resolved, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    // Worktrees criadas pela aprovação ficam ao lado da fixture, também em diretório temporário.
+    if (fs.existsSync(worktreesRoot)) {
+      const worktrees = fs.realpathSync(worktreesRoot);
+      assert.equal(path.dirname(worktrees).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
+      assert(path.basename(worktrees).startsWith('atlas-agent-smoke-') && path.basename(worktrees).endsWith('.atlas-worktrees'));
+      await fs.promises.rm(worktrees, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
   }
   else console.error(`Fixture preservada para diagnóstico: ${fixture}`);
 }

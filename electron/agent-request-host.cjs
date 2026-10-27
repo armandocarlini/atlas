@@ -1,9 +1,11 @@
 const { AGENT_REQUEST_POLICY } = require('./operational-store.cjs');
+const path = require('node:path');
+const worktreeManager = require('./worktree-manager.cjs');
 
 // Aprovação, pelo usuário, dos agentes pedidos pela sessão principal. A decisão
 // vale apenas para o payload exibido e é revalidada no ponto de execução:
 // pendência, validade, hash e limite de agentes ativos antes do spawn.
-function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, agentHost, policy = AGENT_REQUEST_POLICY, onChange = () => {} }) {
+function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, agentHost, policy = AGENT_REQUEST_POLICY, onChange = () => {}, worktrees = worktreeManager }) {
   const reserved = new Map();
   const publicPolicy = { maxPending: policy.maxPending, ttlMinutes: Math.round(policy.ttlMs / 60000), maxActiveAgents: policy.maxActiveAgents };
 
@@ -24,7 +26,20 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
 
   ipcMain.handle('agent-request:list', async (event, request) => {
     const project = await projectForRequest(event, request);
-    return { projectId: project.id, policy: publicPolicy, items: store.listAgentRequests(project.id) };
+    // Pedidos pendentes com worktree mostram caminho e branch antes da decisão (sem chamar o Git).
+    const items = store.listAgentRequests(project.id).map((item) => {
+      if (!item.useWorktree || item.state !== 'pending') return item;
+      try {
+        const { path: plannedPath, branch } = worktrees.planWorktree({ project, taskId: item.taskId });
+        // O cartão avisa quando a escrita acontece fora da pasta autorizada pelo usuário.
+        const relative = path.relative(project.path, plannedPath);
+        const outsideProject = relative.startsWith('..') || path.isAbsolute(relative);
+        return { ...item, plannedWorktree: { path: plannedPath, branch, outsideProject } };
+      } catch (error) {
+        return { ...item, plannedWorktree: { error: error.message } };
+      }
+    });
+    return { projectId: project.id, policy: publicPolicy, items };
   });
 
   ipcMain.handle('agent-request:reject', async (event, request) => {
@@ -33,6 +48,23 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     onChange(project.id);
     return rejected;
   });
+
+  // Só depois da aprovação: confirma o CLI, cria a worktree da tarefa, registra e
+  // atualiza a descoberta para que o caminho entre no escopo autorizado.
+  async function prepareWorktree(project, approved) {
+    await agentHost.requireAdapter('kimi-code');
+    const plan = worktrees.planWorktree({ project, taskId: approved.taskId });
+    const created = await worktrees.createWorktree(plan);
+    try {
+      store.recordWorktree({ projectId: project.id, requestId: approved.id, taskId: approved.taskId, repositoryPath: created.repositoryPath, path: created.path, branch: created.branch, baseCommit: created.baseCommit });
+      await projectHost.refresh();
+      if (!projectHost.isAllowedCwd(created.path)) throw new Error('A descoberta Git não encontrou a worktree criada.');
+    } catch (error) {
+      error.message = `Worktree criada em ${created.path}, mas não foi possível usá-la: ${error.message}`;
+      throw error;
+    }
+    return created;
+  }
 
   ipcMain.handle('agent-request:approve', async (event, request) => {
     const project = await projectForRequest(event, request);
@@ -46,9 +78,13 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     reserved.set(project.id, inFlight + 1);
     try {
       let agent;
+      let created = null;
       try {
-        agent = await agentHost.createAgent({ adapterId: 'kimi-code', name: approved.name, cwd: project.path }, { origin: 'orchestrator' });
+        const cwd = approved.useWorktree ? (created = await prepareWorktree(project, approved)).path : project.path;
+        agent = await agentHost.createAgent({ adapterId: 'kimi-code', name: approved.name, cwd }, { origin: 'orchestrator' });
       } catch (error) {
+        // A worktree criada permanece: o ATLAS não remove nada automaticamente.
+        if (created) error.message = `Worktree criada em ${created.path}, mas o agente não iniciou: ${error.message}`;
         try {
           store.completeAgentRequest({ projectId: project.id, requestId, error: error.message });
         } catch {

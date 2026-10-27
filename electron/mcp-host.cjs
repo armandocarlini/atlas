@@ -16,12 +16,14 @@ const TOOLS = [
   {
     name: 'agents_request',
     roles: ['orchestrator'],
-    description: 'Pede ao usuário a criação de um novo agente Kimi neste projeto. Nada é iniciado sem a aprovação explícita do usuário no ATLAS; consulte o resultado com agents_request_status.',
+    description: 'Pede ao usuário a criação de um novo agente Kimi neste projeto. Com taskId e worktree: true, a aprovação também cria uma worktree Git dedicada à tarefa (branch atlas/task-…) e o agente nasce nela. Nada é iniciado ou criado sem a aprovação explícita do usuário no ATLAS; consulte o resultado com agents_request_status.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', maxLength: 60 },
         purpose: { type: 'string', maxLength: 1000 },
+        taskId: { type: 'string' },
+        worktree: { type: 'boolean' },
         idempotencyKey: { type: 'string', pattern: '^[a-zA-Z0-9-]{8,64}$' },
       },
       required: ['name', 'purpose'],
@@ -190,6 +192,8 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
         requestedBy: grant.sessionId,
         name: args.name,
         purpose: args.purpose,
+        taskId: args.taskId,
+        worktree: args.worktree ?? false,
         idempotencyKey: agentIdempotencyKey(grant.sessionId, args.idempotencyKey ?? randomUUID()),
       });
       onAgentRequest(grant.projectId, request);
@@ -198,7 +202,7 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
     agents_request_status(grant, args) {
       const request = store.getAgentRequest(grant.projectId, text(args.requestId));
       if (!request) throw new Error('Pedido de agente não encontrado neste projeto.');
-      return { requestId: request.id, name: request.name, state: request.state, expiresAt: request.expiresAt, sessionId: request.sessionId, error: request.error };
+      return { requestId: request.id, name: request.name, state: request.state, expiresAt: request.expiresAt, sessionId: request.sessionId, error: request.error, taskId: request.taskId, worktree: request.worktree };
     },
     sessions_list(grant) {
       const latest = new Map(store.listRuns(grant.projectId).map((run) => [run.session_id, run]));
