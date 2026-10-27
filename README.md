@@ -97,6 +97,14 @@ npm start
 
 O `npm start` utiliza o conteúdo gerado em `dist`. Execute `npm run build` novamente depois de alterar o código.
 
+## Instalador Windows
+
+```powershell
+npm run dist:win
+```
+
+Gera `release/ATLAS-Setup-<versão>.exe`, um instalador por usuário que dispensa administrador. Ele pergunta se deve adicionar "Abrir no ATLAS" ao menu de pastas do Explorador; a resposta padrão é não. A desinstalação remove essa entrada e preserva os dados do usuário. O instalador não é assinado. A CI gera o mesmo arquivo como artefato do workflow, sem publicar release. `node scripts/smoke-installer.mjs` valida o app empacotado sem instalar; a variante `--install` instala e desinstala de verdade e só roda na CI.
+
 ## Sessões de agente
 
 O botão **Sessão** lista os CLIs de agente detectados no `PATH` (neste marco, o Kimi Code). A sessão inicia o CLI real e interativo na worktree ou pasta autorizada escolhida, sem flags de autonomia e sem prompt inicial: permissões e modelo permanecem no harness. O card exibe nome, CLI com versão detectada e diretório, e o estado operacional é apenas `running` ou `exited` — nada é inferido do conteúdo do terminal.
@@ -168,6 +176,8 @@ electron/
   git-evidence.cjs      Retrato Git somente leitura da worktree da tarefa
   open-path-host.cjs    "Abrir no ATLAS": caminho validado, instância única e confirmação
   explorer-integration.cjs Entrada opcional do Explorador no registro do usuário
+build/installer.nsh     Pergunta e remoção da entrada do Explorador no instalador
+electron-builder.yml    Pacote e instalador NSIS por usuário
   message-host.cjs      Envio, listagem e leitura de mensagens entre sessões
   mcp-host.cjs          Ferramentas do ATLAS por sessão via pipe local e token por run
   atlas-mcp-bridge.cjs  Servidor MCP stdio iniciado pelo Kimi; inerte fora do ATLAS

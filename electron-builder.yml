@@ -1,0 +1,34 @@
+# Instalador Windows do ATLAS (marco 6b). Gerado na CI como artefato do workflow;
+# nada é publicado como release.
+appId: io.github.armandocarlini.atlas
+productName: ATLAS
+directories:
+  output: release
+  buildResources: build
+files:
+  - package.json
+  - electron/**
+  - dist/**
+asar: true
+# node-pty carrega binários nativos e o agente ConPTY; a ponte MCP roda como
+# processo Node separado (ELECTRON_RUN_AS_NODE) iniciado pelo CLI do agente.
+asarUnpack:
+  - node_modules/node-pty/**
+  - electron/atlas-mcp-bridge.cjs
+# Os binários do node-pty são N-API e já carregam no Electron; o patch ConPTY
+# aplicado no postinstall precisa chegar intacto ao pacote.
+npmRebuild: false
+publish: null
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  executableName: ATLAS
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  artifactName: ATLAS-Setup-${version}.${ext}
+  include: build/installer.nsh
