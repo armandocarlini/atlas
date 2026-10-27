@@ -95,7 +95,7 @@ Limites: o token fica no ambiente do processo do Kimi, ao alcance de comandos do
 
 ## Marco 4b-2 — orquestrador pede agentes dentro da política
 
-Conforme `docs/PLANO_SOLICITACAO_AGENTES.md`. A política da v0.1 é o modo assistido:
+Integrado pelo PR #16 como `0706d31`, após CI Ubuntu e Windows verde na execução 40479737665. Conforme `docs/PLANO_SOLICITACAO_AGENTES.md`. A política da v0.1 é o modo assistido:
 
 - só a principal pede agentes (profundidade 1);
 - até 3 pedidos pendentes por projeto;
@@ -111,7 +111,13 @@ Endurecimento após revisão independente: nome do agente sem controles nem form
 
 Validação local (Windows, Node 24.14.0, gates executados por subagente Sonnet): `npm test` 125/125, `npm run test:agent` 80/80, build, `check:public` 75 arquivos, `npm run test:desktop` 18 PASS (pedidos com conteúdo, validade, política, contraste, recusa e falha honesta sem CLI) e `npm run smoke:agent` 17 PASS com Kimi Code 2.3.3 real (pedido semeado da principal aprovado pela interface, agente com origem `orchestrator` e ponte conectada, estado `fulfilled` e origem preservados após reinício). Os smokes padrão não enviam prompt ao modelo; o caminho MCP `agents_request` é coberto por testes com ponte e host reais.
 
-Delegação e claim de tarefas, handoffs e worktrees (4c) continuam pendentes.
+## Marco 4c-1 — delegação de tarefas por handoff
+
+Conforme `docs/PLANO_DELEGACAO_TAREFAS.md`. A migration 6 acrescenta responsável, run do claim, `claim_epoch` e bloqueio às tarefas e cria `handoffs` com uma oferta aberta por tarefa. A principal oferece com `tasks_delegate` (objetivo, contexto e próximos passos) e pode cancelar com `handoffs_cancel`. O agente de destino, com run ativa, vê a oferta em `handoffs_pending` como dado não confiável e responde com `handoffs_accept` ou `handoffs_reject`. Depois do aceite, usa `tasks_update` (progresso, bloqueio, retomada) e `tasks_release`, sempre com o claim atual: mesma sessão e mesma run. O token da run é vinculado à run persistida logo após o spawn. O fim ou a perda da run tira o claim (`task.claim_lost`) sem concluir nem devolver a tarefa. No painel Tarefas, o usuário vê estado, responsável, oferta e bloqueio, e pode cancelar a oferta ou devolver a tarefa, o que incrementa o epoch e cerca o dono anterior.
+
+Ajustes da revisão independente: ofertas abertas para uma sessão cuja run terminou ou se perdeu são canceladas pelo sistema, porque sessões de agente não ganham nova run; a principal vê em `tasks_list` se o claim está ativo e a última oferta encerrada com o motivo; textos com CRLF são normalizados. Limites conhecidos: o agente não é avisado de ofertas fora das ferramentas (precisa consultar `handoffs_pending` ou ser orientado pelo usuário), e o modo Foco calcula a altura do terminal sem descontar os avisos do workspace.
+
+Worktrees sob política (4c-2) continuam pendentes; revisão, conclusão e evidências ficam no marco 5.
 
 O Kimi foi interrompido durante os testes de dois terminais e descoberta Git. Essa etapa foi concluída: os testes agora são reproduzíveis em `scripts/`, e os marcos confirmados foram atualizados no planejamento. O relatório técnico/visual está em `docs/VALIDACAO_DESKTOP.md`.
 

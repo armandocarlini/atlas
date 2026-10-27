@@ -137,3 +137,29 @@ test('migration antiga preserva projetos, sessões, runs e eventos', (t) => {
   } finally { upgraded.close(); }
   reopen();
 });
+
+test('usuário cancela oferta e devolve tarefa pela janela principal, com aviso de mudança', async (t) => {
+  const { store, call } = harness(t);
+  const changes = [];
+  const handlers = new Map();
+  const projectHost = { ready: Promise.resolve(), isAllowedCwd: (cwd) => cwd === '/fixture/a', getProjectForCwd: () => ({ id: 'project-a', name: 'Primeiro', path: '/fixture/a' }) };
+  createTaskHost({ ipcMain: { handle: (name, handler) => handlers.set(name, handler) }, projectHost, store, isMainSender: (event) => event.sender === 'main', onChange: (projectId) => changes.push(projectId) });
+  const invoke = (name, request, sender = 'main') => handlers.get(name)({ sender }, request);
+  const session = (id, role) => store.startSession({ id, projectId: 'project-a', name: id, adapterId: 'kimi-code', cli: 'Kimi Code', version: '2.3.3', cwd: '/fixture/a', origin: 'user', createdAt: new Date().toISOString(), role });
+  session('principal', 'orchestrator');
+  const run = session('agente', 'agent');
+  const task = await call('task:create', request);
+  const offer = (key) => store.offerHandoff({ projectId: 'project-a', fromSessionId: 'principal', toSessionId: 'agente', taskId: task.id, objective: 'Assumir a tarefa.', idempotencyKey: key });
+  const first = offer('oferta-ipc-01');
+  await assert.rejects(invoke('task:cancel-handoff', { cwd: '/fixture/a', handoffId: first.id }, 'popup'), /Janela não autorizada/);
+  await assert.rejects(invoke('task:cancel-handoff', { cwd: '/fixture/a', handoffId: 42 }), /Handoff inválido/);
+  assert.equal((await invoke('task:cancel-handoff', { cwd: '/fixture/a', handoffId: first.id })).resolvedBy, 'user');
+  const listed = await invoke('task:list', { cwd: '/fixture/a' });
+  assert.deepEqual(listed.handoffs.map((item) => item.state), ['canceled']);
+  store.acceptHandoff({ projectId: 'project-a', handoffId: offer('oferta-ipc-02').id, sessionId: 'agente', runId: run.id });
+  await assert.rejects(invoke('task:release', { cwd: '/fixture/b', taskId: task.id }), /pasta autorizada/);
+  const released = await invoke('task:release', { cwd: '/fixture/a', taskId: task.id });
+  assert.equal(released.state, 'ready');
+  assert.equal(released.assignedSessionId, null);
+  assert.deepEqual(changes, ['project-a', 'project-a']);
+});

@@ -268,7 +268,7 @@ test('migration 4→5 preserva dados anteriores e cria pedidos vazios', (t) => {
   } finally { store.close(); }
   const reopened = new DatabaseSync(filename, { readOnly: true });
   try {
-    assert.equal(reopened.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.equal(reopened.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.at(-1).version);
     assert.equal(reopened.prepare("SELECT name FROM projects WHERE id = 'legacy'").get().name, 'Legado');
   } finally { reopened.close(); }
 });

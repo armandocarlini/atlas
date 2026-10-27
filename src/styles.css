@@ -114,7 +114,7 @@ kbd { color: var(--faint); background: #13171a; border: 1px solid var(--border);
 .workspace-settings span { flex: 1; text-align: left; }
 .workspace-settings:hover { color: var(--text); }
 
-.cockpit { min-width: 0; min-height: 0; display: grid; grid-template-rows: 55px 29px minmax(0, 1fr); background: #0a0d0f; }
+.cockpit { min-width: 0; min-height: 0; display: grid; grid-template-rows: 55px 29px auto minmax(0, 1fr); background: #0a0d0f; }
 .cockpit-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 0 14px 0 16px; border-bottom: 1px solid var(--border-soft); }
 .mission-title { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .mission-symbol { width: 29px; height: 29px; display: grid; place-items: center; border: 1px solid #493c28; background: #1b1812; color: var(--accent); border-radius: 5px; }
@@ -526,7 +526,10 @@ button.message-card strong { display: block; font-size: 11px; font-weight: 550; 
 
 /* Columns move as a whole; section tabs only reorder inside their own column. */
 .workspace-body { display: flex; }
-.workspace-body > .cockpit { flex: 1 1 0; width: 0; grid-template-rows: 28px 55px 29px minmax(0, 1fr); }
+.workspace-body > .cockpit { flex: 1 1 0; width: 0; grid-template-rows: 28px 55px 29px auto minmax(0, 1fr); }
+/* Sempre presente na grade (vazio ocupa altura zero) para a grade de sessões ficar na última linha. */
+.workspace-notices { min-height: 0; max-height: 50vh; overflow-y: auto; display: grid; }
+.workspace-notices > .scope-note { margin: 10px 12px 0; }
 .left-dock-zone { width: 202px; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; flex-shrink: 0; }
 .left-dock-zone > .sidebar { width: 100%; flex: 1 1 auto; }
 .inspector { min-width: 0; display: grid; grid-template-rows: 28px 44px minmax(0, 1fr); overflow: hidden; }
@@ -758,6 +761,13 @@ body { transition: background-color .18s ease, color .18s ease; }
 .persistent-task-detail h2, .persistent-task-detail h3 { overflow-wrap: anywhere; }
 .persistent-task-detail h2 { font-size: 16px; }
 .persistent-task-detail h3 { font-size: 12px; }
+.task-assignment { display: grid; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); justify-items: start; }
+.task-assignment p { margin: 0; overflow-wrap: anywhere; }
+.task-assignment h3 { margin: 0; }
+.handoff-text { display: grid; gap: 4px; justify-self: stretch; }
+.handoff-text > span { color: var(--muted); font-size: 11px; }
+.handoff-text p { padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+.task-warning { color: var(--warning); font-size: 12px; line-height: 1.5; }
 .task-modal form > p { font-size: 12px; color: var(--muted); }
 .task-modal textarea { width: 100%; resize: vertical; min-height: 70px; border: 1px solid var(--border); border-radius: 5px; padding: 10px; color: var(--text); background: var(--surface); font: inherit; }
 .integration-status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font: 11px var(--mono); }

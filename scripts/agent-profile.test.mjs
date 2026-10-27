@@ -23,6 +23,7 @@ test('perfil principal é estático, local ao perfil do app e limitado à leitur
   assert(PROFILE.includes('não confiáveis'));
   assert(PROFILE.includes('${base_prompt}'));
   assert(!PROFILE.includes('  - Bash'));
+  assert(PROFILE.includes('mcp__atlas__tasks_delegate') && PROFILE.includes('não afirme que ele assumiu'), 'principal delega sem afirmar aceite');
   fs.writeFileSync(filename, 'modified prompt');
   assert.equal(ensureOrchestratorProfile(directory), filename);
   assert.equal(fs.readFileSync(filename, 'utf8'), PROFILE);

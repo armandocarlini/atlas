@@ -519,7 +519,9 @@ export default function App() {
   const [detachedTerminals, setDetachedTerminals] = useState([]);
   const [activeMission, setActiveMission] = useState('Cockpit interativo');
   const [activeTask, setActiveTask] = useState(tasks[0]);
-  const [taskState, setTaskState] = useState({ projectId: null, projectName: '', items: [], loading: false, error: '' });
+  const [taskState, setTaskState] = useState({ projectId: null, projectName: '', items: [], handoffs: [], loading: false, error: '' });
+  const taskScope = useRef({ projectId: null, cwd: '' });
+  const taskReloadSequence = useRef(0);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [messageState, setMessageState] = useState({ projectId: null, items: [], loading: false, error: '' });
   const [messageModal, setMessageModal] = useState(null);
@@ -732,12 +734,13 @@ export default function App() {
     const project = projects.find((item) => samePath(item.path, workingDirectory))
       || projects.find((item) => item.repositories.some((repo) => repo.worktrees.some((worktree) => !worktree.statusError && samePath(worktree.path, workingDirectory))));
     let active = true;
-    setTaskState({ projectId: project?.id || null, projectName: project?.name || '', items: [], loading: Boolean(project), error: '' });
+    const taskSequence = ++taskReloadSequence.current;
+    setTaskState({ projectId: project?.id || null, projectName: project?.name || '', items: [], handoffs: [], loading: Boolean(project), error: '' });
     setMessageState({ projectId: project?.id || null, items: [], loading: Boolean(project), error: '' });
     if (project) desktop.listTasks({ cwd: workingDirectory }).then((state) => {
-      if (active) setTaskState({ ...state, loading: false, error: '' });
+      if (active && taskSequence === taskReloadSequence.current) setTaskState({ ...state, loading: false, error: '' });
     }).catch((error) => {
-      if (active) setTaskState({ projectId: project.id, projectName: project.name, items: [], loading: false, error: error.message });
+      if (active) setTaskState({ projectId: project.id, projectName: project.name, items: [], handoffs: [], loading: false, error: error.message });
     });
     if (project) desktop.listMessages({ cwd: workingDirectory }).then((state) => {
       if (active) setMessageState({ ...state, loading: false, error: '' });
@@ -826,6 +829,51 @@ export default function App() {
     }
   }
 
+  taskScope.current = { projectId: taskState.projectId, cwd: workingDirectory };
+
+  // Ofertas, aceites e bloqueios chegam pelos agentes (MCP) ou pelo fim de uma run.
+  function reloadTasks() {
+    const sequence = ++taskReloadSequence.current;
+    const { projectId, cwd } = taskScope.current;
+    if (!projectId) return Promise.resolve();
+    return desktop.listTasks({ cwd }).then((state) => {
+      if (sequence === taskReloadSequence.current && state.projectId === taskScope.current.projectId) setTaskState({ ...state, loading: false, error: '' });
+    }).catch((error) => {
+      if (sequence === taskReloadSequence.current) setTaskState((current) => ({ ...current, error: cleanIpcError(error) }));
+    });
+  }
+
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow || !desktop.onTasksChanged) return undefined;
+    return desktop.onTasksChanged(({ projectId }) => {
+      if (projectId && projectId === taskScope.current.projectId) reloadTasks();
+    });
+  }, [isSecondaryWindow]);
+
+  async function cancelHandoff(handoff) {
+    try {
+      await desktop.cancelHandoff({ cwd: workingDirectory, handoffId: handoff.id });
+      notify(`Oferta da tarefa ${handoff.taskTitle} cancelada`);
+      return null;
+    } catch (error) {
+      return cleanIpcError(error);
+    } finally {
+      await reloadTasks();
+    }
+  }
+
+  async function releaseTask(task) {
+    try {
+      await desktop.releaseTask({ cwd: workingDirectory, taskId: task.id });
+      notify(`Tarefa ${task.title} devolvida para pronta`);
+      return null;
+    } catch (error) {
+      return cleanIpcError(error);
+    } finally {
+      await reloadTasks();
+    }
+  }
+
   async function sendDiscovery(request) {
     const from = messageModal?.session;
     const to = projectSessions.find((session) => session.roleKind === 'orchestrator');
@@ -852,7 +900,7 @@ export default function App() {
     }
   }
 
-  const persistentTaskPanel = desktop?.isDesktop ? <PersistentTaskPanel state={taskState} onNew={isSecondaryWindow ? undefined : () => setTaskModalOpen(true)} /> : null;
+  const persistentTaskPanel = desktop?.isDesktop ? <PersistentTaskPanel state={taskState} onNew={isSecondaryWindow ? undefined : () => setTaskModalOpen(true)} onCancelHandoff={isSecondaryWindow ? undefined : cancelHandoff} onRelease={isSecondaryWindow ? undefined : releaseTask} /> : null;
   const sessionMessagesPanel = desktop?.isDesktop ? <SessionMessagesPanel state={messageState} readOnly={isSecondaryWindow} onMarkRead={markMessageRead} /> : null;
 
   useEffect(() => {
@@ -1346,11 +1394,14 @@ export default function App() {
               : <span>{desktop?.isDesktop ? 'Histórico e sessões locais' : 'Wireframe ilustrativo'}</span>}
           </div>
 
+          {/* Avisos ocupam uma única linha da grade; a grade de sessões fica com o espaço restante. */}
+          <div className="workspace-notices">
           {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModalOpen(true)} onDismiss={() => setIntegrationNoticeDismissed(true)} />}
           {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}
 
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.loading && <p className="scope-note" role="status">Abrindo sessão principal…</p>}
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.error && <div className="scope-note error-note" role="alert"><span>{orchestratorStatus.error}</span><button className="button secondary compact" onClick={() => restartOrchestrator()}>Tentar novamente</button></div>}
+          </div>
 
           <div className={`session-grid ${focusId ? 'focus-mode' : ''}`}>
             {visibleSessions.map((session) => <SessionCard
