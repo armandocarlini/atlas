@@ -2,7 +2,7 @@
 
 O ATLAS é um projeto open source e parte do portfólio profissional de [Armando Ciciliano Carlini](https://github.com/armandocarlini). A documentação distingue o que está funcionando do que ainda é proposta.
 
-Leia primeiro o [planejamento](ATLAS_PLANEJAMENTO_ARQUITETURA.md), o [estado para continuidade](docs/CONTINUIDADE.md) e o [design system](design-system/atlas/MASTER.md). Para bugs, descreva sistema operacional, passos de reprodução, resultado esperado e resultado observado, usando dados fictícios.
+Leia primeiro o [planejamento](ATLAS_PLANEJAMENTO_ARQUITETURA.md), o [contexto atual](docs/CONTEXTO.md), o [roadmap](docs/ROADMAP.md) e o [design system](design-system/atlas/MASTER.md). Para bugs, descreva sistema operacional, passos de reprodução, resultado esperado e resultado observado, usando dados fictícios.
 
 ## Ambiente
 

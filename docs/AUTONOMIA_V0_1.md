@@ -10,12 +10,12 @@ A autorização abaixo vale para o **fluxo de desenvolvimento**: planejar, imple
 
 ## Loop obrigatório por marco
 
-1. Leia `AGENTS.md`, `docs/CONTINUIDADE.md`, `README.md` e os trechos relevantes de `ATLAS_PLANEJAMENTO_ARQUITETURA.md`.
+1. Leia `AGENTS.md`, `docs/CONTEXTO.md`, `docs/ROADMAP.md`, `README.md` e os trechos relevantes de `ATLAS_PLANEJAMENTO_ARQUITETURA.md`.
 2. Verifique e sincronize `main` antes de criar uma branch nova.
 3. Escreva um plano técnico específico, baseado no código atual, sem marcar trabalho como concluído por antecipação.
 4. Implemente um fluxo vertical pequeno e testável.
 5. Execute todos os gates aplicáveis e documente evidências e limites.
-6. Atualize `docs/CONTINUIDADE.md` e a documentação afetada.
+6. Reescreva as seções afetadas de `docs/CONTEXTO.md`, ajuste `docs/ROADMAP.md` e a documentação afetada.
 7. Crie commit, branch e PR com descrição clara dos testes executados.
 8. Observe a CI em Ubuntu e Windows até um estado final verde explícito.
 9. Faça merge normal/squash somente com checks verdes, sem force push e sem contornar branch protection. Se o merge automático do GitHub estiver disponível, habilite-o no PR.
@@ -94,7 +94,7 @@ Não instale Python automaticamente. O ui-ux-pro-max exige Python 3; se ele esti
 - Instalações globais autorizadas ficam limitadas às duas skills de interface acima.
 - Conflitos simples podem ser resolvidos preservando trabalho alheio e repetindo todos os gates.
 - Bloqueio de credenciais, quota, skill/Python, decisão insegura, falha repetida após três ciclos de investigação ou CI sem solução deve interromper apenas o trabalho afetado e ser registrado. Não declare conclusão parcial como sucesso final.
-- Atualize `docs/CONTINUIDADE.md` em cada marco com concluído, evidências, PR/commit, próximo marco e bloqueios.
+- Em cada marco, mantenha `docs/CONTEXTO.md` fiel ao estado atual e registre evidências, PR/commit e bloqueios na descrição do PR.
 - O repositório é a fonte portátil. ai-memory pode complementar a continuidade quando estiver configurado, mas não é pré-requisito.
 
 ## Condição final da v0.1
@@ -121,5 +121,5 @@ A demonstração deve preservar estado após reinício, documentar evidências e
 Cole este objetivo no modo goal do agente, no diretório do clone:
 
 ```text
-Conclua a v0.1 do ATLAS seguindo estritamente AGENTS.md e docs/AUTONOMIA_V0_1.md. Comece pelo adaptador Kimi real, encadeie planos e PRs por marco, faça merge somente com testes e CI verdes, e pare somente quando os 12 passos da seção 16 da arquitetura estiverem demonstrados com estado preservado após reinício. Registre evidências, limites e bloqueios em docs/CONTINUIDADE.md. Não avance para v0.2 e não publique release/tag.
+Conclua a v0.1 do ATLAS seguindo estritamente AGENTS.md e docs/AUTONOMIA_V0_1.md. Comece pelo adaptador Kimi real, encadeie planos e PRs por marco, faça merge somente com testes e CI verdes, e pare somente quando os 12 passos da seção 16 da arquitetura estiverem demonstrados com estado preservado após reinício. Mantenha docs/CONTEXTO.md fiel ao estado atual e registre evidências, limites e bloqueios nos PRs. Não avance para v0.2 e não publique release/tag.
 ```

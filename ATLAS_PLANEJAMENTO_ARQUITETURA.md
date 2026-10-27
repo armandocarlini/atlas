@@ -7,6 +7,8 @@
 > **Nome:** ATLAS, escolhido para o planejamento; disponibilidade pública de marca, domínio e repositório ainda deve ser verificada
 > **Idioma de produto:** português brasileiro (PT-BR), com internacionalização futura
 > **Estado:** visão de produto consolidada; tecnologias e integrações marcadas como propostas ainda exigem validação técnica
+>
+> **Para o estado atual e a ordem de trabalho**, leia `docs/CONTEXTO.md` e `docs/ROADMAP.md`. Este documento é a visão de longo prazo; quando divergir deles sobre o que existe ou sobre a ordem, valem eles.
 
 ---
 
@@ -292,7 +294,7 @@ A coluna Painéis pode ser destacada do workspace e transformada em uma janela i
 - uma aprovação crítica continua exigindo interação explícita e nunca é confirmada apenas porque a janela está acima de outros aplicativos;
 - o wireframe web representa o destaque e a reintegração apenas dentro da página. Sobrepor qualquer aplicativo do sistema operacional é uma capacidade do shell desktop, não algo que uma página web comum possa garantir.
 
-**Estado validado em 25/10/2026:** o shell Electron abre os Painéis em uma `BrowserWindow` nativa `always-on-top`, reintegra a coluna e sincroniza estado e aparência via `BroadcastChannel`. O smoke automatizado confirmou aba, tema e restauração das dimensões. Terminais PowerShell reais também podem ser destacados individualmente e reintegrados com o mesmo processo e histórico. As colunas laterais podem ser ocultadas e restauradas; layout, fundo e projetos autorizados sobrevivem à recarga. Dados de agentes, tarefas, mensagens e evidências continuam ilustrativos. Evidências e limites: `docs/VALIDACAO_DESKTOP.md`.
+**Estado validado em 25/10/2026:** o shell Electron abre os Painéis em uma `BrowserWindow` nativa `always-on-top`, reintegra a coluna e sincroniza estado e aparência via `BroadcastChannel`. O smoke automatizado confirmou aba, tema e restauração das dimensões. Terminais PowerShell reais também podem ser destacados individualmente e reintegrados com o mesmo processo e histórico. As colunas laterais podem ser ocultadas e restauradas; layout, fundo e projetos autorizados sobrevivem à recarga. Dados de agentes, tarefas, mensagens e evidências continuam ilustrativos. Evidências e limites: `docs/historico/VALIDACAO_DESKTOP.md`.
 
 ---
 
@@ -744,12 +746,12 @@ O recorte do primeiro release não elimina os seguintes requisitos da visão do 
 
 ### Fase 0 — Provas técnicas [PROP]
 
-- [ ] Escolher um CLI inicial e testar PTY interativo real no Windows.
+- [x] Escolher um CLI inicial e testar PTY interativo real no Windows (Kimi Code).
 - [x] Validar ANSI, resize, teclado, stop e comportamento de saída no terminal PowerShell real do shell Electron.
-- [ ] Validar Tauri + núcleo local + SQLite em build empacotado.
-- [ ] Testar MCP/hooks do CLI sem presumir capacidades iguais em outros.
-- [ ] Provar criação e limpeza segura de worktree.
-- [ ] Prototipar `Abrir no ATLAS` e remoção da integração.
+- [x] Validar núcleo local + SQLite em build empacotado. Decisão: Electron em vez de Tauri.
+- [x] Testar MCP/hooks do CLI sem presumir capacidades iguais em outros (Kimi e OpenCode, cada um com seu mecanismo).
+- [x] Provar criação segura de worktree. Decisão: o ATLAS não remove worktrees nem branches.
+- [x] Prototipar `Abrir no ATLAS` e remoção da integração.
 - [ ] Definir ADRs para núcleo, PTY, IPC, SQLite, packaging e MCP.
 
 **Entrega:** matriz de capacidades testada e decisões de implementação justificadas.
@@ -757,34 +759,34 @@ O recorte do primeiro release não elimina os seguintes requisitos da visão do 
 ### Fase 1 — Cockpit local mínimo [REQ/PROP]
 
 - [x] Aplicativo desktop e abertura de projeto por seletor nativo de pastas autorizadas.
-- [ ] SQLite, migrations, projetos, tarefas e eventos.
+- [x] SQLite, migrations, projetos, tarefas e eventos.
 - [x] Terminal comum interativo PowerShell, com diretório/worktree selecionável.
-- [ ] Sessão de agente manual com um adaptador real.
-- [ ] Sessão principal do orquestrador visível.
-- [ ] Panes/abas, estados e persistência básica. Layout, aparência, dimensões dos Painéis e pastas autorizadas já validados; persistência de sessões e estado operacional ainda pendente.
+- [x] Sessão de agente manual com um adaptador real.
+- [x] Sessão principal do orquestrador visível.
+- [x] Panes/abas, estados e persistência básica, incluindo sessões e estado operacional no SQLite.
 
 **Aceite:** o usuário abre uma pasta, conversa com o orquestrador, cria manualmente uma sessão e interage com os dois terminais.
 
-**Incremento do cockpit validado em 25/10/2026:** dois PTYs independentes, pop-up individual com reintegração, colunas recolhíveis, fundo personalizável, revisão de contraste/foco e descoberta Git somente leitura com branches/worktrees existentes. Isso não conclui a Fase 1: adaptadores reais de agentes, orquestrador e SQLite permanecem pendentes. A fixture de teste cria worktrees para validar a descoberta; o produto ainda não cria nem remove worktrees do usuário.
+**Incremento do cockpit validado em 25/10/2026 (histórico; a Fase 1 foi concluída depois, nos marcos 1 a 3):** dois PTYs independentes, pop-up individual com reintegração, colunas recolhíveis, fundo personalizável, revisão de contraste/foco e descoberta Git somente leitura com branches/worktrees existentes. Isso não conclui a Fase 1: adaptadores reais de agentes, orquestrador e SQLite permanecem pendentes. A fixture de teste cria worktrees para validar a descoberta; o produto ainda não cria nem remove worktrees do usuário.
 
 ### Fase 2 — Delegação e colaboração [REQ/PROP]
 
-- [ ] Criação de agente pelo orquestrador dentro de política.
-- [ ] Identidade e inbox para toda sessão de agente.
-- [ ] Mensagens diretas e contexto de missão.
-- [ ] Claims, leases, fencing e worktrees.
-- [ ] Handoff estruturado e pendências do usuário.
-- [ ] Plano assistido e modo manual.
+- [x] Criação de agente pelo orquestrador dentro de política.
+- [x] Identidade e inbox para toda sessão de agente.
+- [x] Mensagens diretas entre sessões. Contexto de missão (agrupar tarefas sob um objetivo) ainda não existe.
+- [x] Claims, leases, fencing e worktrees.
+- [x] Handoff estruturado e pendências do usuário.
+- [x] Plano assistido e modo manual.
 
 **Aceite:** uma sessão manual envia uma descoberta ao orquestrador; ele delega trabalho relacionado a outro agente; o usuário acompanha e intervém nos três terminais.
 
 ### Fase 3 — Entrega confiável e release público [REQ/PROP]
 
-- [ ] Critérios de aceite, evidências e revisão.
-- [ ] Comandos idempotentes e reconciliação após reinício.
-- [ ] Aprovações e trilha de auditoria.
-- [ ] Instalador Windows e `Abrir no ATLAS`.
-- [ ] Testes automatizados e smoke tests com CLI real.
+- [x] Critérios de aceite, evidências e revisão.
+- [x] Comandos idempotentes e reconciliação após reinício.
+- [x] Aprovações e trilha de auditoria.
+- [x] Instalador Windows e `Abrir no ATLAS`.
+- [x] Testes automatizados e smoke tests com CLI real.
 - [ ] README, demonstração, documentação e release `v0.1`.
 
 **Aceite da `v0.1`:** demonstrar o fluxo completo da seção 16 e preservar o estado após fechar e reabrir o aplicativo.
@@ -792,7 +794,7 @@ O recorte do primeiro release não elimina os seguintes requisitos da visão do 
 ### Fases posteriores [PROP]
 
 - **v0.2:** playbooks, paralelismo ampliado, mais políticas e anexar sessões externas.
-- **v0.3:** segundo adaptador de CLI e AI Memory opcional.
+- **v0.3:** AI Memory opcional e novos adaptadores (o segundo adaptador, OpenCode, já entrou na v0.1).
 - **v0.4:** catálogo de modelos, quotas, custos, fallback e relatórios.
 - **v0.5:** runner independente da UI e recuperação ampliada.
 - **Futuro:** acesso remoto, iPhone, notificações push, Voice-to-Prompt e runners cloud.
