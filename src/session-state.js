@@ -19,7 +19,7 @@ export function agentSession(agent) {
     origin: agent.role === 'orchestrator' ? 'principal' : agent.origin === 'orchestrator' ? 'orquestrador' : 'manual',
     status, color: archived ? '#8d959d' : '#4ecb8d', worktree: agent.cwd,
     archived, runState: agent.runState, reason: agent.reason, createdAt: agent.createdAt,
-    endedAt: agent.endedAt, model: null, effort: null, lines: [],
+    endedAt: agent.endedAt, model: agent.model ?? null, effort: null, lines: [],
     atlasTools: !archived && Boolean(agent.atlasTools),
   };
 }

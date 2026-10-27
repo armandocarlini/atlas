@@ -95,14 +95,14 @@ function hostHarness(t, { adapterError = null, createAgent, worktrees } = {}) {
   const spawns = [];
   const agentHost = {
     countActive: () => 0,
-    requireAdapter: async () => { calls.push('adapter'); if (adapterError) throw new Error(adapterError); },
+    resolveLaunch: async (adapterId, model) => { calls.push('adapter'); if (adapterError) throw new Error(adapterError); return { adapter: { id: adapterId }, model: model ?? null }; },
     createAgent: createAgent || (async (request, options) => { spawns.push(request); session('criado', 'project-a', 'agent'); return { id: 'criado', name: request.name, cwd: request.cwd, origin: options.origin }; }),
   };
   const handlers = new Map();
   createAgentRequestHost({ ipcMain: { handle: (name, handler) => handlers.set(name, handler) }, projectHost, store, isMainSender: () => true, agentHost, worktrees: fakeWorktrees });
   const task = store.createTask({ projectId: 'project-a', title: 'Corrigir ANSI', acceptance: 'Regressão passa', idempotencyKey: 'tarefa-wt-0001' });
   const ask = (overrides = {}) => store.requestAgent({ projectId: 'project-a', requestedBy: 'principal', name: 'executor', purpose: 'Executar a tarefa em worktree.', taskId: task.id, worktree: true, idempotencyKey: `pedido-${Math.random().toString(16).slice(2, 10)}`, ...overrides });
-  const approve = (request) => handlers.get('agent-request:approve')({}, { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash });
+  const approve = (request) => handlers.get('agent-request:approve')({}, { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'opencode', model: 'nvidia/fixture-model' });
   return { store, task, ask, approve, calls, spawns };
 }
 
@@ -147,7 +147,8 @@ test('CLI ausente recusa antes de criar a worktree', async (t) => {
   assert.deepEqual(calls, ['adapter']);
   assert.equal(spawns.length, 0);
   assert.deepEqual(store.listWorktrees('project-a'), []);
-  assert.equal(store.getAgentRequest('project-a', request.id).state, 'failed');
+  // A escolha é conferida antes de aprovar: o usuário pode escolher outro CLI ou recusar.
+  assert.equal(store.getAgentRequest('project-a', request.id).state, 'pending');
 });
 
 test('falha de spawn depois da criação mantém a worktree e informa o caminho', async (t) => {
@@ -226,7 +227,7 @@ test('regressão: aprovação recusa quando a tarefa deixou de estar disponível
   const handoff = store.offerHandoff({ projectId: 'project-a', fromSessionId: 'principal', toSessionId: 'outro-agente', taskId: task.id, objective: 'Assumir.', idempotencyKey: 'oferta-concorrente-01' });
   store.acceptHandoff({ projectId: 'project-a', handoffId: handoff.id, sessionId: 'outro-agente', runId: run.id });
   await assert.rejects(approve(request), /não está mais disponível \(in_progress\)/);
-  assert.deepEqual(calls, [], 'nenhum efeito Git');
+  assert.deepEqual(calls.filter((item) => item !== 'adapter'), [], 'nenhum efeito Git');
   assert.equal(store.getAgentRequest('project-a', request.id).state, 'pending', 'usuário ainda pode recusar');
 });
 

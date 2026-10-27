@@ -28,6 +28,10 @@ function harness(t, { policy, createAgent, countActive = () => 0 } = {}) {
   const changes = [];
   const agentHost = {
     countActive,
+    resolveLaunch: async (adapterId, model) => {
+      if (!adapterId) throw new Error('Escolha o CLI do agente entre os detectados.');
+      return { adapter: { id: adapterId }, model: model ?? null };
+    },
     createAgent: createAgent || (async (request, options) => {
       spawns.push({ request, options });
       const id = `criado-${spawns.length}`;
@@ -96,7 +100,7 @@ test('pedido expira após a validade, libera vaga e não pode mais ser aprovado'
   const request = ask();
   clock.at = START + AGENT_REQUEST_POLICY.ttlMs;
   assert.equal(store.listAgentRequests('project-a')[0].state, 'expired');
-  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash }), /já foi resolvido|expirou/);
+  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' }), /já foi resolvido|expirou/);
   assert.equal(store.listEvents('project-a').filter((item) => item.type === 'approval.resolved' && item.payload.decision === 'expired').length, 1);
   for (let index = 0; index < AGENT_REQUEST_POLICY.maxPending; index += 1) ask({ name: `novo-${index}` });
 });
@@ -113,7 +117,7 @@ test('consulta de status expira pedido sem depender da listagem da interface', (
 test('reinício reconcilia aprovação interrompida sem repetir spawn nem inventar sucesso', (t) => {
   const { ask, store, filename } = harness(t);
   const request = ask();
-  store.approveAgentRequest({ projectId: 'project-a', requestId: request.id, payloadHash: request.payloadHash });
+  store.approveAgentRequest({ projectId: 'project-a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' });
   store.close();
   const reopened = createOperationalStore({ filename });
   try {
@@ -135,10 +139,11 @@ test('aprovação pela interface inicia agente com origem orchestrator e conclui
   const listed = await call('agent-request:list', { cwd: '/fixture/a' });
   assert.deepEqual(listed.policy, { maxPending: 3, ttlMinutes: 15, maxActiveAgents: 2 });
   assert.equal(listed.items[0].payloadHash, request.payloadHash);
-  const result = await call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash });
+  const result = await call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' });
   assert.equal(spawns.length, 1);
-  assert.deepEqual(spawns[0].request, { adapterId: 'kimi-code', name: 'revisor-ansi', cwd: '/fixture/a' });
-  assert.deepEqual(spawns[0].options, { origin: 'orchestrator' });
+  assert.deepEqual(spawns[0].request, { adapterId: 'kimi-code', model: null, name: 'revisor-ansi', cwd: '/fixture/a' });
+  // A escolha conferida na aprovação é a usada no início, sem nova consulta de modelos.
+  assert.deepEqual(spawns[0].options, { origin: 'orchestrator', launch: { adapter: { id: 'kimi-code' }, model: null } });
   assert.equal(result.request.state, 'fulfilled');
   assert.equal(result.request.sessionId, result.agent.id);
   assert.equal(result.request.resolvedBy, 'user');
@@ -146,13 +151,13 @@ test('aprovação pela interface inicia agente com origem orchestrator e conclui
   const created = store.listEvents('project-a').find((item) => item.type === 'approval.fulfilled' && item.payload.requestId === request.id);
   assert.deepEqual(created.payload, { requestId: request.id, origin: 'orchestrator', requestedBy: 'orchestrator-a' });
   assert.equal(store.listSessions('project-a').find((item) => item.id === result.agent.id).origin, 'orchestrator');
-  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash }), /já foi resolvido/);
+  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' }), /já foi resolvido/);
 });
 
 test('aprovação vale só para o conteúdo exibido: hash divergente não inicia nada', async (t) => {
   const { ask, call, spawns, store } = harness(t);
   const request = ask();
-  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: 'f'.repeat(64) }), /não corresponde/);
+  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: 'f'.repeat(64), adapterId: 'kimi-code' }), /não corresponde/);
   await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id }), /Conteúdo aprovado inválido/);
   assert.equal(spawns.length, 0);
   assert.equal(store.getAgentRequest('project-a', request.id).state, 'pending');
@@ -161,7 +166,7 @@ test('aprovação vale só para o conteúdo exibido: hash divergente não inicia
 test('janela secundária, pasta não autorizada e projeto alheio não decidem pedidos', async (t) => {
   const { ask, call, store } = harness(t);
   const request = ask();
-  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash }, 'popup'), /não autorizada/);
+  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' }, 'popup'), /não autorizada/);
   await assert.rejects(call('agent-request:list', { cwd: '/fora' }), /pasta autorizada/);
   await assert.rejects(call('agent-request:reject', { cwd: '/fixture/b', requestId: request.id }), /não encontrado neste projeto/);
   assert.equal(store.getAgentRequest('project-a', request.id).state, 'pending');
@@ -170,7 +175,7 @@ test('janela secundária, pasta não autorizada e projeto alheio não decidem pe
 test('limite de agentes ativos é verificado no ponto de execução', async (t) => {
   const { ask, call, spawns, store } = harness(t, { countActive: () => 2 });
   const request = ask();
-  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash }), /Limite da política: 2 agentes/);
+  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' }), /Limite da política: 2 agentes/);
   assert.equal(spawns.length, 0);
   assert.equal(store.getAgentRequest('project-a', request.id).state, 'pending', 'pedido continua decidível após encerrar um agente');
 });
@@ -190,9 +195,9 @@ test('aprovações simultâneas reservam vaga e não excedem o limite', async (t
   context.session = created.session;
   const first = created.ask({ name: 'primeiro' });
   const second = created.ask({ name: 'segundo' });
-  const firstApproval = created.call('agent-request:approve', { cwd: '/fixture/a', requestId: first.id, payloadHash: first.payloadHash });
+  const firstApproval = created.call('agent-request:approve', { cwd: '/fixture/a', requestId: first.id, payloadHash: first.payloadHash, adapterId: 'kimi-code' });
   await new Promise((resolve) => setImmediate(resolve));
-  await assert.rejects(created.call('agent-request:approve', { cwd: '/fixture/a', requestId: second.id, payloadHash: second.payloadHash }), /Limite da política/);
+  await assert.rejects(created.call('agent-request:approve', { cwd: '/fixture/a', requestId: second.id, payloadHash: second.payloadHash, adapterId: 'kimi-code' }), /Limite da política/);
   release();
   assert.equal((await firstApproval).request.state, 'fulfilled');
   assert.equal(created.store.getAgentRequest('project-a', second.id).state, 'pending');
@@ -201,7 +206,7 @@ test('aprovações simultâneas reservam vaga e não excedem o limite', async (t
 test('falha de spawn vira pedido failed com motivo, sem sessão fictícia', async (t) => {
   const { ask, call, store, changes } = harness(t, { createAgent: async () => { throw new Error('Kimi Code não está disponível.'); } });
   const request = ask();
-  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash }), /não está disponível/);
+  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' }), /não está disponível/);
   const failed = store.getAgentRequest('project-a', request.id);
   assert.equal(failed.state, 'failed');
   assert.equal(failed.error, 'Kimi Code não está disponível.');
@@ -219,8 +224,8 @@ test('falha de spawn libera a vaga reservada para a próxima aprovação', async
   } });
   const first = ask({ name: 'primeiro' });
   const second = ask({ name: 'segundo' });
-  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: first.id, payloadHash: first.payloadHash }), /não está disponível/);
-  const result = await call('agent-request:approve', { cwd: '/fixture/a', requestId: second.id, payloadHash: second.payloadHash });
+  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: first.id, payloadHash: first.payloadHash, adapterId: 'kimi-code' }), /não está disponível/);
+  const result = await call('agent-request:approve', { cwd: '/fixture/a', requestId: second.id, payloadHash: second.payloadHash, adapterId: 'kimi-code' });
   assert.equal(result.agent.id, 'criado-depois');
 });
 
@@ -233,7 +238,7 @@ test('agente iniciado continua visível quando o registro do resultado falha', a
     return { id: 'criado-orfao', name: request.name, origin: 'orchestrator', cwd: request.cwd, state: 'running' };
   } });
   const request = context.ask();
-  const result = await context.call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash });
+  const result = await context.call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' });
   assert.equal(spawned, 1);
   assert.equal(result.agent.id, 'criado-orfao');
   assert.equal(result.request, null);
@@ -246,7 +251,7 @@ test('recusa resolve o pedido e impede aprovação posterior', async (t) => {
   const request = ask();
   assert.equal((await call('agent-request:reject', { cwd: '/fixture/a', requestId: request.id })).state, 'rejected');
   assert.deepEqual(changes, ['project-a']);
-  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash }), /já foi resolvido \(rejected\)/);
+  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' }), /já foi resolvido \(rejected\)/);
   assert.throws(() => store.completeAgentRequest({ projectId: 'project-a', requestId: request.id, sessionId: 'manual-a' }), /Somente pedidos aprovados/);
 });
 

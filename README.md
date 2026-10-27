@@ -107,15 +107,15 @@ Gera `release/ATLAS-Setup-<versão>.exe`, um instalador por usuário que dispens
 
 ## Sessões de agente
 
-O botão **Sessão** lista os CLIs de agente detectados no `PATH` (neste marco, o Kimi Code). A sessão inicia o CLI real e interativo na worktree ou pasta autorizada escolhida, sem flags de autonomia e sem prompt inicial: permissões e modelo permanecem no harness. O card exibe nome, CLI com versão detectada e diretório, e o estado operacional é apenas `running` ou `exited` — nada é inferido do conteúdo do terminal.
+O botão **Sessão** lista os CLIs de agente detectados no `PATH`: Kimi Code e OpenCode. Nada vem pré-selecionado. Você escolhe o CLI e, entre os modelos que ele informa, o modelo da sessão; no Kimi são os aliases do `config.toml`, no OpenCode a saída de `opencode models`. A sessão inicia o CLI real e interativo na worktree ou pasta autorizada escolhida, com `--model`, sem flags de autonomia e sem prompt inicial; as permissões continuam no harness. O card exibe nome, CLI com versão, modelo e diretório, e o estado operacional é apenas `running` ou `exited` — nada é inferido do conteúdo do terminal.
 
 Projetos, sessões, runs e eventos são registrados em `atlas.sqlite`, no diretório de dados do aplicativo, sem transcripts. Uma sessão possui identidade própria e uma run representa a tentativa concreta de execução. Ao fechar o aplicativo, seus PTYs são interrompidos; runs sem saída confirmada ficam `lost`, com motivo explícito. Após crash, a próxima abertura reconcilia runs que ficaram ativas. Sessões anteriores de projetos e diretórios ainda autorizados reaparecem como histórico, com resultado e datas, sem abrir processo ou simular uma conversa. O aplicativo aceita uma única instância por perfil para impedir reconciliação concorrente de processos vivos.
 
 ## Sessão principal de planejamento
 
-Ao abrir um projeto autorizado sem principal anterior, o desktop inicia o Kimi interativo com um perfil de planejamento do ATLAS. O perfil permite apenas ferramentas de leitura; modelo e permissões permanecem no harness, sem flags de autonomia nem prompt inicial. A principal aparece antes das sessões manuais do projeto e não substitui seu terminal.
+Ao abrir um projeto autorizado sem principal anterior, o desktop não inicia nada sozinho: **Escolher agente** pede o CLI e o modelo da principal. A principal abre com um perfil de planejamento do ATLAS que permite apenas leitura e as ferramentas do ATLAS: `--agent-file` no Kimi e o agente `atlas-orchestrator` no OpenCode. Esse perfil é injetado só nesta run, sem gravar configuração. Não há flags de autonomia nem prompt inicial. A principal aparece antes das sessões manuais do projeto e não substitui seu terminal.
 
-Há uma identidade principal por projeto. Depois de saída ou interrupção, **Nova execução** cria outra tentativa com essa identidade, sem prometer retomada da conversa nativa. Se estiver em pop-up, o ATLAS reintegra a janela antes de conectar o novo PTY. Abrir novamente um projeto com histórico não ressuscita processos automaticamente. A delegação de tarefas acontece por handoff e exige o aceite do agente de destino.
+Há uma identidade principal por projeto. Depois de saída ou interrupção, **Nova execução** pede de novo o CLI e o modelo, que podem mudar, e cria outra tentativa com essa identidade, sem prometer retomada da conversa nativa. Se estiver em pop-up, o ATLAS reintegra a janela antes de conectar o novo PTY. Abrir novamente um projeto com histórico não ressuscita processos automaticamente. A delegação de tarefas acontece por handoff e exige o aceite do agente de destino.
 
 ## Tarefas do projeto
 
@@ -141,6 +141,12 @@ npm run smoke:agent
 ```
 
 Ele inicia o CLI real em uma fixture temporária com `KIMI_CODE_HOME` isolado, envia somente `/status` e `/exit` (sem prompts ao modelo e sem consumo de tokens) e confirma o encerramento limpo com código 0. Depois fecha e reabre o Electron no mesmo perfil e verifica a identidade e o resultado preservados, sem recriar PTY.
+
+O smoke real do OpenCode inicia a principal e um agente com um modelo listado, confere a ponte do ATLAS conectada e o perfil `atlas-orchestrator`, e não envia prompts. As pastas do OpenCode (`XDG_*`) ficam na fixture, e a configuração e as credenciais reais são conferidas por hash:
+
+```powershell
+npm run smoke:opencode
+```
 
 Para validar também uma conversa curta na principal, com o provedor já configurado no Kimi:
 

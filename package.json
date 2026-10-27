@@ -28,6 +28,7 @@
     "test:agent": "node --test scripts/agent-*.test.mjs scripts/mcp-host.test.mjs scripts/kimi-mcp-config.test.mjs scripts/integration-host.test.mjs",
     "smoke:agent": "node scripts/smoke-agent.mjs",
     "smoke:orchestrator": "node scripts/smoke-agent.mjs --configured-model",
+    "smoke:opencode": "node scripts/smoke-opencode.mjs",
     "smoke:installer": "node scripts/smoke-installer.mjs",
     "check:public": "node scripts/check-public-files.mjs"
   },

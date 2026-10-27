@@ -153,6 +153,11 @@ async function click(cdp, selector, text) {
   assert(await cdp.evaluate(`(() => { const element = [...document.querySelectorAll(${JSON.stringify(selector)})].find(item => ${text ? `item.textContent.trim() === ${JSON.stringify(text)}` : 'true'}); if (!element) return false; element.click(); return true; })()`), `Missing ${selector} ${text || ''}`);
   await delay(120);
 }
+// Selects controlados pelo React precisam do setter nativo e do evento change.
+async function choose(cdp, scope, name, value) {
+  assert(await cdp.evaluate(`(() => { const select = document.querySelector(${JSON.stringify(`${scope} select[name=${name}]`)}); if (!select) return false; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(value)}); select.dispatchEvent(new Event('change', { bubbles: true })); return select.value === ${JSON.stringify(value)}; })()`), `Missing option ${value} in ${scope} ${name}`);
+  await delay(120);
+}
 async function key(cdp, keyName, options = {}) {
   await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: keyName, ...options });
   await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: keyName, ...options, text: undefined });
@@ -174,7 +179,8 @@ try {
   await until(() => main.evaluate(`Boolean(document.querySelector('.app-shell'))`), 'React ready');
   await until(() => main.evaluate(`Boolean(document.querySelector('.session-history'))`), 'persisted session restored');
   assert.equal(await main.evaluate(`document.querySelectorAll('.origin-badge.demo').length`), 0, 'Desktop must not show illustrative agent cards');
-  await until(() => main.evaluate(`document.querySelector('[role=alert]')?.innerText.includes('CLI ausente na fixture')`), 'honest orchestrator error without available CLI');
+  // Sem CLI padrão: a principal só inicia depois de o usuário escolher CLI e modelo.
+  await until(() => main.evaluate(`document.querySelector('.orchestrator-choice-note')?.innerText.includes('ainda não foi iniciada')`), 'principal aguarda a escolha do agente');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 1, 'Unauthorized project history must remain hidden');
   const restoredHistory = await main.evaluate(`(() => { const history = document.querySelector('.session-history'); const card = history.closest('.session-card'); return { text: history.innerText, inputs: card.querySelectorAll('input, textarea').length, popup: [...card.querySelectorAll('button')].some(item => item.textContent === 'Pop-up'), tokens: Boolean(card.querySelector('.token-count')) }; })()`);
   assert(restoredHistory.text.includes('resultado incerto'));
@@ -413,15 +419,52 @@ try {
   console.log('PASS ocultar e restaurar as duas colunas');
   await click(main, '.toolbar-actions button', 'Sessão');
   await until(() => main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].some(item => item.textContent.includes('Kimi Code'))`), 'adapters listed in session modal');
-  await screenshot(main, 'session-modal');
-  const adapterOption = await main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].map(item => ({ text: item.textContent, disabled: item.disabled }))`);
+  const adapterOption = await main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].map(item => ({ text: item.textContent, value: item.value, disabled: item.disabled }))`);
   fs.writeFileSync(path.join(resultsDir, 'session-modal-adapters.json'), JSON.stringify(adapterOption, null, 2));
   assert(adapterOption.every((item) => item.text !== 'Claude Code'), 'modal desktop não deve listar CLIs fictícios');
+  assert.deepEqual(adapterOption.map((item) => [item.value, item.disabled]), [['', true], ['kimi-code', false], ['opencode', false]], 'placeholder desabilitado, CLIs detectados disponíveis');
+  assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]').value`), '', 'nenhum CLI pré-selecionado');
+  assert(await main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`), 'criar exige a escolha');
+  // Regressão: a lista lenta do OpenCode chega depois da troca para o Kimi e não pode desfazê-la.
+  await choose(main, '.modal', 'cli', 'opencode');
+  await choose(main, '.modal', 'cli', 'kimi-code');
+  await until(() => main.evaluate(`document.querySelector('.modal .agent-choice')?.innerText.includes('Nenhum modelo identificado no Kimi Code')`), 'Kimi sem modelos usa a própria configuração');
+  await delay(1800);
+  assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]').value`), 'kimi-code', 'resposta atrasada não troca o CLI escolhido');
+  assert.equal(await main.evaluate(`Boolean(document.querySelector('.modal select[name=model]'))`), false);
+  assert.equal(await main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`), false);
+  await choose(main, '.modal', 'cli', 'opencode');
+  assert(await main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`), 'carregando modelos não vale como escolha');
+  await until(() => main.evaluate(`document.querySelectorAll('.modal select[name=model] option').length === 3`), 'modelos do CLI escolhido');
+  assert.equal(await main.evaluate(`document.querySelector('.modal select[name=model]').value`), '', 'nenhum modelo pré-selecionado');
+  assert(await main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`), 'criar exige o modelo');
+  await choose(main, '.modal', 'model', 'fixture/modelo-rapido');
+  assert.equal(await main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`), false);
+  const choiceAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(choiceAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in agent choice');
+  await screenshot(main, 'session-modal');
+  await click(main, '.modal button[type=submit]');
+  await until(() => main.evaluate(`document.querySelector('.modal [role=alert]')?.innerText.includes('Não foi possível iniciar o OpenCode')`), 'falha honesta ao iniciar o CLI escolhido');
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'session modal closed');
+  // Principal: mesma escolha explícita; a falha de início fica no modal, sem sessão fictícia.
+  await click(main, '.orchestrator-choice-note button', 'Escolher agente');
+  await until(() => main.evaluate(`Boolean(document.querySelector('#orchestrator-choice-title'))`), 'escolha da principal aberta');
+  assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]').value`), '', 'principal sem CLI pré-selecionado');
+  await choose(main, '.modal', 'cli', 'opencode');
+  await until(() => main.evaluate(`document.querySelectorAll('.modal select[name=model] option').length === 3`), 'modelos para a principal');
+  await choose(main, '.modal', 'model', 'fixture/modelo-forte');
+  await screenshot(main, 'orchestrator-choice');
+  await click(main, '.modal button[type=submit]');
+  await until(() => main.evaluate(`document.querySelector('.modal [role=alert]')?.innerText.includes('Não foi possível iniciar o OpenCode')`), 'falha honesta ao iniciar a principal');
+  assert.equal(await main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'ORQUESTRADOR')`), false, 'nenhuma principal fictícia');
+  await click(main, '.modal button', 'Cancelar');
+  await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'orchestrator choice closed');
+  console.log('PASS escolha explícita de CLI e modelo para sessão e principal, sem padrão e com falha honesta');
+  await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'session modal closed');
   console.log('PASS modal de sessão lista somente adaptadores detectados');
-  // Pedidos de agente semeados pela principal da fixture com o app aberto; sem CLI,
-  // a aprovação deve falhar de forma honesta e registrada.
+  // Pedidos de agente semeados pela principal da fixture com o app aberto; o CLI
+  // escolhido na aprovação não inicia na fixture e a falha fica honesta e registrada.
   const liveStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
   try {
     liveStore.startSession({ id: 'smoke-orchestrator', projectId: extraProjectId, name: 'ORQUESTRADOR-fixture', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'user', createdAt: new Date().toISOString(), role: 'orchestrator' });
@@ -441,11 +484,15 @@ try {
   await screenshot(main, 'agent-requests');
   await main.evaluate(`[...document.querySelectorAll('.agent-request')].find(item => item.innerText.includes('revisor-recusado')).querySelector('button.secondary').click()`);
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 1`), 'rejected request removed');
+  assert(await main.evaluate(`document.querySelector('.agent-request button.primary').disabled`), 'aprovar exige escolher CLI e modelo');
+  await choose(main, '.agent-request', 'cli', 'opencode');
+  await until(() => main.evaluate(`document.querySelectorAll('.agent-request select[name=model] option').length === 3`), 'modelos no pedido');
+  await choose(main, '.agent-request', 'model', 'fixture/modelo-rapido');
   await main.evaluate(`document.querySelector('.agent-request button.primary').click()`);
-  await until(() => main.evaluate(`document.querySelector('.agent-request [role=alert]')?.innerText.includes('CLI ausente')`), 'honest spawn failure inline');
+  await until(() => main.evaluate(`document.querySelector('.agent-request [role=alert]')?.innerText.includes('Não foi possível iniciar o OpenCode')`), 'honest spawn failure inline');
   const decided = await native('invoke', { channel: 'agent-request:list', args: [{ cwd: extraProject }] });
   assert.deepEqual(decided.items.map((item) => [item.name, item.state]), [['revisor-recusado', 'rejected'], ['revisor-sem-cli', 'failed']]);
-  assert.match(decided.items[1].error, /CLI ausente/);
+  assert.match(decided.items[1].error, /Não foi possível iniciar o OpenCode/);
   assert.equal(decided.items[1].sessionId, null, 'No fictitious session for a failed spawn');
   assert.equal(await main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'revisor-sem-cli')`), false);
   await click(main, '.agent-request button', 'Dispensar');

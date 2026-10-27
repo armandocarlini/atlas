@@ -49,10 +49,9 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     return rejected;
   });
 
-  // Só depois da aprovação: confirma o CLI, cria a worktree da tarefa, registra e
-  // atualiza a descoberta para que o caminho entre no escopo autorizado.
+  // Só depois da aprovação: cria a worktree da tarefa, registra e atualiza a
+  // descoberta para que o caminho entre no escopo autorizado.
   async function prepareWorktree(project, approved) {
-    await agentHost.requireAdapter('kimi-code');
     const plan = worktrees.planWorktree({ project, taskId: approved.taskId });
     const created = await worktrees.createWorktree(plan);
     try {
@@ -70,6 +69,9 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     const project = await projectForRequest(event, request);
     const requestId = requireId(request.requestId, 'Pedido');
     const payloadHash = requireId(request.payloadHash, 'Conteúdo aprovado');
+    // O usuário escolhe o CLI e o modelo na aprovação; a escolha é conferida antes
+    // de aprovar, para que um CLI indisponível não consuma o pedido nem crie worktree.
+    const launch = await agentHost.resolveLaunch(request.adapterId, request.model);
     // Vagas reservadas durante o spawn evitam que aprovações simultâneas excedam o limite.
     const inFlight = reserved.get(project.id) || 0;
     const active = agentHost.countActive({ projectId: project.id, origin: 'orchestrator' }) + inFlight;
@@ -81,7 +83,7 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
       let created = null;
       try {
         const cwd = approved.useWorktree ? (created = await prepareWorktree(project, approved)).path : project.path;
-        agent = await agentHost.createAgent({ adapterId: 'kimi-code', name: approved.name, cwd }, { origin: 'orchestrator' });
+        agent = await agentHost.createAgent({ adapterId: launch.adapter.id, model: launch.model, name: approved.name, cwd }, { origin: 'orchestrator', launch });
       } catch (error) {
         // A worktree criada permanece: o ATLAS não remove nada automaticamente.
         if (created) error.message = `Worktree criada em ${created.path}, mas o agente não iniciou: ${error.message}`;

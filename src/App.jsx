@@ -43,6 +43,7 @@ import GitDiscovery from './GitDiscovery.jsx';
 import { appearanceTokens, contrastInk } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
 import { agentSession, mergeAgentSessions, sessionExit } from './session-state.js';
+import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
 import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
@@ -290,7 +291,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
           <h3>{session.name}</h3>
           <span className={`origin-badge ${session.origin}`}>{session.origin}</span>
           {session.demo && <span className="origin-badge demo">ilustrativo</span>}
-          <span className="session-cli">{session.version ? `${session.cli} ${session.version}` : session.cli}</span>
+          <span className="session-cli" title={session.model ? `Modelo: ${session.model}` : undefined}>{session.version ? `${session.cli} ${session.version}` : session.cli}{session.model ? ` · ${session.model}` : ''}</span>
           {atlasConnected && !session.exited && <span className="origin-badge atlas-tools" title="Ferramentas do ATLAS conectadas a esta sessão pelo MCP">ATLAS conectado</span>}
         </div>
         <div className="session-actions">
@@ -338,7 +339,7 @@ function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees,
   const [error, setError] = useState('');
   const isTerminal = kind === 'terminal';
   const realAdapters = !isTerminal && Array.isArray(adapters);
-  const availableAdapters = realAdapters ? adapters.filter((adapter) => adapter.status === 'available') : [];
+  const [choice, setChoice] = useState({ adapterId: '', model: '', ready: false });
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section ref={dialogRef} className="modal" onMouseDown={(event) => event.stopPropagation()} aria-modal="true" role="dialog" aria-labelledby="new-session-title">
@@ -353,21 +354,44 @@ function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees,
           event.preventDefault();
           const data = new FormData(event.currentTarget);
           setError('');
-          const failure = await onCreate({ kind, name: data.get('name'), cli: data.get('cli'), cwd: data.get('cwd') || workingDirectory });
+          if (realAdapters && !choice.ready) return;
+          const failure = await onCreate({ kind, name: data.get('name'), cli: realAdapters ? choice.adapterId : data.get('cli'), model: realAdapters ? choice.model || null : null, cwd: data.get('cwd') || workingDirectory });
           if (failure) setError(failure);
         }}>
           <label>Nome da {isTerminal ? 'janela' : 'sessão'}<input name="name" defaultValue={isTerminal ? 'powershell-local' : 'nova-investigacao'} autoFocus /></label>
-          {!isTerminal && loadingAdapters && <div className="scope-note"><ShieldCheck size={16} /><span>Detectando CLIs de agente no PATH…</span></div>}
-          {!isTerminal && !loadingAdapters && (realAdapters
-            ? <label>CLI / harness detectado<select name="cli" disabled={!availableAdapters.length}>{adapters.map((adapter) => <option key={adapter.id} value={adapter.id} disabled={adapter.status !== 'available'}>{adapter.name}{adapter.version ? ` ${adapter.version}` : ''}{adapter.status !== 'available' ? ' — não encontrado' : ''}</option>)}</select></label>
-            : <label>CLI / harness<select name="cli" defaultValue="Claude Code"><option>Claude Code</option><option>Kimi Code</option><option>Codex</option><option>CLI personalizado</option></select></label>)}
+          {!isTerminal && (realAdapters || loadingAdapters)
+            ? <AgentChoice adapters={loadingAdapters ? null : adapters} value={choice} onChange={setChoice} disabled={busy} />
+            : !isTerminal && <label>CLI / harness<select name="cli" defaultValue="Claude Code"><option>Claude Code</option><option>Kimi Code</option><option>Codex</option><option>CLI personalizado</option></select></label>}
           <label>Worktree ou diretório<select name="cwd" value={workingDirectory} onChange={(event) => onDirectoryChange(event.target.value)}>{worktrees.map((item) => <option value={item.path} key={item.path}>{item.label} — {item.branch || 'diretório autorizado'}</option>)}</select></label>
           <div className="path-input"><FolderGit2 size={15} /><span>{workingDirectory}</span><CheckCircle2 size={15} /></div>
           {!isTerminal && !realAdapters && !loadingAdapters && <div className="form-grid"><label>Modelo<select defaultValue="Automático"><option>Automático</option><option>Modelo forte</option><option>Modelo econômico</option></select></label><label>Vínculo<select defaultValue="Missão atual"><option>Missão atual</option><option>Somente projeto</option><option>Independente</option></select></label></div>}
-          {realAdapters && !availableAdapters.length && <div className="scope-note error-note" role="alert"><ShieldCheck size={16} /><span>{adapters[0]?.error || 'Nenhum CLI de agente encontrado no PATH.'}</span></div>}
-          <div className="scope-note"><ShieldCheck size={16} /><span>{isTerminal ? 'PowerShell real no diretório selecionado, sem identidade de agente.' : realAdapters ? 'O CLI real inicia interativo neste diretório; permissões e modelo permanecem no harness.' : 'A sessão nascerá registrada e poderá trocar mensagens com outras sessões autorizadas.'}</span></div>
+          <div className="scope-note"><ShieldCheck size={16} /><span>{isTerminal ? 'PowerShell real no diretório selecionado, sem identidade de agente.' : realAdapters ? 'O CLI escolhido inicia interativo neste diretório, com o modelo escolhido; as permissões continuam no harness.' : 'A sessão nascerá registrada e poderá trocar mensagens com outras sessões autorizadas.'}</span></div>
           {error && <div className="scope-note error-note" role="alert"><ShieldCheck size={16} /><span>{error}</span></div>}
-          <footer><button type="button" className="button secondary" onClick={onClose}>Cancelar</button><button type="submit" className="button primary" disabled={busy || loadingAdapters || (realAdapters && !availableAdapters.length)}><Plus size={15} />{busy ? 'Abrindo…' : isTerminal ? 'Abrir terminal' : 'Criar sessão'}</button></footer>
+          <footer><button type="button" className="button secondary" onClick={onClose}>Cancelar</button><button type="submit" className="button primary" disabled={busy || loadingAdapters || (realAdapters && !choice.ready)}><Plus size={15} />{busy ? 'Abrindo…' : isTerminal ? 'Abrir terminal' : 'Criar sessão'}</button></footer>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, onStart }) {
+  const dialogRef = useModalFocus();
+  const [choice, setChoice] = useState({ adapterId: '', model: '', ready: false });
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section ref={dialogRef} className="modal" onMouseDown={(event) => event.stopPropagation()} aria-modal="true" role="dialog" aria-labelledby="orchestrator-choice-title">
+        <header>
+          <div>
+            <span className="eyebrow">SESSÃO PRINCIPAL</span>
+            <h2 id="orchestrator-choice-title">Escolher o agente da principal</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Fechar" aria-label="Fechar"><X size={18} /></button>
+        </header>
+        <form onSubmit={(event) => { event.preventDefault(); if (choice.ready && !busy) onStart(choice); }}>
+          <AgentChoice adapters={adapters} value={choice} onChange={setChoice} disabled={busy} />
+          <div className="scope-note"><ShieldCheck size={16} /><span>A principal planeja e delega: abre somente leitura, com as ferramentas do ATLAS deste projeto.{previousCli ? ` A execução anterior usou ${previousCli}; a identidade, as tarefas e as mensagens continuam.` : ''}</span></div>
+          {error && <div className="scope-note error-note" role="alert"><ShieldCheck size={16} /><span>{error}</span></div>}
+          <footer><button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancelar</button><button type="submit" className="button primary" disabled={busy || !choice.ready}>{busy ? 'Iniciando…' : 'Iniciar principal'}</button></footer>
         </form>
       </section>
     </div>
@@ -528,6 +552,8 @@ export default function App() {
   const [messageState, setMessageState] = useState({ projectId: null, items: [], loading: false, error: '' });
   const [messageModal, setMessageModal] = useState(null);
   const [orchestratorStatus, setOrchestratorStatus] = useState({ loading: false, error: '' });
+  // Escolha do CLI e do modelo da principal: aberta pelo usuário, nunca preenchida.
+  const [orchestratorChoice, setOrchestratorChoice] = useState(null);
   const [kimiIntegration, setKimiIntegration] = useState(null);
   const [integrationModalOpen, setIntegrationModalOpen] = useState(false);
   const [integrationNoticeDismissed, setIntegrationNoticeDismissed] = useState(false);
@@ -707,6 +733,10 @@ export default function App() {
     setOrchestratorStatus({ projectId: currentProject.id, loading: true, error: '' });
     desktop.openOrchestrator({ cwd: workingDirectory }).then((agent) => {
       if (!active) return;
+      if (agent.needsChoice) {
+        setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: '', needsChoice: true, previousCli: agent.previousCli });
+        return;
+      }
       setSessions((current) => mergeAgentSessions(current, [agent]));
       setSelectedId((current) => current === 'orchestrator' ? agent.id : current);
       setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: '' });
@@ -716,18 +746,31 @@ export default function App() {
 
   useEffect(() => { setFocusId(null); }, [currentProject?.id]);
 
-  async function restartOrchestrator(session) {
-    const projectId = session?.projectId || currentProject?.id;
-    setOrchestratorStatus({ projectId, loading: true, error: '' });
+  // Nova execução da principal: o usuário escolhe o CLI e o modelo de novo, e
+  // pode trocar os dois; a identidade, as tarefas e as mensagens continuam.
+  function openOrchestratorChoice(session) {
+    setOrchestratorChoice({ projectId: session?.projectId || currentProject?.id, cwd: session?.worktree || currentProject?.path || workingDirectory, previousCli: session?.cli || orchestratorStatus.previousCli || null, session: session || null, busy: false, error: '' });
+  }
+
+  async function startOrchestrator(choice) {
+    const target = orchestratorChoice;
+    if (!target || target.busy) return;
+    setOrchestratorChoice({ ...target, busy: true, error: '' });
     try {
-      if (session) {
-        await desktop.closeTerminalWindow(session.id);
-        setDetachedTerminals((current) => current.filter((id) => id !== session.id));
+      if (target.session) {
+        await desktop.closeTerminalWindow(target.session.id);
+        setDetachedTerminals((current) => current.filter((id) => id !== target.session.id));
       }
-      const agent = await desktop.openOrchestrator({ cwd: session?.worktree || workingDirectory, startNewRun: true });
+      const agent = await desktop.openOrchestrator({ cwd: target.cwd, startNewRun: true, adapterId: choice.adapterId, model: choice.model || null });
       setSessions((current) => mergeAgentSessions(current, [agent]));
-      setOrchestratorStatus((state) => state.projectId === projectId ? { projectId, loading: false, error: '' } : state);
-    } catch (error) { setOrchestratorStatus((state) => state.projectId === projectId ? { projectId, loading: false, error: cleanIpcError(error) } : state); }
+      setOrchestratorStatus((state) => state.projectId === target.projectId ? { projectId: target.projectId, loading: false, error: '' } : state);
+      setOrchestratorChoice(null);
+      // Uma principal já em execução volta como está; só uma run nova confirma a escolha.
+      const started = agent.state === 'running' && agent.runAttempt !== target.session?.runAttempt && agent.adapterId === choice.adapterId && (agent.model || '') === (choice.model || '');
+      notify(started ? `Sessão principal iniciada com ${agent.cli}${agent.model ? ` · ${agent.model}` : ''}` : `A sessão principal já estava em execução com ${agent.cli}`);
+    } catch (error) {
+      setOrchestratorChoice((current) => current && { ...current, busy: false, error: cleanIpcError(error) });
+    }
   }
 
   useEffect(() => {
@@ -790,10 +833,10 @@ export default function App() {
     setAgentRequestErrors((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== requestId)));
   }
 
-  async function approveAgentRequest(request) {
+  async function approveAgentRequest(request, choice) {
     clearAgentRequestError(request.id);
     try {
-      const { agent, recordError } = await desktop.approveAgentRequest({ cwd: workingDirectory, requestId: request.id, payloadHash: request.payloadHash });
+      const { agent, recordError } = await desktop.approveAgentRequest({ cwd: workingDirectory, requestId: request.id, payloadHash: request.payloadHash, adapterId: choice.adapterId, model: choice.model || null });
       setSessions((current) => mergeAgentSessions(current, [agent]));
       // O usuário pode ter trocado de projeto durante o spawn.
       if (agentRequestScope.current.projectId === request.projectId) setSelectedId(agent.id);
@@ -959,15 +1002,17 @@ export default function App() {
     };
   }, []);
 
+  const needsAdapters = modal === 'session' || Boolean(orchestratorChoice) || agentRequestState.items.some((request) => request.state === 'pending');
+  const sessionModalOpen = modal === 'session';
   useEffect(() => {
-    if (modal !== 'session' || !desktop?.isDesktop) return undefined;
+    if (!needsAdapters || !desktop?.isDesktop) return undefined;
     let active = true;
-    setAdapters(null);
+    if (sessionModalOpen) setAdapters(null);
     desktop.listAdapters()
       .then((items) => { if (active) setAdapters(items); })
       .catch(() => { if (active) setAdapters([]); });
     return () => { active = false; };
-  }, [modal]);
+  }, [needsAdapters, sessionModalOpen]);
 
   function notify(message) {
     setToast(message);
@@ -1247,7 +1292,7 @@ export default function App() {
     setSelectedId(target.id);
   }
 
-  async function createSession({ kind, name, cli, cwd }) {
+  async function createSession({ kind, name, cli, model, cwd }) {
     let id = `${kind}-${Date.now()}`;
     const isTerminal = kind === 'terminal';
     let pty = null;
@@ -1256,7 +1301,7 @@ export default function App() {
       setCreatingTerminal(true);
       try {
         if (isTerminal) pty = await desktop.createTerminal({ cwd });
-        else agent = await desktop.createAgent({ adapterId: cli, name, cwd });
+        else agent = await desktop.createAgent({ adapterId: cli, model, name, cwd });
       } catch (error) {
         setCreatingTerminal(false);
         return isTerminal ? `Não foi possível iniciar o PowerShell: ${error.message}` : error.message;
@@ -1456,10 +1501,11 @@ export default function App() {
           {/* Avisos ocupam uma única linha da grade; a grade de sessões fica com o espaço restante. */}
           <div className="workspace-notices">
           {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModalOpen(true)} onDismiss={() => setIntegrationNoticeDismissed(true)} />}
-          {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}
+          {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} adapters={adapters} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}
 
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.loading && <p className="scope-note" role="status">Abrindo sessão principal…</p>}
-          {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.error && <div className="scope-note error-note" role="alert"><span>{orchestratorStatus.error}</span><button className="button secondary compact" onClick={() => restartOrchestrator()}>Tentar novamente</button></div>}
+          {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.error && <div className="scope-note error-note" role="alert"><span>{orchestratorStatus.error}</span><button className="button secondary compact" onClick={() => openOrchestratorChoice()}>Tentar novamente</button></div>}
+          {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice && <div className="scope-note orchestrator-choice-note" role="status"><span>A sessão principal deste projeto ainda não foi iniciada. Escolha o CLI e o modelo que vão planejar e delegar.</span><button className="button primary compact" onClick={() => openOrchestratorChoice()}>Escolher agente</button></div>}
           </div>
 
           <div className={`session-grid ${focusId ? 'focus-mode' : ''}`}>
@@ -1475,7 +1521,7 @@ export default function App() {
               onFocus={focusSession}
               onPopup={toggleTerminalPopup}
               onExit={updateSessionExit}
-              onRestart={restartOrchestrator}
+              onRestart={openOrchestratorChoice}
               atlasConnected={toolConnections[session.id] ?? session.atlasTools}
               onSendDiscovery={desktop?.isDesktop && projectSessions.some((session) => session.roleKind === 'orchestrator') ? (session) => setMessageModal({ session }) : undefined}
               onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
@@ -1525,6 +1571,7 @@ export default function App() {
         return session ? <div className="detached-terminal-window" style={{ right: 24 + index * 24, top: 72 + index * 24 }} key={id}><SessionCard session={session} selected popup desktop={desktop} theme={theme} onSelect={setSelectedId} onFocus={() => {}} onPopup={toggleTerminalPopup} onExit={updateSessionExit} onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)} /></div> : null;
       })}
 
+      {orchestratorChoice && <OrchestratorChoiceModal adapters={adapters} previousCli={orchestratorChoice.previousCli} busy={orchestratorChoice.busy} error={orchestratorChoice.error} onClose={() => { if (!orchestratorChoice.busy) setOrchestratorChoice(null); }} onStart={startOrchestrator} />}
       {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
       {openFolderRequest && <OpenFolderModal key={openFolderRequest.id} request={openFolderRequest} onAuthorize={authorizeOpenFolder} onCancel={cancelOpenFolder} />}

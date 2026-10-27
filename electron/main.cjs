@@ -264,6 +264,8 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error('Não foi possível abrir o canal local de ferramentas do ATLAS:', error);
   }
+  // A mesma entrada da ponte que vai para o mcp.json do Kimi; o OpenCode a recebe por run.
+  const integration = createIntegrationHost({ ipcMain, isMainSender: terminalHost.isMainSender });
   const agentHost = createAgentHost({
     ipcMain,
     projectHost,
@@ -272,9 +274,9 @@ app.whenReady().then(async () => {
     store: operationalStore,
     orchestratorProfile: ensureOrchestratorProfile(app.getPath('userData')),
     mcpHost,
+    bridgeEntry: integration.entry,
     onRunEnded: (projectId) => sendToMain('task:changed', { projectId }),
   });
-  createIntegrationHost({ ipcMain, isMainSender: terminalHost.isMainSender });
   createAgentRequestHost({
     ipcMain,
     projectHost,

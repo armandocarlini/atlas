@@ -1,6 +1,7 @@
 // Test-only entry point: isolated preferences and native window controls.
 const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const http = require('node:http');
+const path = require('node:path');
 
 if (!process.env.ATLAS_SMOKE_PROFILE) throw new Error('Missing isolated smoke profile');
 app.setPath('userData', process.env.ATLAS_SMOKE_PROFILE);
@@ -72,6 +73,14 @@ if (!secondInstance) server.listen(Number(process.env.ATLAS_SMOKE_CONTROL_PORT),
 app.on('will-quit', () => server.close());
 if (process.env.ATLAS_SMOKE_NO_CLI === '1') {
   const adapters = require('../electron/agent-adapters.cjs');
-  adapters.discoverAdapters = async () => adapters.ADAPTERS.map((adapter) => ({ ...adapter, status: 'unavailable', executable: null, version: null, error: 'CLI ausente na fixture determinística.' }));
+  // CLIs "detectados" com executáveis inexistentes: a escolha de CLI e modelo é
+  // exercitada de verdade e o início falha de forma honesta, sem modelo real. A
+  // lista do OpenCode demora para reproduzir respostas fora de ordem.
+  adapters.discoverAdapters = async () => adapters.ADAPTERS.map((adapter) => ({ ...adapter, status: 'available', executable: path.join(process.env.ATLAS_SMOKE_PROFILE, 'cli-ausente', `${adapter.command}.exe`), version: '0.0.0-fixture', error: null }));
+  adapters.listModels = async (adapter) => {
+    if (adapter.id !== 'opencode') return [];
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    return ['fixture/modelo-rapido', 'fixture/modelo-forte'];
+  };
 }
 require('../electron/main.cjs');
