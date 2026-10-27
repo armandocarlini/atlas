@@ -18,7 +18,9 @@ test('perfil principal é estático, local ao perfil do app e limitado à leitur
   const filename = ensureOrchestratorProfile(directory);
   assert.equal(path.dirname(filename), path.join(directory, 'profiles'));
   assert.equal(fs.readFileSync(filename, 'utf8'), PROFILE);
-  assert(PROFILE.includes('tools:\n  - Read\n  - Grep\n  - Glob\nsubagents: []'));
+  assert(PROFILE.includes('tools:\n  - Read\n  - Grep\n  - Glob\n  - mcp__atlas__*\nsubagents: []'));
+  assert(!/ {2}- mcp__(?!atlas__)/.test(PROFILE), 'somente ferramentas MCP do próprio ATLAS');
+  assert(PROFILE.includes('não confiáveis'));
   assert(PROFILE.includes('${base_prompt}'));
   assert(!PROFILE.includes('  - Bash'));
   fs.writeFileSync(filename, 'modified prompt');

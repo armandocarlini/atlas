@@ -13,11 +13,12 @@ Projeto criado por [Armando Ciciliano Carlini](https://github.com/armandocarlini
 
 ## Estado atual
 
-Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY e descoberta Git somente leitura. O ATLAS detecta o Kimi Code no `PATH` e abre uma sessão principal real de planejamento no projeto autorizado, além das sessões manuais. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`, e o painel Mensagens registra descobertas estruturadas entre sessões reais do projeto, com entrega e leitura persistidas. Delegação pelo orquestrador, execução de tarefas, handoffs e evidências estruturadas permanecem nos próximos marcos. Os quatro cards de demonstração aparecem somente no navegador e não representam integrações ativas.
+Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY e descoberta Git somente leitura. O ATLAS detecta o Kimi Code no `PATH` e abre uma sessão principal real de planejamento no projeto autorizado, além das sessões manuais. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`, e o painel Mensagens registra descobertas estruturadas entre sessões reais do projeto, com entrega e leitura persistidas. Com o consentimento explícito do usuário, o ATLAS registra o servidor MCP `atlas` no `mcp.json` do Kimi. Cada sessão iniciada pelo ATLAS recebe então ferramentas restritas ao próprio projeto para listar sessões e tarefas e ler, marcar e enviar mensagens; fora do ATLAS a entrada fica inerte. Delegação pelo orquestrador, execução de tarefas, handoffs e evidências estruturadas permanecem nos próximos marcos. Os quatro cards de demonstração aparecem somente no navegador e não representam integrações ativas.
 
 Já estão implementados:
 
 - sessões de agente com o Kimi Code real, detectado pelo `PATH` e iniciado em PTY interativo, com versão, diretório e estado (`running`/`exited`) visíveis;
+- ponte MCP local do ATLAS (named pipe, sem porta de rede) com token por run, instalada só após consentimento e removível pela interface;
 
 - PowerShell real com `node-pty` e xterm.js, incluindo ANSI, teclado, resize, seleção e scrollback;
 - descoberta de repositórios, branches e worktrees em pastas autorizadas;
@@ -162,6 +163,10 @@ electron/
   operational-store.cjs SQLite, migrations, runs e eventos persistentes
   task-host.cjs         Criação e listagem de tarefas em escopo autorizado
   message-host.cjs      Envio, listagem e leitura de mensagens entre sessões
+  mcp-host.cjs          Ferramentas do ATLAS por sessão via pipe local e token por run
+  atlas-mcp-bridge.cjs  Servidor MCP stdio iniciado pelo Kimi; inerte fora do ATLAS
+  kimi-mcp-config.cjs   Entrada atlas no mcp.json do Kimi, sem tocar outros servidores
+  integration-host.cjs  IPC de consentimento para conectar ou remover a integração
   orchestrator-profile.cjs Perfil de planejamento somente de leitura
 scripts/                Inicialização desktop, testes e smokes
 src/
@@ -170,6 +175,7 @@ src/
   GitDiscovery.jsx      Árvore Git na navegação
   PersistentTasks.jsx   Painel e modal de tarefas reais
   SessionMessages.jsx   Painel e modal de mensagens reais
+  KimiIntegration.jsx   Status, aviso e diálogo de consentimento da integração MCP
   appearance.js         Cores semânticas e contraste
   useModalFocus.js      Foco e isolamento dos modais
 ATLAS_PLANEJAMENTO_ARQUITETURA.md

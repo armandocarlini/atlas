@@ -8,6 +8,8 @@ const { createPtyTransport, registerTransportChannels } = require('./pty-transpo
 const { createOperationalStore, closeOperationalStore } = require('./operational-store.cjs');
 const { createTaskHost } = require('./task-host.cjs');
 const { createMessageHost } = require('./message-host.cjs');
+const { createMcpHost } = require('./mcp-host.cjs');
+const { createIntegrationHost } = require('./integration-host.cjs');
 const { ensureOrchestratorProfile } = require('./orchestrator-profile.cjs');
 
 let mainWindow = null;
@@ -16,6 +18,7 @@ let projectHost = null;
 let ptyTransport = null;
 let boundsSaveTimer = null;
 let operationalStore = null;
+let mcpHost = null;
 const terminalWindows = new Map();
 
 const stateFile = () => path.join(app.getPath('userData'), 'atlas-window-state.json');
@@ -235,6 +238,19 @@ app.whenReady().then(async () => {
     isMainSender: terminalHost.isMainSender,
     getPopupPtyId: (webContents) => getPopupEntry(webContents)?.ptyId || null,
   });
+  // Sem o pipe local, os agentes continuam funcionando, só sem ferramentas do ATLAS.
+  const toolsHost = createMcpHost({
+    store: operationalStore,
+    onConnectionChange: (sessionId, connected) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:atlas-tools', { sessionId, connected });
+    },
+  });
+  try {
+    await toolsHost.listen();
+    mcpHost = toolsHost;
+  } catch (error) {
+    console.error('Não foi possível abrir o canal local de ferramentas do ATLAS:', error);
+  }
   createAgentHost({
     ipcMain,
     projectHost,
@@ -242,7 +258,9 @@ app.whenReady().then(async () => {
     isMainSender: terminalHost.isMainSender,
     store: operationalStore,
     orchestratorProfile: ensureOrchestratorProfile(app.getPath('userData')),
+    mcpHost,
   });
+  createIntegrationHost({ ipcMain, isMainSender: terminalHost.isMainSender });
   await projectHost.ready;
   createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
   createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
@@ -258,6 +276,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   ptyTransport?.killAll();
+  mcpHost?.close();
   closeOperationalStore(operationalStore, (error) => console.error('Não foi possível registrar a interrupção das runs do ATLAS:', error));
 });
 

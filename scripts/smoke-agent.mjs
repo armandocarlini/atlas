@@ -139,6 +139,18 @@ try {
   assert.equal(detected.version, kimi.version);
   console.log('PASS agent:list-adapters detecta o Kimi Code via IPC');
 
+  // Consentimento da integração MCP. No modo padrão a home é isolada; com o
+  // provedor configurado a home é a do usuário, então o smoke só lê o estado.
+  const integrationBefore = await native('invoke', { channel: 'integration:kimi-mcp-status' });
+  if (!configuredModel) {
+    assert.equal(integrationBefore.file, path.join(kimiHome, 'mcp.json'), 'integração restrita ao KIMI_CODE_HOME isolado');
+    assert.equal(integrationBefore.state, 'absent');
+    const installed = await native('invoke', { channel: 'integration:kimi-mcp-install', args: [{ confirm: true }] });
+    assert.equal(installed.state, 'installed');
+    console.log('PASS consentimento grava a entrada atlas somente no KIMI_CODE_HOME isolado');
+  }
+  const integrationActive = !configuredModel || integrationBefore.state === 'installed';
+
   const principal = await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] });
   assert.equal(principal.role, 'orchestrator');
   const principalAttach = () => native('invoke', { channel: 'terminal:attach', args: [principal.ptyId] });
@@ -195,6 +207,10 @@ try {
     return scrollback.includes('Welcome to Kimi Code!');
   }, 'confiança da pasta e TUI do Kimi Code inicializada', 90000);
   console.log('PASS TUI nativa do harness renderizada no PTY (confiança da fixture confirmada)');
+  if (integrationActive) {
+    await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === agent.id)?.atlasTools === true, 'handshake da ponte MCP do ATLAS na sessão manual', 30000);
+    console.log('PASS Kimi real inicia a ponte MCP do ATLAS e o handshake chega ao host com o token da run');
+  }
 
   const before = (await attach()).scrollback.length;
   await native('invoke', { channel: 'terminal:write', args: [{ terminalId: agent.ptyId, data: '/status\r' }] });
@@ -207,6 +223,7 @@ try {
   await callMain('Page.reload', {});
   const manualCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'smoke-kimi')`;
   await until(() => evaluateMain(`Boolean(${principalCard}) && Boolean(${manualCard})`), 'cards principal e manual após reload');
+  if (integrationActive) await until(() => evaluateMain(`${manualCard}.querySelector('.atlas-tools')?.textContent === 'ATLAS conectado'`), 'indicação textual ATLAS conectado na sessão manual');
   assert(await evaluateMain(`[...${manualCard}.querySelectorAll('button')].some(button => button.textContent === 'Descoberta')`), 'sessão manual deve oferecer envio de descoberta');
   assert(await evaluateMain(`[...${principalCard}.querySelectorAll('button')].every(button => button.textContent !== 'Descoberta')`), 'principal não envia descoberta para si mesma');
   await evaluateMain(`[...${manualCard}.querySelectorAll('button')].find(button => button.textContent === 'Descoberta').click()`);
@@ -236,6 +253,10 @@ try {
   const finalSnapshot = await attach();
   assert.equal(finalSnapshot.exit.exitCode, 0);
   console.log('PASS /exit encerra o CLI com código 0 e estado exited');
+  if (integrationActive) {
+    assert.equal((await native('invoke', { channel: 'agent:list' })).find((item) => item.id === agent.id).atlasTools, false, 'token revogado com a saída da run');
+    console.log('PASS saída da run revoga o token e desconecta as ferramentas do ATLAS');
+  }
 
   if (!configuredModel) {
     assert.ok(fs.existsSync(path.join(kimiHome, 'workspaces.json')) || fs.readdirSync(kimiHome).length > 0, 'KIMI_CODE_HOME isolado recebeu os arquivos da sessão');
@@ -257,6 +278,11 @@ try {
   assert.equal(rerun.id, principal.id);
   assert.equal(rerun.runAttempt, 2);
   console.log('PASS nova execução após saída em pop-up reintegra e conecta PTY novo sem perder identidade');
+  if (integrationActive) {
+    await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === principal.id)?.atlasTools === true, 'ponte MCP na nova run da principal', 30000);
+    await until(() => evaluateMain(`${principalCard}.querySelector('.atlas-tools')?.textContent === 'ATLAS conectado'`), 'indicação ATLAS conectado na principal');
+    console.log('PASS nova run da principal carrega a ponte MCP do ATLAS com perfil mcp__atlas__*');
+  }
 
   await native('quit');
   await until(() => child.exitCode !== null, 'primeiro Electron encerrado', 15000);
@@ -281,6 +307,11 @@ try {
   assert.equal(persistedMessages.items[0].subject, 'Descoberta real do smoke');
   assert(persistedMessages.items[0].readAt, 'Leitura da descoberta preservada após reinício');
   console.log('PASS reinício real do Electron preserva identidade, saída do Kimi e mensagens sem recriar PTY');
+  if (!configuredModel) {
+    assert.equal((await native('invoke', { channel: 'integration:kimi-mcp-status' })).state, 'installed', 'integração preservada após reinício');
+    assert.equal(path.basename(JSON.parse(fs.readFileSync(path.join(kimiHome, 'mcp.json'), 'utf8')).mcpServers.atlas.args[0]), 'atlas-mcp-bridge.cjs');
+    console.log('PASS integração MCP permanece instalada após reinício');
+  }
 
   fs.writeFileSync(path.join(resultsDir, 'agent-result.json'), JSON.stringify({ passed: true, version: kimi.version, conversation: configuredModel, fixture: null }, null, 2));
   exitCode = 0;

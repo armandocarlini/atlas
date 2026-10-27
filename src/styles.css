@@ -760,3 +760,27 @@ body { transition: background-color .18s ease, color .18s ease; }
 .persistent-task-detail h3 { font-size: 12px; }
 .task-modal form > p { font-size: 12px; color: var(--muted); }
 .task-modal textarea { width: 100%; resize: vertical; min-height: 70px; border: 1px solid var(--border); border-radius: 5px; padding: 10px; color: var(--text); background: var(--surface); font: inherit; }
+.integration-status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font: 11px var(--mono); }
+.link-button { padding: 2px 4px; border: 0; border-radius: 3px; background: transparent; color: var(--accent-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.link-button:hover { color: var(--text); }
+.link-button:focus-visible, .integration-entry:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.integration-notice { align-items: center; flex-wrap: wrap; margin: 10px 12px 0; }
+.integration-notice > span { flex: 1 1 260px; color: var(--text); }
+.integration-notice-actions { display: flex; gap: 8px; }
+.integration-modal { width: min(580px, calc(100vw - 40px)); }
+.integration-body { display: grid; gap: 14px; padding: 18px 20px 6px; color: var(--text); font-size: 12px; line-height: 1.5; }
+.integration-body p { margin: 0; }
+.integration-field { display: grid; gap: 6px; }
+.integration-field > span { color: var(--muted); font-size: 11px; }
+.integration-path, .integration-entry { margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); font: 11px/1.5 var(--mono); user-select: text; }
+.integration-path { overflow-wrap: anywhere; }
+.integration-entry { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.integration-effects { display: grid; gap: 8px; margin: 0; padding: 0 0 0 16px; list-style: disc; }
+.integration-effects li { color: var(--muted); font-size: 11px; }
+.integration-error { margin: 0; color: var(--danger); overflow-wrap: anywhere; }
+.integration-footer { display: flex; align-items: center; gap: 8px; padding: 14px 20px 20px; }
+.integration-footer-spacer { flex: 1; }
+.button.secondary.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.button.secondary.danger:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface-raised)); }
+.session-header .origin-badge.atlas-tools { color: var(--success); }
+.integration-modal:focus { outline: none; }

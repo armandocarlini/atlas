@@ -8,7 +8,7 @@ import path from 'node:path';
 const { createAgentHost } = createRequire(import.meta.url)('../electron/agent-host.cjs');
 const { createOperationalStore } = createRequire(import.meta.url)('../electron/operational-store.cjs');
 
-function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [], orchestratorProfile = '/fixture/atlas-orchestrator.md' } = {}) {
+function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [], orchestratorProfile = '/fixture/atlas-orchestrator.md', mcpHost } = {}) {
   const handlers = new Map();
   const listeners = new Map();
   const ipcMain = {
@@ -52,6 +52,7 @@ function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersi
     store,
     onPersistenceError,
     orchestratorProfile,
+    mcpHost,
     isMainSender: (event) => event.sender === 'main',
     discover: async () => adapters || [{
       id: 'kimi-code',
@@ -330,4 +331,52 @@ test('consulta de histórico concorrente não engole pedido explícito de nova r
   ]);
   assert.equal(restarted.state, 'running');
   assert.equal(restarted.runAttempt, 2);
+});
+
+function fakeMcpHost() {
+  const grants = new Map();
+  let counter = 0;
+  return {
+    endpoint: '\\\\.\\pipe\\atlas-mcp-teste',
+    grants,
+    register(grant) { counter += 1; const token = `token-${counter}`; grants.set(token, { ...grant, connected: false }); return token; },
+    revoke(token) { grants.delete(token); },
+    isConnected: (sessionId) => [...grants.values()].some((grant) => grant.sessionId === sessionId && grant.connected),
+  };
+}
+
+test('cada run recebe endpoint e token do ATLAS no ambiente do PTY, revogados na saída', async () => {
+  const mcpHost = fakeMcpHost();
+  const { handlers, spawns, transport, mainEvent } = createHarness({ mcpHost });
+  const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' });
+  assert.equal(spawns[0].env.ATLAS_MCP_ENDPOINT, mcpHost.endpoint);
+  assert.equal(spawns[0].env.ATLAS_MCP_TOKEN, 'token-1');
+  assert.deepEqual(mcpHost.grants.get('token-1'), { projectId: 'project-a', sessionId: agent.id, role: 'agent', connected: false });
+  assert.equal(agent.atlasTools, false);
+  mcpHost.grants.get('token-1').connected = true;
+  assert.equal(handlers.get('agent:list')(mainEvent).find((item) => item.id === agent.id).atlasTools, true);
+  transport.records[0].emitExit(0);
+  assert.equal(mcpHost.grants.size, 0);
+  assert.equal(handlers.get('agent:list')(mainEvent).find((item) => item.id === agent.id).atlasTools, false);
+});
+
+test('token do ATLAS é revogado quando spawn ou persistência falham', async () => {
+  const mcpHost = fakeMcpHost();
+  const { handlers, transport, mainEvent } = createHarness({ mcpHost });
+  const spawn = transport.spawn;
+  transport.spawn = () => { throw new Error('ConPTY indisponível'); };
+  await assert.rejects(handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' }), /ConPTY/);
+  assert.equal(mcpHost.grants.size, 0);
+  transport.spawn = spawn;
+  const failing = createHarness({ mcpHost, store: { startSession: () => { throw new Error('disco cheio'); }, listRuns: () => [], listSessions: () => [] } });
+  await assert.rejects(failing.handlers.get('agent:create')(failing.mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' }), /disco cheio/);
+  assert.equal(mcpHost.grants.size, 0);
+  assert.equal(failing.transport.records[0].closed, true);
+});
+
+test('sem host MCP o PTY recebe endpoint e token vazios, sem herdar os do próprio ATLAS', async () => {
+  const { handlers, spawns, mainEvent } = createHarness();
+  const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' });
+  assert.deepEqual(spawns[0].env, { ATLAS_MCP_ENDPOINT: '', ATLAS_MCP_TOKEN: '' });
+  assert.equal(agent.atlasTools, false);
 });

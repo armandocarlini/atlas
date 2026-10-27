@@ -202,6 +202,10 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     listTasks: (projectId) => db.prepare(`SELECT id, project_id AS projectId, title, description, acceptance, state, version, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt FROM tasks WHERE project_id = ? ORDER BY created_at, id`).all(projectId).map((row) => ({ ...row })),
     sendMessage(request) {
       const payload = messagePayload(request);
+      // Ator auditado do comando: o usuário pela interface ou a sessão de agente pela ponte MCP.
+      const actor = request.actor ?? 'user';
+      if (actor !== 'user' && !/^agent:[A-Za-z0-9-]{1,80}$/.test(actor)) throw new Error('Ator de mensagem inválido.');
+      if (actor !== 'user' && actor !== `agent:${request.fromSessionId}`) throw new Error('A sessão de agente só envia mensagens em nome próprio.');
       if (request.fromSessionId === request.toSessionId) throw new Error('A sessão não pode enviar mensagem para si mesma.');
       const encoded = JSON.stringify({ ...payload, fromSessionId: request.fromSessionId, toSessionId: request.toSessionId });
       const hash = createHash('sha256').update(encoded).digest('hex');
@@ -221,8 +225,8 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         const message = { id, projectId: request.projectId, fromSessionId: from.id, toSessionId: to.id, ...payload, readAt: null, createdAt: at };
         db.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, request.projectId, from.id, to.id, payload.kind, payload.subject, payload.body, at);
         db.prepare('INSERT INTO message_deliveries (message_id, session_id) VALUES (?, ?)').run(id, to.id);
-        db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'message.send', id, encoded, hash, request.idempotencyKey, 'completed', 'user', at, at, JSON.stringify(message), commandId);
-        event({ projectId: request.projectId, sessionId: to.id, type: 'message.sent', payload: { messageId: id, fromSessionId: from.id, kind: payload.kind }, correlationId: commandId, at });
+        db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'message.send', id, encoded, hash, request.idempotencyKey, 'completed', actor, at, at, JSON.stringify(message), commandId);
+        event({ projectId: request.projectId, sessionId: to.id, type: 'message.sent', payload: { messageId: id, fromSessionId: from.id, kind: payload.kind, actor }, correlationId: commandId, at });
         return message;
       });
     },

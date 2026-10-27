@@ -4,7 +4,7 @@ const { discoverAdapters } = require('./agent-adapters.cjs');
 // Ciclo de vida de sessões de agente neste marco: identidade gerada no
 // processo principal, cwd validado, PTY real e estado mínimo em memória.
 // O estado operacional é apenas running/exited; nada é inferido do ANSI.
-function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, store, onPersistenceError = console.error, orchestratorProfile }) {
+function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, store, onPersistenceError = console.error, orchestratorProfile, mcpHost = null }) {
   const agents = new Map();
   const pendingOrchestrators = new Map();
   let discoveryPromise = null;
@@ -27,6 +27,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       role: agent.role,
       runStartedAt: agent.runStartedAt,
       runAttempt: agent.runAttempt,
+      atlasTools: Boolean(mcpHost?.isConnected(agent.id)),
     };
   }
 
@@ -91,6 +92,13 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     const requestedName = typeof request.name === 'string' ? request.name.trim().slice(0, 60) : '';
     const name = requestedName || `${adapter.id}-${agents.size + 1}`;
 
+    // Cada run recebe um token próprio para as ferramentas do ATLAS; a ponte
+    // MCP herda endpoint e token do ambiente do PTY e o token morre com a run.
+    const id = existing?.id || randomUUID();
+    const atlasToken = mcpHost && project ? mcpHost.register({ projectId: project.id, sessionId: id, role }) : null;
+    // Sempre definidas, mesmo vazias: o PTY nunca herda endpoint ou token do ambiente do próprio ATLAS.
+    const env = { ATLAS_MCP_ENDPOINT: atlasToken ? mcpHost.endpoint : '', ATLAS_MCP_TOKEN: atlasToken || '' };
+
     let record;
     try {
       record = transport.spawn({
@@ -99,14 +107,16 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
         cwd,
         cols,
         rows,
+        env,
         meta: { kind: 'agent', cli: adapter.name },
       });
     } catch (error) {
+      if (atlasToken) mcpHost.revoke(atlasToken);
       throw new Error(`Não foi possível iniciar o ${adapter.name}: ${error.message}`);
     }
 
     const agent = {
-      id: existing?.id || randomUUID(),
+      id,
       name,
       adapterId: adapter.id,
       cli: adapter.name,
@@ -127,11 +137,13 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       agent.runId = run?.id;
       agent.runAttempt = run?.attempt;
     } catch (error) {
+      if (atlasToken) mcpHost.revoke(atlasToken);
       transport.close(record);
       throw new Error(`Não foi possível persistir a sessão de agente: ${error.message}`);
     }
     record.meta.agentId = agent.id;
     record.process.onExit(({ exitCode, signal }) => {
+      if (atlasToken) mcpHost.revoke(atlasToken);
       agent.state = 'exited';
       agent.exit = { exitCode, signal };
       if (store && !store.closed) {

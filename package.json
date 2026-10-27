@@ -22,7 +22,7 @@
     "preview": "vite preview",
     "test:desktop": "node scripts/smoke-desktop.mjs",
     "test": "node --test scripts/*.test.mjs",
-    "test:agent": "node --test scripts/agent-*.test.mjs",
+    "test:agent": "node --test scripts/agent-*.test.mjs scripts/mcp-host.test.mjs scripts/kimi-mcp-config.test.mjs scripts/integration-host.test.mjs",
     "smoke:agent": "node scripts/smoke-agent.mjs",
     "smoke:orchestrator": "node scripts/smoke-agent.mjs --configured-model",
     "check:public": "node scripts/check-public-files.mjs"
