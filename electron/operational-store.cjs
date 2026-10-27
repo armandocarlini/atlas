@@ -129,12 +129,26 @@ const MIGRATIONS = [{
     CREATE UNIQUE INDEX one_open_handoff_per_task ON handoffs(task_id) WHERE state = 'offered';
     CREATE INDEX tasks_by_claim_run ON tasks(claim_run_id) WHERE claim_run_id IS NOT NULL;
   `,
+}, {
+  version: 7,
+  sql: `
+    ALTER TABLE agent_requests ADD COLUMN task_id TEXT REFERENCES tasks(id);
+    ALTER TABLE agent_requests ADD COLUMN use_worktree INTEGER NOT NULL DEFAULT 0 CHECK(use_worktree IN (0, 1));
+    CREATE TABLE worktrees (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      task_id TEXT REFERENCES tasks(id), request_id TEXT REFERENCES agent_requests(id),
+      repository_path TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
+      branch TEXT NOT NULL, base_commit TEXT NOT NULL CHECK(length(base_commit) BETWEEN 7 AND 64),
+      created_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX worktrees_by_project ON worktrees(project_id, created_at);
+  `,
 }];
 
 // Política padrão da v0.1 para pedidos de agente feitos pela sessão principal.
 const AGENT_REQUEST_POLICY = Object.freeze({ maxPending: 3, ttlMs: 15 * 60 * 1000, maxActiveAgents: 2 });
 
-function agentRequestPayload({ name, purpose, idempotencyKey }) {
+function agentRequestPayload({ name, purpose, idempotencyKey, taskId, worktree = false }) {
   for (const [label, value, max] of [['Nome', name, 60], ['Propósito', purpose, 1000]]) {
     if (typeof value !== 'string' || value.length > max || !value.trim()) throw new Error(`${label}: informe texto válido com até ${max} caracteres.`);
   }
@@ -143,17 +157,27 @@ function agentRequestPayload({ name, purpose, idempotencyKey }) {
   if (/[\p{Cc}\p{Cf}]/u.test(name)) throw new Error('Nome: use somente caracteres visíveis, sem quebras de linha ou formatação invisível.');
   if (/\p{Cf}|[^\P{Cc}\n\t]/u.test(purpose)) throw new Error('Propósito: remova caracteres de controle ou formatação invisível.');
   if (typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(idempotencyKey)) throw new Error('Chave de idempotência inválida.');
-  return { name: name.trim(), purpose: purpose.trim() };
+  if (taskId !== undefined && taskId !== null && (typeof taskId !== 'string' || !taskId)) throw new Error('Tarefa inválida.');
+  if (typeof worktree !== 'boolean') throw new Error('Indique worktree como verdadeiro ou falso.');
+  if (worktree && !taskId) throw new Error('Worktree exige a tarefa a que o agente vai se dedicar.');
+  // Campos novos entram no payload só quando usados: hashes de pedidos antigos não mudam.
+  return { name: name.trim(), purpose: purpose.trim(), ...(taskId ? { taskId, worktree } : {}) };
 }
 
 // O nome do solicitante vem do banco: a interface pode ainda não ter carregado a sessão.
-const AGENT_REQUEST_SELECT = 'SELECT r.*, s.name AS requester_name FROM agent_requests r LEFT JOIN sessions s ON s.id = r.requested_by';
+const AGENT_REQUEST_SELECT = `SELECT r.*, s.name AS requester_name, t.title AS task_title, w.path AS worktree_path, w.branch AS worktree_branch
+  FROM agent_requests r
+  LEFT JOIN sessions s ON s.id = r.requested_by
+  LEFT JOIN tasks t ON t.id = r.task_id
+  LEFT JOIN worktrees w ON w.request_id = r.id`;
 
 function agentRequestRow(row) {
   return row && {
     id: row.id, projectId: row.project_id, requestedBy: row.requested_by, requesterName: row.requester_name || null, name: row.name, purpose: row.purpose,
     payloadHash: row.payload_hash, state: row.state, createdAt: row.created_at, expiresAt: row.expires_at,
     resolvedAt: row.resolved_at, resolvedBy: row.resolved_by, sessionId: row.session_id, error: row.error, version: row.version,
+    taskId: row.task_id || null, taskTitle: row.task_title || null, useWorktree: row.use_worktree === 1,
+    worktree: row.worktree_path ? { path: row.worktree_path, branch: row.worktree_branch } : null,
   };
 }
 
@@ -342,6 +366,17 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         const requester = db.prepare('SELECT id, role FROM sessions WHERE id = ? AND project_id = ?').get(request.requestedBy, request.projectId);
         if (!requester) throw new Error('Sessão solicitante não pertence a este projeto.');
         if (requester.role !== 'orchestrator') throw new Error('Somente a sessão principal pode pedir novos agentes.');
+        if (payload.taskId) {
+          const task = db.prepare('SELECT state FROM tasks WHERE id = ? AND project_id = ?').get(payload.taskId, request.projectId);
+          if (!task) throw new Error('Tarefa não encontrada neste projeto.');
+          if (!['backlog', 'ready'].includes(task.state)) throw new Error(`A tarefa não está disponível para um novo agente (${task.state}).`);
+          if (payload.worktree && db.prepare("SELECT 1 FROM agent_requests WHERE task_id = ? AND use_worktree = 1 AND state IN ('pending', 'approved', 'fulfilled')").get(payload.taskId)) {
+            throw new Error('Esta tarefa já tem um pedido de agente com worktree.');
+          }
+          // Uma worktree registrada nunca é recriada nem reaproveitada automaticamente na v0.1.
+          const existing = payload.worktree && db.prepare('SELECT path FROM worktrees WHERE task_id = ?').get(payload.taskId);
+          if (existing) throw new Error(`Esta tarefa já tem uma worktree registrada em ${existing.path}. O ATLAS não a recria nem a remove; peça um agente sem worktree ou use outra tarefa.`);
+        }
         const at = now();
         expirePending(request.projectId, at);
         const pending = db.prepare("SELECT count(*) AS total FROM agent_requests WHERE project_id = ? AND state = 'pending'").get(request.projectId).total;
@@ -349,8 +384,8 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         const id = randomUUID();
         const commandId = randomUUID();
         const expiresAt = new Date(Date.parse(at) + policy.ttlMs).toISOString();
-        db.prepare('INSERT INTO agent_requests (id, project_id, requested_by, name, purpose, payload_hash, state, created_at, expires_at, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)')
-          .run(id, request.projectId, requester.id, payload.name, payload.purpose, hash, 'pending', at, expiresAt);
+        db.prepare('INSERT INTO agent_requests (id, project_id, requested_by, name, purpose, payload_hash, state, created_at, expires_at, version, task_id, use_worktree) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)')
+          .run(id, request.projectId, requester.id, payload.name, payload.purpose, hash, 'pending', at, expiresAt, payload.taskId || null, payload.worktree ? 1 : 0);
         db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'agent.request', id, JSON.stringify({ ...payload, requestedBy: requester.id }), hash, request.idempotencyKey, 'completed', `agent:${requester.id}`, at, at, JSON.stringify({ id }), commandId);
         event({ projectId: request.projectId, sessionId: requester.id, type: 'approval.requested', payload: { requestId: id, kind: 'agent.create', name: payload.name }, correlationId: commandId, at });
         return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(id));
@@ -374,6 +409,11 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         if (row.state === 'expired') throw new Error('O pedido expirou; peça à sessão principal que o refaça.');
         if (row.state !== 'pending') throw new Error(`O pedido já foi resolvido (${row.state}).`);
         if (row.payload_hash !== payloadHash) throw new Error('O conteúdo do pedido não corresponde ao que foi exibido para aprovação.');
+        // A tarefa pode ter sido assumida ou encerrada durante a validade do pedido.
+        if (row.task_id) {
+          const task = db.prepare('SELECT state FROM tasks WHERE id = ?').get(row.task_id);
+          if (!task || !['backlog', 'ready'].includes(task.state)) throw new Error(`A tarefa do pedido não está mais disponível (${task?.state || 'removida'}). Recuse o pedido.`);
+        }
         db.prepare("UPDATE agent_requests SET state = 'approved', resolved_at = ?, resolved_by = 'user', version = version + 1 WHERE id = ?").run(at, requestId);
         event({ projectId, sessionId: row.requested_by, type: 'approval.resolved', payload: { requestId, decision: 'approved' }, correlationId: requestId, at });
         return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(requestId));
@@ -391,6 +431,19 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(requestId));
       });
     },
+    // Worktree criada na aprovação de um pedido; o registro acompanha tarefa e commit-base.
+    recordWorktree({ projectId, requestId, taskId, repositoryPath, path: worktreePath, branch, baseCommit }) {
+      return transaction(db, () => {
+        const id = randomUUID();
+        const at = now();
+        db.prepare('INSERT INTO worktrees (id, project_id, task_id, request_id, repository_path, path, branch, base_commit, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(id, projectId, taskId, requestId, repositoryPath, worktreePath, branch, baseCommit, at);
+        event({ projectId, type: 'worktree.created', payload: { worktreeId: id, taskId, requestId, path: worktreePath, branch, baseCommit }, correlationId: requestId, at });
+        return { id, projectId, taskId, requestId, repositoryPath, path: worktreePath, branch, baseCommit, createdAt: at };
+      });
+    },
+    listWorktrees: (projectId) => db.prepare(`SELECT id, project_id AS projectId, task_id AS taskId, request_id AS requestId, repository_path AS repositoryPath,
+      path, branch, base_commit AS baseCommit, created_at AS createdAt FROM worktrees WHERE project_id = ? ORDER BY created_at, id`).all(projectId).map((row) => ({ ...row })),
     completeAgentRequest({ projectId, requestId, sessionId = null, error = null }) {
       return transaction(db, () => {
         const row = db.prepare('SELECT * FROM agent_requests WHERE id = ? AND project_id = ?').get(requestId, projectId);

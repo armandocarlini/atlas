@@ -490,6 +490,20 @@ try {
   await click(main, '.task-assignment button', 'Devolver tarefa');
   await until(() => main.evaluate(`${queueItem('Delegada bloqueada')}?.innerText.includes('Pronta') && document.querySelector('.task-assignment')?.innerText.includes('Sem execução atribuída')`), 'task released to ready');
   console.log('PASS delegação de tarefa: oferta, responsável, bloqueio, cancelamento e devolução pelo usuário');
+  // Pedido com worktree em projeto sem repositório Git: o cartão explica a recusa antes da decisão.
+  const worktreeStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
+  try {
+    worktreeStore.requestAgent({ projectId: extraProjectId, requestedBy: 'smoke-orchestrator', name: 'executor-worktree', purpose: 'Executar a tarefa em worktree.', taskId: blockedTaskId, worktree: true, idempotencyKey: 'smoke-worktree-request-01' });
+  } finally {
+    worktreeStore.close();
+  }
+  await native('send', { channel: 'agent-request:changed', payload: { projectId: extraProjectId } });
+  await until(() => main.evaluate(`document.querySelector('.agent-request')?.innerText.includes('executor-worktree')`), 'worktree request shown');
+  const worktreeCard = await main.evaluate(`document.querySelector('.agent-request').innerText`);
+  assert(worktreeCard.includes('Tarefa: Delegada bloqueada') && worktreeCard.includes('não tem repositório Git') && worktreeCard.includes('na worktree da tarefa'), `Worktree request explains plan: ${worktreeCard}`);
+  await click(main, '.agent-request button', 'Recusar');
+  await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'worktree request rejected');
+  console.log('PASS pedido com worktree mostra tarefa e recusa honesta sem repositório Git');
   await click(main, '.title-actions button', 'Aparência');
   await click(main, '.background-presets button', 'Névoa');
   assert.equal(await main.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#eef1f4');

@@ -97,6 +97,12 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
 
   return {
     ready,
+    // Nova varredura somente leitura, por exemplo depois de criar uma worktree aprovada.
+    // Uma varredura já em andamento pode ter começado antes da mudança: espere e repita.
+    refresh: async () => {
+      if (scanPromise) await scanPromise.catch(() => {});
+      return scanAll();
+    },
     getProjects: () => [...projects.values()],
     getDefaultCwd: () => authorizedRoots[0] || initialRoot,
     getProjectForCwd: (cwd) => {
