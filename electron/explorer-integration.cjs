@@ -31,45 +31,44 @@ async function defaultReg(args) {
 }
 
 // A saída de `reg query` usa a página de código OEM e o rótulo localizado do valor
-// padrão; caminhos com acento nunca bateriam. A leitura usa PowerShell em UTF-8, e a
-// chave chega por variável de ambiente, nunca interpolada no script.
+// padrão; caminhos com acento nunca bateriam. A leitura usa PowerShell em UTF-8, e as
+// chaves chegam por variável de ambiente, nunca interpoladas no script. Todas as
+// chaves saem de um único PowerShell: vários processos em paralelo estouravam o
+// tempo limite em máquinas lentas (regressão vista na CI do Windows).
 const READ_SCRIPT = [
   '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
-  "$item = Get-Item -LiteralPath ('Registry::' + $env:ATLAS_REGISTRY_KEY) -ErrorAction SilentlyContinue",
-  "if ($null -eq $item) { exit 3 }",
-  "$value = $item.GetValue('')",
-  "if ($null -eq $value) { exit 4 }",
-  '[Console]::Out.Write([string]$value)',
+  "$results = foreach ($key in ($env:ATLAS_REGISTRY_KEYS -split [char]10)) { $item = Get-Item -LiteralPath ('Registry::' + $key) -ErrorAction SilentlyContinue; if ($null -eq $item) { [pscustomobject]@{ state = 'absent'; value = '' } } else { $value = $item.GetValue(''); if ($null -eq $value) { [pscustomobject]@{ state = 'empty'; value = '' } } else { [pscustomobject]@{ state = 'value'; value = [string]$value } } } }",
+  '[Console]::Out.Write((ConvertTo-Json -InputObject @($results) -Compress))',
 ].join('; ');
 
-async function defaultReadDefault(key) {
-  const registryKey = key.replace(/^HKCU\\/i, 'HKEY_CURRENT_USER\\');
-  try {
-    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', READ_SCRIPT], {
-      encoding: 'utf8', windowsHide: true, timeout: 15000, env: { ...process.env, ATLAS_REGISTRY_KEY: registryKey },
-    });
-    return stdout;
-  } catch (error) {
-    if (error.code === 3) return null;
-    if (error.code === 4) return '';
-    throw error;
-  }
+// null: chave ausente; '': chave sem valor padrão; texto: valor padrão.
+async function defaultReadDefaults(keys) {
+  const registryKeys = keys.map((key) => key.replace(/^HKCU\\/i, 'HKEY_CURRENT_USER\\'));
+  const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', READ_SCRIPT], {
+    encoding: 'utf8', windowsHide: true, timeout: 30000, env: { ...process.env, ATLAS_REGISTRY_KEYS: registryKeys.join('\n') },
+  });
+  const results = JSON.parse(stdout.replace(/^\uFEFF/, ''));
+  if (!Array.isArray(results) || results.length !== keys.length) throw new Error('Leitura do registro incompleta.');
+  return results.map((item) => (item.state === 'absent' ? null : item.state === 'empty' ? '' : String(item.value)));
 }
 
-function createExplorerIntegration({ execPath, appPath = null, root = DEFAULT_ROOT, reg = defaultReg, readDefault = defaultReadDefault, platform = process.platform }) {
+function createExplorerIntegration({ execPath, appPath = null, root = DEFAULT_ROOT, reg = defaultReg, readDefault = null, readDefaults = readDefault ? (items) => Promise.all(items.map(readDefault)) : defaultReadDefaults, platform = process.platform }) {
   const command = openCommand({ execPath, appPath });
   const keys = keysFor(root);
 
-  // null: chave ausente; '' : chave sem valor padrão; texto: comando gravado.
-  async function readCommand(key) {
-    const [shell, command] = await Promise.all([readDefault(key), readDefault(`${key}\\command`)]);
-    if (shell === null && command === null) return null;
-    return command || '';
+  // Por entrada: null se ausente, '' se sem comando, ou o comando gravado.
+  async function readCommands() {
+    const values = await readDefaults(keys.flatMap((key) => [key, `${key}\\command`]));
+    return keys.map((_, index) => {
+      const [shell, current] = [values[index * 2], values[index * 2 + 1]];
+      if (shell === null && current === null) return null;
+      return current || '';
+    });
   }
 
   async function getStatus() {
     if (platform !== 'win32') return { state: 'unsupported', label: LABEL, keys, command };
-    const current = await Promise.all(keys.map(readCommand));
+    const current = await readCommands();
     let state = 'absent';
     if (current.every((item) => item === command)) state = 'installed';
     else if (current.some((item) => item !== null)) state = 'outdated';
