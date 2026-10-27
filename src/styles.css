@@ -828,3 +828,12 @@ body { transition: background-color .18s ease, color .18s ease; }
 .agent-request-worktree dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
 .agent-request-error { margin: 0; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
 .agent-request-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+/* Escolha de CLI e modelo: modal de sessão, principal e pedidos de agente. */
+.agent-choice { display: grid; gap: 10px; }
+.agent-choice label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.agent-choice select, .agent-choice input { width: 100%; height: 36px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); padding: 0 10px; font: 12px var(--mono); }
+.agent-choice select:disabled, .agent-choice input:disabled { opacity: .55; cursor: not-allowed; }
+.agent-choice-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.agent-choice-note.error { color: var(--danger); }
+.orchestrator-choice-note { align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.session-cli { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }

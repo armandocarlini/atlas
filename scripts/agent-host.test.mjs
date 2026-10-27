@@ -8,7 +8,7 @@ import path from 'node:path';
 const { createAgentHost } = createRequire(import.meta.url)('../electron/agent-host.cjs');
 const { createOperationalStore } = createRequire(import.meta.url)('../electron/operational-store.cjs');
 
-function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [], orchestratorProfile = '/fixture/atlas-orchestrator.md', mcpHost, onRunEnded } = {}) {
+function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [], orchestratorProfile = '/fixture/atlas-orchestrator.md', mcpHost, onRunEnded, listModelsImpl, bridgeEntry } = {}) {
   const handlers = new Map();
   const listeners = new Map();
   const ipcMain = {
@@ -53,8 +53,10 @@ function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersi
     onPersistenceError,
     orchestratorProfile,
     mcpHost,
+    bridgeEntry,
     onRunEnded,
     isMainSender: (event) => event.sender === 'main',
+    listModelsImpl: listModelsImpl || (async () => []),
     discover: async () => adapters || [{
       id: 'kimi-code',
       name: 'Kimi Code',
@@ -268,7 +270,7 @@ function orchestratorFixture(t) {
 test('orquestrador concorrente tem uma identidade/run e flags fixadas pelo núcleo', async (t) => {
   const fixture = orchestratorFixture(t);
   const { handlers, mainEvent, spawns } = createHarness(fixture);
-  const request = { cwd: 'C:\\projeto', adapterId: 'inventado', args: ['--auto'], name: 'outro' };
+  const request = { cwd: 'C:\\projeto', adapterId: 'kimi-code', args: ['--auto'], name: 'outro' };
   const [first, second] = await Promise.all([handlers.get('agent:open-orchestrator')(mainEvent, request), handlers.get('agent:open-orchestrator')(mainEvent, request)]);
   assert.equal(first.id, second.id);
   assert.equal(first.role, 'orchestrator');
@@ -283,12 +285,12 @@ test('orquestrador concorrente tem uma identidade/run e flags fixadas pelo núcl
 test('nova run da principal exige ação explícita e preserva identidade e runs anteriores', async (t) => {
   const fixture = orchestratorFixture(t);
   const { handlers, mainEvent, spawns, transport } = createHarness(fixture);
-  const first = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto' });
+  const first = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code' });
   transport.records[0].emitExit(0, null);
   const ended = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto' });
   assert.equal(ended.state, 'exited');
   assert.equal(spawns.length, 1);
-  const next = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', startNewRun: true });
+  const next = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', startNewRun: true, adapterId: 'kimi-code' });
   assert.equal(next.id, first.id);
   assert.equal(next.createdAt, first.createdAt);
   assert.notEqual(next.runId, first.runId);
@@ -302,14 +304,14 @@ test('nova run da principal exige ação explícita e preserva identidade e runs
 test('reinício mostra principal perdida sem spawn até nova run explícita', async (t) => {
   const fixture = orchestratorFixture(t);
   const first = createHarness(fixture);
-  const agent = await first.handlers.get('agent:open-orchestrator')(first.mainEvent, { cwd: 'C:\\projeto' });
+  const agent = await first.handlers.get('agent:open-orchestrator')(first.mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code' });
   const reopened = createHarness({ ...fixture, store: fixture.reopen() });
   const restored = await reopened.handlers.get('agent:open-orchestrator')(reopened.mainEvent, { cwd: 'C:\\projeto' });
   assert.equal(restored.id, agent.id);
   assert.equal(restored.archived, true);
   assert.equal(restored.runState, 'lost');
   assert.equal(reopened.spawns.length, 0);
-  const next = await reopened.handlers.get('agent:open-orchestrator')(reopened.mainEvent, { cwd: 'C:\\projeto', startNewRun: true });
+  const next = await reopened.handlers.get('agent:open-orchestrator')(reopened.mainEvent, { cwd: 'C:\\projeto', startNewRun: true, adapterId: 'kimi-code' });
   assert.equal(next.id, agent.id);
   assert.equal(reopened.spawns.length, 1);
 });
@@ -324,11 +326,11 @@ test('abrir principal recusa janela secundária e diretório fora do escopo', as
 test('consulta de histórico concorrente não engole pedido explícito de nova run', async (t) => {
   const fixture = orchestratorFixture(t);
   const { handlers, mainEvent, transport } = createHarness(fixture);
-  await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto' });
+  await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code' });
   transport.records[0].emitExit(0, null);
   const [, restarted] = await Promise.all([
     handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto' }),
-    handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', startNewRun: true }),
+    handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', startNewRun: true, adapterId: 'kimi-code' }),
   ]);
   assert.equal(restarted.state, 'running');
   assert.equal(restarted.runAttempt, 2);
@@ -408,4 +410,122 @@ test('token da run é vinculado à run persistida e o fim da run avisa o projeto
   assert.equal(store.listRuns('project-a')[0].id, agent.runId);
   transport.records[0].emitExit(0);
   assert.deepEqual(ended, ['project-a']);
+});
+
+const KIMI = { id: 'kimi-code', name: 'Kimi Code', command: 'kimi', spawnArgs: [], executable: 'C:\\cli\\kimi.exe', version: '2.3.3', status: 'available', error: null };
+const OPENCODE = { id: 'opencode', name: 'OpenCode', command: 'opencode', spawnArgs: [], executable: 'C:\\npm\\opencode.cmd', version: '1.18.21', status: 'available', error: null };
+const modelsByAdapter = { 'kimi-code': ['kimi-code/k3', 'kimi-code/k3.1-pro'], opencode: ['nvidia/deepseek-ai/deepseek-v4-flash', 'nvidia/meta/llama-3.3-70b-instruct'] };
+
+test('sem CLI escolhido nenhum agente inicia e não há CLI padrão', async () => {
+  const { handlers, spawns, mainEvent } = createHarness({ adapters: [KIMI, OPENCODE] });
+  await assert.rejects(handlers.get('agent:create')(mainEvent, { cwd: 'C:\\projeto' }), /Escolha o CLI/);
+  await assert.rejects(handlers.get('agent:create')(mainEvent, { adapterId: '', cwd: 'C:\\projeto' }), /Escolha o CLI/);
+  assert.equal(spawns.length, 0);
+});
+
+test('modelo é obrigatório e precisa estar entre os identificados no CLI', async () => {
+  const calls = [];
+  const { handlers, spawns, mainEvent } = createHarness({ adapters: [KIMI, OPENCODE], listModelsImpl: async (adapter) => { calls.push(adapter.id); return modelsByAdapter[adapter.id]; } });
+  const create = (request) => handlers.get('agent:create')(mainEvent, { cwd: 'C:\\projeto', ...request });
+  await assert.rejects(create({ adapterId: 'opencode' }), /Escolha o modelo do OpenCode/);
+  await assert.rejects(create({ adapterId: 'opencode', model: 'nvidia/inventado' }), /não foi identificado/);
+  // Regressão de segurança: o modelo vai para a linha de comando de um shim .cmd.
+  await assert.rejects(create({ adapterId: 'opencode', model: 'nvidia/x & calc' }), /Modelo inválido/);
+  await assert.rejects(create({ adapterId: 'kimi-code', model: 'nvidia/meta/llama-3.3-70b-instruct' }), /não foi identificado no Kimi Code/);
+  assert.equal(spawns.length, 0);
+  const agent = await create({ adapterId: 'opencode', model: 'nvidia/meta/llama-3.3-70b-instruct', name: 'executor' });
+  assert.equal(agent.model, 'nvidia/meta/llama-3.3-70b-instruct');
+  assert.equal(agent.cli, 'OpenCode');
+  assert.equal(spawns[0].file, 'C:\\npm\\opencode.cmd');
+  assert.deepEqual(spawns[0].args, ['--model', 'nvidia/meta/llama-3.3-70b-instruct']);
+  assert.deepEqual(JSON.parse(spawns[0].env.OPENCODE_CONFIG_CONTENT), {}, 'sem host MCP nada é injetado');
+  await create({ adapterId: 'kimi-code', model: 'kimi-code/k3' });
+  assert.deepEqual(spawns[1].args, ['--model', 'kimi-code/k3']);
+  assert.equal(spawns[1].env.OPENCODE_CONFIG_CONTENT, undefined);
+  assert.deepEqual(calls, ['opencode', 'kimi-code'], 'lista de modelos em cache por CLI');
+});
+
+test('CLI sem modelos identificados usa a própria configuração e recusa modelo avulso', async () => {
+  const { handlers, spawns, mainEvent } = createHarness({ adapters: [KIMI], listModelsImpl: async () => [] });
+  await assert.rejects(handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', model: 'qualquer/um', cwd: 'C:\\projeto' }), /não foi identificado/);
+  const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' });
+  assert.equal(agent.model, null);
+  assert.deepEqual(spawns[0].args, []);
+});
+
+test('agent:list-models só na janela principal, com cache e atualização explícita', async () => {
+  let calls = 0;
+  const { handlers, mainEvent } = createHarness({ adapters: [KIMI, OPENCODE], listModelsImpl: async (adapter) => { calls += 1; return modelsByAdapter[adapter.id]; } });
+  const list = handlers.get('agent:list-models');
+  await assert.rejects(list({ sender: 'popup' }, { adapterId: 'opencode' }), /não autorizada/);
+  await assert.rejects(list(mainEvent, {}), /Escolha o CLI/);
+  assert.deepEqual(await list(mainEvent, { adapterId: 'opencode' }), { adapterId: 'opencode', models: modelsByAdapter.opencode });
+  await list(mainEvent, { adapterId: 'opencode' });
+  assert.equal(calls, 1);
+  await list(mainEvent, { adapterId: 'opencode', refresh: true });
+  assert.equal(calls, 2);
+});
+
+test('falha ao listar modelos não fica em cache', async () => {
+  let attempt = 0;
+  const { handlers, mainEvent } = createHarness({ adapters: [OPENCODE], listModelsImpl: async () => { attempt += 1; if (attempt === 1) throw new Error('O OpenCode não listou os modelos: rede.'); return ['nvidia/a']; } });
+  await assert.rejects(handlers.get('agent:list-models')(mainEvent, { adapterId: 'opencode' }), /não listou/);
+  assert.deepEqual((await handlers.get('agent:list-models')(mainEvent, { adapterId: 'opencode' })).models, ['nvidia/a']);
+});
+
+test('principal sem escolha pede CLI e modelo ao usuário, sem iniciar nada', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const { handlers, mainEvent, spawns } = createHarness({ ...fixture, adapters: [KIMI, OPENCODE] });
+  const open = handlers.get('agent:open-orchestrator');
+  assert.deepEqual(await open(mainEvent, { cwd: 'C:\\projeto' }), { needsChoice: true, projectId: 'project-a', previousCli: null });
+  assert.deepEqual(await open(mainEvent, { cwd: 'C:\\projeto', startNewRun: true }), { needsChoice: true, projectId: 'project-a', previousCli: null });
+  assert.equal(spawns.length, 0);
+  assert.equal(fixture.store.listSessions('project-a').length, 0);
+});
+
+test('principal troca de CLI e modelo entre runs mantendo a identidade', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const mcpHost = fakeMcpHost();
+  const bridgeEntry = { command: 'C:\\ATLAS\\ATLAS.exe', args: ['C:\\ATLAS\\resources\\app.asar.unpacked\\electron\\atlas-mcp-bridge.cjs'], env: { ELECTRON_RUN_AS_NODE: '1' } };
+  const { handlers, mainEvent, spawns, transport } = createHarness({ ...fixture, adapters: [KIMI, OPENCODE], mcpHost, bridgeEntry, listModelsImpl: async (adapter) => modelsByAdapter[adapter.id] });
+  const open = handlers.get('agent:open-orchestrator');
+  const first = await open(mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code', model: 'kimi-code/k3.1-pro' });
+  assert.deepEqual(spawns[0].args, ['--model', 'kimi-code/k3.1-pro', '--agent-file', '/fixture/atlas-orchestrator.md']);
+  transport.records[0].emitExit(0, null);
+  assert.deepEqual(await open(mainEvent, { cwd: 'C:\\projeto', startNewRun: true }), { needsChoice: true, projectId: 'project-a', previousCli: 'Kimi Code' });
+  const next = await open(mainEvent, { cwd: 'C:\\projeto', startNewRun: true, adapterId: 'opencode', model: 'nvidia/deepseek-ai/deepseek-v4-flash' });
+  assert.equal(next.id, first.id);
+  assert.equal(next.cli, 'OpenCode');
+  assert.equal(next.model, 'nvidia/deepseek-ai/deepseek-v4-flash');
+  assert.deepEqual(spawns[1].args, ['--model', 'nvidia/deepseek-ai/deepseek-v4-flash', '--agent', 'atlas-orchestrator']);
+  const config = JSON.parse(spawns[1].env.OPENCODE_CONFIG_CONTENT);
+  const token = spawns[1].env.ATLAS_MCP_TOKEN;
+  assert.equal(token, 'token-2');
+  assert.deepEqual(config.mcp.atlas, { type: 'local', command: [bridgeEntry.command, ...bridgeEntry.args], environment: { ELECTRON_RUN_AS_NODE: '1', ATLAS_MCP_ENDPOINT: mcpHost.endpoint, ATLAS_MCP_TOKEN: token }, enabled: true });
+  const profile = config.agent['atlas-orchestrator'];
+  assert.equal(profile.mode, 'primary');
+  assert.equal(profile.permission['*'], 'deny', 'principal sem escrita, shell ou rede');
+  assert.equal(profile.permission['atlas_*'], 'allow');
+  assert.equal(profile.permission.read['*.env'], 'deny');
+  assert.match(profile.prompt, /atlas_agents_request/);
+  assert.doesNotMatch(profile.prompt, /mcp__atlas__/);
+  const session = fixture.store.listSessions('project-a')[0];
+  assert.equal(session.adapter_id, 'opencode');
+  assert.equal(session.cli, 'OpenCode');
+  const runs = fixture.store.listRuns('project-a');
+  assert.deepEqual(runs.map((run) => [run.adapter_id, run.model]), [['kimi-code', 'kimi-code/k3.1-pro'], ['opencode', 'nvidia/deepseek-ai/deepseek-v4-flash']]);
+  const started = fixture.store.listEvents('project-a').filter((item) => item.type === 'run.started').map((item) => item.payload);
+  assert.deepEqual(started.at(-1), { adapterId: 'opencode', cli: 'OpenCode', model: 'nvidia/deepseek-ai/deepseek-v4-flash' });
+  transport.records[1].emitExit(0, null);
+  const history = await open(mainEvent, { cwd: 'C:\\projeto' });
+  assert.equal(history.model, 'nvidia/deepseek-ai/deepseek-v4-flash', 'histórico mostra o modelo da última run');
+});
+
+test('início com a escolha já conferida não consulta os modelos de novo', async () => {
+  let calls = 0;
+  const { host, spawns } = createHarness({ adapters: [KIMI, OPENCODE], listModelsImpl: async () => { calls += 1; throw new Error('rede indisponível'); } });
+  const agent = await host.createAgent({ name: 'aprovado', cwd: 'C:\\projeto' }, { origin: 'orchestrator', launch: { adapter: OPENCODE, model: 'nvidia/a' } });
+  assert.equal(calls, 0);
+  assert.equal(agent.model, 'nvidia/a');
+  assert.deepEqual(spawns[0].args, ['--model', 'nvidia/a']);
 });

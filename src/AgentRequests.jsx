@@ -1,12 +1,15 @@
 import { useState } from 'react';
+import { AgentChoice } from './AgentChoice.jsx';
 
 function formatTime(iso) {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
-function AgentRequestCard({ request, policy, requesterName, error, onApprove, onReject, onDismiss }) {
+function AgentRequestCard({ request, policy, requesterName, adapters, error, onApprove, onReject, onDismiss }) {
   const [busy, setBusy] = useState('');
+  // O usuário escolhe o CLI e o modelo do agente; a principal só pede.
+  const [choice, setChoice] = useState({ adapterId: '', model: '', ready: false });
   const pending = request.state === 'pending';
   const titleId = `agent-request-${request.id}`;
 
@@ -41,14 +44,15 @@ function AgentRequestCard({ request, policy, requesterName, error, onApprove, on
       </div>)}
     <p className="agent-request-policy">
       {pending ? `Vale até ${formatTime(request.expiresAt)}. ` : ''}
-      Inicia o Kimi Code interativo {request.useWorktree ? 'na worktree da tarefa' : 'no diretório do projeto'}, sem flags de autonomia nem prompt inicial; permissões continuam no harness.
+      Inicia o CLI escolhido, interativo, {request.useWorktree ? 'na worktree da tarefa' : 'no diretório do projeto'}, sem flags de autonomia nem prompt inicial; permissões continuam no harness.
       {policy ? ` Política: até ${policy.maxActiveAgents} agentes da principal em execução.` : ''}
     </p>
+    {pending && <AgentChoice adapters={adapters} value={choice} onChange={setChoice} disabled={Boolean(busy)} />}
     {error && <p className="agent-request-error" role="alert">{error}</p>}
     <div className="agent-request-actions">
       {pending ? <>
         <button type="button" className="button secondary compact" disabled={Boolean(busy)} onClick={() => run('reject', onReject)}>{busy === 'reject' ? 'Recusando…' : 'Recusar'}</button>
-        <button type="button" className="button primary compact" disabled={Boolean(busy)} onClick={() => run('approve', onApprove)}>{busy === 'approve' ? 'Iniciando…' : 'Aprovar e iniciar'}</button>
+        <button type="button" className="button primary compact" disabled={Boolean(busy) || !choice.ready} onClick={() => run('approve', (item) => onApprove(item, choice))}>{busy === 'approve' ? 'Iniciando…' : 'Aprovar e iniciar'}</button>
       </> : <button type="button" className="button secondary compact" onClick={() => onDismiss(request)}>Dispensar</button>}
     </div>
   </section>;
@@ -56,7 +60,7 @@ function AgentRequestCard({ request, policy, requesterName, error, onApprove, on
 
 // Pedidos de agente da sessão principal aguardando a decisão do usuário. Pedidos
 // que falharam permanecem visíveis com o motivo até serem dispensados.
-export function AgentRequestsPanel({ state, sessions, errors, onApprove, onReject, onDismiss }) {
+export function AgentRequestsPanel({ state, sessions, adapters, errors, onApprove, onReject, onDismiss }) {
   if (!state?.projectId) return null;
   const visible = state.items.filter((request) => request.state === 'pending' || errors[request.id]);
   if (state.error) return <p className="scope-note error-note" role="alert"><span>Não foi possível carregar os pedidos de agente: {state.error}</span></p>;
@@ -68,6 +72,7 @@ export function AgentRequestsPanel({ state, sessions, errors, onApprove, onRejec
       request={request}
       policy={state.policy}
       requesterName={request.requesterName || nameOf(request.requestedBy)}
+      adapters={adapters}
       error={errors[request.id]}
       onApprove={onApprove}
       onReject={onReject}

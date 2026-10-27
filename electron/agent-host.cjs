@@ -1,12 +1,15 @@
 const { randomUUID } = require('node:crypto');
-const { discoverAdapters } = require('./agent-adapters.cjs');
+const { discoverAdapters, listModels, launchFor, MODEL_PATTERN } = require('./agent-adapters.cjs');
+
+const MODELS_CACHE_MS = 60 * 1000;
 
 // Ciclo de vida de sessões de agente neste marco: identidade gerada no
 // processo principal, cwd validado, PTY real e estado mínimo em memória.
 // O estado operacional é apenas running/exited; nada é inferido do ANSI.
-function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, store, onPersistenceError = console.error, orchestratorProfile, mcpHost = null, onRunEnded = () => {} }) {
+function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, listModelsImpl = listModels, store, onPersistenceError = console.error, orchestratorProfile, mcpHost = null, bridgeEntry = null, onRunEnded = () => {} }) {
   const agents = new Map();
   const pendingOrchestrators = new Map();
+  const modelCache = new Map();
   let discoveryPromise = null;
 
   function describe(agent) {
@@ -16,6 +19,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       adapterId: agent.adapterId,
       cli: agent.cli,
       version: agent.version,
+      model: agent.model,
       cwd: agent.cwd,
       origin: agent.origin,
       ptyId: agent.ptyId,
@@ -45,7 +49,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
         if (!run) continue;
         history.push({
           id: session.id, name: session.name, adapterId: session.adapter_id, cli: session.cli,
-          version: session.cli_version, cwd: session.cwd, origin: session.origin,
+          version: session.cli_version, model: run.model ?? null, cwd: session.cwd, origin: session.origin,
           projectId: project.id, ptyId: null, state: 'exited', archived: true,
           runId: run.id, runState: run.state, reason: run.reason,
           exit: run.exit_code === null ? null : { exitCode: run.exit_code, signal: run.signal },
@@ -74,13 +78,48 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     return listAgents();
   });
 
-  async function createAgent(request = {}, { role = 'agent', existing = null, origin = 'user' } = {}) {
-    await projectHost.ready;
-
-    const adapters = await listAdapters();
-    const adapter = adapters.find((item) => item.id === request.adapterId);
+  // Confirma o CLI antes de efeitos fora do ATLAS, como criar uma worktree.
+  async function requireAdapter(adapterId) {
+    if (typeof adapterId !== 'string' || !adapterId) throw new Error('Escolha o CLI do agente entre os detectados.');
+    const adapter = (await listAdapters()).find((item) => item.id === adapterId);
     if (!adapter) throw new Error('Adaptador desconhecido. Atualize a lista de CLIs detectados.');
     if (adapter.status !== 'available') throw new Error(adapter.error || `${adapter.name} não está disponível.`);
+    return adapter;
+  }
+
+  // Listar modelos pode levar segundos (o OpenCode consulta os provedores); a lista
+  // fica em cache por pouco tempo e é atualizada quando o usuário pede.
+  function modelsFor(adapter, refresh = false) {
+    const cached = modelCache.get(adapter.id);
+    if (!refresh && cached && Date.now() - cached.at < MODELS_CACHE_MS) return cached.promise;
+    const promise = listModelsImpl(adapter);
+    modelCache.set(adapter.id, { at: Date.now(), promise });
+    promise.catch(() => { if (modelCache.get(adapter.id)?.promise === promise) modelCache.delete(adapter.id); });
+    return promise;
+  }
+
+  // Não há CLI nem modelo padrão: os dois vêm da escolha do usuário. Sem modelos
+  // identificados para o CLI, ele usa a própria configuração.
+  async function resolveLaunch(adapterId, model) {
+    const adapter = await requireAdapter(adapterId);
+    const chosen = typeof model === 'string' && model ? model : null;
+    if (chosen !== null && !MODEL_PATTERN.test(chosen)) throw new Error('Modelo inválido.');
+    const models = await modelsFor(adapter);
+    if (models.length && chosen === null) throw new Error(`Escolha o modelo do ${adapter.name} entre os identificados.`);
+    if (chosen !== null && !models.includes(chosen)) throw new Error(`O modelo ${chosen} não foi identificado no ${adapter.name}. Atualize a lista de modelos.`);
+    return { adapter, model: chosen };
+  }
+
+  ipcMain.handle('agent:list-models', async (event, request = {}) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a listar modelos.');
+    const adapter = await requireAdapter(request?.adapterId);
+    return { adapterId: adapter.id, models: await modelsFor(adapter, request?.refresh === true) };
+  });
+
+  async function createAgent(request = {}, { role = 'agent', existing = null, origin = 'user', launch: resolved = null } = {}) {
+    await projectHost.ready;
+
+    const { adapter, model } = resolved || await resolveLaunch(request.adapterId, request.model);
 
     const cwd = request.cwd || projectHost.getDefaultCwd();
     if (!projectHost.isAllowedCwd(cwd)) throw new Error('Selecione uma pasta autorizada ou uma worktree descoberta.');
@@ -98,16 +137,19 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     const atlasToken = mcpHost && project ? mcpHost.register({ projectId: project.id, sessionId: id, role }) : null;
     // Sempre definidas, mesmo vazias: o PTY nunca herda endpoint ou token do ambiente do próprio ATLAS.
     const env = { ATLAS_MCP_ENDPOINT: atlasToken ? mcpHost.endpoint : '', ATLAS_MCP_TOKEN: atlasToken || '' };
+    // CLIs que recebem a ponte por run (OpenCode) levam a entrada com o token desta run.
+    const bridge = atlasToken && bridgeEntry ? { command: bridgeEntry.command, args: bridgeEntry.args, env: { ...bridgeEntry.env, ...env } } : null;
 
     let record;
     try {
+      const launch = launchFor({ adapter, role, model, orchestratorProfile, bridge });
       record = transport.spawn({
         file: adapter.executable,
-        args: [...adapter.spawnArgs, ...(role === 'orchestrator' ? ['--agent-file', orchestratorProfile] : [])],
+        args: launch.args,
         cwd,
         cols,
         rows,
-        env,
+        env: { ...env, ...launch.env },
         meta: { kind: 'agent', cli: adapter.name },
       });
     } catch (error) {
@@ -121,6 +163,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       adapterId: adapter.id,
       cli: adapter.name,
       version: adapter.version,
+      model,
       cwd,
       origin,
       ptyId: record.id,
@@ -182,23 +225,18 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       if (!history) throw new Error('Histórico da principal fora do escopo autorizado.');
       return history;
     }
-    const operation = createAgent({ adapterId: 'kimi-code', name: 'ORQUESTRADOR', cwd: project.path }, { role: 'orchestrator', existing })
+    // Sem escolha do usuário a principal não inicia: a interface pergunta o CLI e o modelo.
+    if (typeof request.adapterId !== 'string' || !request.adapterId) return { needsChoice: true, projectId: project.id, previousCli: existing?.cli || null };
+    const operation = createAgent({ adapterId: request.adapterId, model: request.model, name: 'ORQUESTRADOR', cwd: project.path }, { role: 'orchestrator', existing })
       .finally(() => pendingOrchestrators.delete(project.id));
     pendingOrchestrators.set(project.id, operation);
     return operation;
   });
 
-  // Confirma o CLI antes de efeitos fora do ATLAS, como criar uma worktree.
-  async function requireAdapter(adapterId) {
-    const adapter = (await listAdapters()).find((item) => item.id === adapterId);
-    if (!adapter) throw new Error('Adaptador desconhecido. Atualize a lista de CLIs detectados.');
-    if (adapter.status !== 'available') throw new Error(adapter.error || `${adapter.name} não está disponível.`);
-    return adapter;
-  }
-
   return {
     listAgents,
     requireAdapter,
+    resolveLaunch,
     getAgent: (id) => agents.get(id),
     createAgent,
     countActive: ({ projectId, origin }) => [...agents.values()].filter((agent) => agent.projectId === projectId && agent.origin === origin && agent.state === 'running').length,

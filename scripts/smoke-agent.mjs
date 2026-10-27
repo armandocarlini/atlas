@@ -121,6 +121,22 @@ async function evaluateMain(expression) {
   return result.result.value;
 }
 
+// Escolha de CLI e modelo pela interface, como o usuário faz: selects controlados
+// pelo React recebem o setter nativo e o evento change.
+async function chooseInUi(scope, name, value) {
+  const ok = await evaluateMain(`(() => { const select = document.querySelector(${JSON.stringify(`${scope} select[name=${name}]`)}); if (!select) return false; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(value)}); select.dispatchEvent(new Event('change', { bubbles: true })); return select.value === ${JSON.stringify(value)}; })()`);
+  if (!ok) throw new Error(`Opção ${value} ausente em ${scope} ${name}`);
+}
+
+async function chooseKimi(scope) {
+  await until(() => evaluateMain(`[...document.querySelectorAll(${JSON.stringify(`${scope} select[name=cli] option`)})].some(item => item.value === 'kimi-code' && !item.disabled)`), `Kimi Code em ${scope}`);
+  await chooseInUi(scope, 'cli', 'kimi-code');
+  if (kimiModel) {
+    await until(() => evaluateMain(`Boolean(document.querySelector(${JSON.stringify(`${scope} select[name=model]`)}))`), `modelos em ${scope}`);
+    await chooseInUi(scope, 'model', kimiModel);
+  }
+}
+
 async function typeInPrincipal(prompt) {
   await native('focus');
   await evaluateMain(`${principalCard}.querySelector('.xterm-helper-textarea').focus()`);
@@ -134,6 +150,7 @@ async function typeInPrincipal(prompt) {
 
 let exitCode = 1;
 let modelDiagnostic = '';
+let kimiModel = null;
 const principalCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'ORQUESTRADOR')`;
 const plainOutput = (value) => value.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
 try {
@@ -159,7 +176,11 @@ try {
   }
   const integrationActive = !configuredModel || integrationBefore.state === 'installed';
 
-  const principal = await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] });
+  // Sem CLI padrão: a principal nasce só com o CLI e o modelo escolhidos.
+  assert.equal((await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] })).needsChoice, true);
+  kimiModel = (await native('invoke', { channel: 'agent:list-models', args: [{ adapterId: 'kimi-code' }] })).models[0] ?? null;
+  if (!configuredModel) assert.equal(kimiModel, null, 'home isolada sem modelos: o Kimi usa a própria configuração');
+  const principal = await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture, adapterId: 'kimi-code', model: kimiModel }] });
   assert.equal(principal.role, 'orchestrator');
   const principalAttach = () => native('invoke', { channel: 'terminal:attach', args: [principal.ptyId] });
   let principalTrusted = false;
@@ -195,7 +216,7 @@ try {
     console.log('PASS conversa real na principal com provedor já configurado e um único prompt curto');
   }
 
-  const agent = await native('invoke', { channel: 'agent:create', args: [{ adapterId: 'kimi-code', name: 'smoke-kimi', cwd: fixture }] });
+  const agent = await native('invoke', { channel: 'agent:create', args: [{ adapterId: 'kimi-code', model: kimiModel, name: 'smoke-kimi', cwd: fixture }] });
   assert.equal(agent.state, 'running');
   assert.equal(agent.cwd, fixture);
   assert.ok(agent.ptyId);
@@ -279,6 +300,10 @@ try {
   await callMain('Page.reload', {});
   await until(() => evaluateMain(`[...${principalCard}.querySelectorAll('button')].some(button => button.textContent === 'Nova execução')`), 'principal encerrada após reload com pop-up nativo aberto');
   await evaluateMain(`[...${principalCard}.querySelectorAll('button')].find(button => button.textContent === 'Nova execução').click()`);
+  await until(() => evaluateMain(`Boolean(document.querySelector('#orchestrator-choice-title'))`), 'escolha do agente para a nova execução');
+  await chooseKimi('.modal');
+  await until(() => evaluateMain(`document.querySelector('.modal button[type=submit]')?.disabled === false`), 'escolha completa da principal');
+  await evaluateMain(`document.querySelector('.modal button[type=submit]').click()`);
   const rerun = await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === principal.id && item.ptyId !== principal.ptyId && item.state === 'running'), 'nova run principal');
   await until(async () => !(await native('windows')).some((item) => item.url.includes('window=terminal')), 'pop-up antigo fechado antes da nova run');
   await until(() => evaluateMain(`Boolean(${principalCard}.querySelector('.real-terminal .xterm-helper-textarea')) && !${principalCard}.querySelector('.detached-terminal-placeholder')`), 'novo PTY reintegrado');
@@ -304,6 +329,8 @@ try {
   }
   await native('send', { channel: 'agent-request:changed', payload: { projectId: rerun.projectId } });
   await until(() => evaluateMain(`document.querySelector('.agent-request')?.innerText.includes('Novo agente: agente-da-principal')`), 'pedido da principal exibido para decisão');
+  await chooseKimi('.agent-request');
+  await until(() => evaluateMain(`document.querySelector('.agent-request button.primary')?.disabled === false`), 'escolha completa no pedido');
   await evaluateMain(`document.querySelector('.agent-request button.primary').click()`);
   const delegated = await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.name === 'agente-da-principal' && item.state === 'running'), 'agente aprovado iniciado', 30000);
   assert.equal(delegated.origin, 'orchestrator');
@@ -345,6 +372,8 @@ try {
   const expectedBranch = `atlas/task-${worktreeTask.id.replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase()}`;
   await native('send', { channel: 'agent-request:changed', payload: { projectId: rerun.projectId } });
   await until(() => evaluateMain(`document.querySelector('.agent-request')?.innerText.includes(${JSON.stringify(expectedBranch)})`), 'pedido com worktree mostra a branch planejada');
+  await chooseKimi('.agent-request');
+  await until(() => evaluateMain(`document.querySelector('.agent-request button.primary')?.disabled === false`), 'escolha completa no pedido');
   await evaluateMain(`document.querySelector('.agent-request button.primary').click()`);
   const isolated = await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.name === 'executor-worktree' && item.state === 'running'), 'agente iniciado na worktree', 60000);
   const worktreePath = fs.realpathSync(path.join(worktreesRoot, `task-${expectedBranch.slice('atlas/task-'.length)}`));

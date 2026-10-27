@@ -168,6 +168,13 @@ const MIGRATIONS = [{
     ) STRICT;
     CREATE INDEX evidence_by_project ON evidence(project_id, created_at);
   `,
+}, {
+  // CLI e modelo escolhidos pelo usuário em cada run; a principal pode trocar entre runs.
+  version: 9,
+  sql: `
+    ALTER TABLE agent_runs ADD COLUMN adapter_id TEXT;
+    ALTER TABLE agent_runs ADD COLUMN model TEXT;
+  `,
 }];
 
 // Política padrão da v0.1 para pedidos de agente feitos pela sessão principal.
@@ -499,20 +506,21 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       });
     },
     getOrchestrator: (projectId) => db.prepare("SELECT * FROM sessions WHERE project_id = ? AND role = 'orchestrator'").get(projectId),
-    startSession({ id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, runStartedAt = createdAt, role = 'agent' }) {
+    startSession({ id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, runStartedAt = createdAt, role = 'agent', model = null }) {
       return transaction(db, () => {
         const runId = randomUUID();
         const attempt = db.prepare('SELECT coalesce(max(attempt), 0) + 1 AS next FROM agent_runs WHERE session_id = ?').get(id).next;
         const existing = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
         if (existing) {
-          if (existing.role !== 'orchestrator' || role !== 'orchestrator' || existing.project_id !== projectId || existing.cwd !== cwd || existing.adapter_id !== adapterId) throw new Error('Identidade de sessão já existente.');
-          db.prepare('UPDATE sessions SET cli_version = ? WHERE id = ?').run(version, id);
+          if (existing.role !== 'orchestrator' || role !== 'orchestrator' || existing.project_id !== projectId || existing.cwd !== cwd) throw new Error('Identidade de sessão já existente.');
+          // A identidade da principal continua; o CLI da nova run é o que o usuário escolheu.
+          db.prepare('UPDATE sessions SET adapter_id = ?, cli = ?, cli_version = ? WHERE id = ?').run(adapterId, cli, version, id);
         } else {
           db.prepare('INSERT INTO sessions (id, project_id, name, adapter_id, cli, cli_version, cwd, origin, created_at, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, role);
         }
-        db.prepare(`INSERT INTO agent_runs (id, session_id, state, started_at, cli_version, cwd, attempt) VALUES (?, ?, 'running', ?, ?, ?, ?)`).run(runId, id, runStartedAt, version, cwd, attempt);
+        db.prepare(`INSERT INTO agent_runs (id, session_id, state, started_at, cli_version, cwd, attempt, adapter_id, model) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?)`).run(runId, id, runStartedAt, version, cwd, attempt, adapterId, model);
         event({ projectId, sessionId: id, runId, type: existing ? 'session.attached' : 'session.created', at: runStartedAt });
-        event({ projectId, sessionId: id, runId, type: 'run.started', at: runStartedAt });
+        event({ projectId, sessionId: id, runId, type: 'run.started', payload: { adapterId, cli, model }, at: runStartedAt });
         return { id: runId, version: 1, attempt };
       });
     },
