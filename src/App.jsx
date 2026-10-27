@@ -706,7 +706,7 @@ export default function App() {
       setSessions((current) => mergeAgentSessions(current, [agent]));
       setSelectedId((current) => current === 'orchestrator' ? agent.id : current);
       setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: '' });
-    }).catch((error) => { if (active) setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: error.message }); });
+    }).catch((error) => { if (active) setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: cleanIpcError(error) }); });
     return () => { active = false; };
   }, [isSecondaryWindow, currentProject?.id]);
 
@@ -723,7 +723,7 @@ export default function App() {
       const agent = await desktop.openOrchestrator({ cwd: session?.worktree || workingDirectory, startNewRun: true });
       setSessions((current) => mergeAgentSessions(current, [agent]));
       setOrchestratorStatus((state) => state.projectId === projectId ? { projectId, loading: false, error: '' } : state);
-    } catch (error) { setOrchestratorStatus((state) => state.projectId === projectId ? { projectId, loading: false, error: error.message } : state); }
+    } catch (error) { setOrchestratorStatus((state) => state.projectId === projectId ? { projectId, loading: false, error: cleanIpcError(error) } : state); }
   }
 
   useEffect(() => {
@@ -744,8 +744,11 @@ export default function App() {
     }).catch((error) => {
       if (active) setMessageState({ projectId: project.id, items: [], loading: false, error: error.message });
     });
-    setAgentRequestState({ projectId: project?.id || null, items: [], policy: null, error: '' });
-    setAgentRequestErrors({});
+    // Atualizar a lista de projetos não apaga os motivos de falha ainda não dispensados.
+    if ((project?.id || null) !== agentRequestScope.current.projectId) {
+      setAgentRequestState({ projectId: project?.id || null, items: [], policy: null, error: '' });
+      setAgentRequestErrors({});
+    }
     if (project && desktop.listAgentRequests) reloadAgentRequests(workingDirectory);
     else agentRequestSequence.current += 1;
     return () => { active = false; };
@@ -770,6 +773,14 @@ export default function App() {
     });
   }, [isSecondaryWindow]);
 
+  // Pedidos expiram no host sem aviso; recarregar no vencimento retira o cartão da fila.
+  useEffect(() => {
+    const deadlines = agentRequestState.items.filter((request) => request.state === 'pending').map((request) => Date.parse(request.expiresAt)).filter(Number.isFinite);
+    if (!deadlines.length) return undefined;
+    const timer = setTimeout(() => reloadAgentRequests(), Math.max(0, Math.min(...deadlines) - Date.now()) + 1000);
+    return () => clearTimeout(timer);
+  }, [agentRequestState]);
+
   function clearAgentRequestError(requestId) {
     setAgentRequestErrors((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== requestId)));
   }
@@ -777,10 +788,13 @@ export default function App() {
   async function approveAgentRequest(request) {
     clearAgentRequestError(request.id);
     try {
-      const { agent } = await desktop.approveAgentRequest({ cwd: workingDirectory, requestId: request.id, payloadHash: request.payloadHash });
+      const { agent, recordError } = await desktop.approveAgentRequest({ cwd: workingDirectory, requestId: request.id, payloadHash: request.payloadHash });
       setSessions((current) => mergeAgentSessions(current, [agent]));
-      setSelectedId(agent.id);
-      notify(`Agente ${agent.name} iniciado a pedido da sessão principal`);
+      // O usuário pode ter trocado de projeto durante o spawn.
+      if (agentRequestScope.current.projectId === request.projectId) setSelectedId(agent.id);
+      notify(recordError
+        ? `Agente ${agent.name} iniciado, mas o pedido não foi registrado como atendido: ${recordError}`
+        : `Agente ${agent.name} iniciado a pedido da sessão principal`);
     } catch (error) {
       setAgentRequestErrors((current) => ({ ...current, [request.id]: cleanIpcError(error) }));
     } finally {

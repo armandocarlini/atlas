@@ -55,7 +55,7 @@ export function AgentRequestsPanel({ state, sessions, errors, onApprove, onRejec
       key={request.id}
       request={request}
       policy={state.policy}
-      requesterName={nameOf(request.requestedBy)}
+      requesterName={request.requesterName || nameOf(request.requestedBy)}
       error={errors[request.id]}
       onApprove={onApprove}
       onReject={onReject}

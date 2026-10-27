@@ -114,13 +114,20 @@ function agentRequestPayload({ name, purpose, idempotencyKey }) {
   for (const [label, value, max] of [['Nome', name, 60], ['Propósito', purpose, 1000]]) {
     if (typeof value !== 'string' || value.length > max || !value.trim()) throw new Error(`${label}: informe texto válido com até ${max} caracteres.`);
   }
+  // Texto do agente é exibido ao usuário: sem controles nem formatação invisível
+  // (bidi, largura zero) que possam disfarçar o nome ou esconder conteúdo.
+  if (/[\p{Cc}\p{Cf}]/u.test(name)) throw new Error('Nome: use somente caracteres visíveis, sem quebras de linha ou formatação invisível.');
+  if (/\p{Cf}|[^\P{Cc}\n\t]/u.test(purpose)) throw new Error('Propósito: remova caracteres de controle ou formatação invisível.');
   if (typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(idempotencyKey)) throw new Error('Chave de idempotência inválida.');
   return { name: name.trim(), purpose: purpose.trim() };
 }
 
+// O nome do solicitante vem do banco: a interface pode ainda não ter carregado a sessão.
+const AGENT_REQUEST_SELECT = 'SELECT r.*, s.name AS requester_name FROM agent_requests r LEFT JOIN sessions s ON s.id = r.requested_by';
+
 function agentRequestRow(row) {
   return row && {
-    id: row.id, projectId: row.project_id, requestedBy: row.requested_by, name: row.name, purpose: row.purpose,
+    id: row.id, projectId: row.project_id, requestedBy: row.requested_by, requesterName: row.requester_name || null, name: row.name, purpose: row.purpose,
     payloadHash: row.payload_hash, state: row.state, createdAt: row.created_at, expiresAt: row.expires_at,
     resolvedAt: row.resolved_at, resolvedBy: row.resolved_by, sessionId: row.session_id, error: row.error, version: row.version,
   };
@@ -302,7 +309,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         const previous = db.prepare('SELECT payload_hash, result FROM commands WHERE project_id = ? AND idempotency_key = ?').get(request.projectId, request.idempotencyKey);
         if (previous) {
           if (previous.payload_hash !== hash) throw new Error('Chave de idempotência já usada com outro conteúdo.');
-          return agentRequestRow(db.prepare('SELECT * FROM agent_requests WHERE id = ?').get(JSON.parse(previous.result).id));
+          return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(JSON.parse(previous.result).id));
         }
         const requester = db.prepare('SELECT id, role FROM sessions WHERE id = ? AND project_id = ?').get(request.requestedBy, request.projectId);
         if (!requester) throw new Error('Sessão solicitante não pertence a este projeto.');
@@ -318,16 +325,16 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
           .run(id, request.projectId, requester.id, payload.name, payload.purpose, hash, 'pending', at, expiresAt);
         db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'agent.request', id, JSON.stringify({ ...payload, requestedBy: requester.id }), hash, request.idempotencyKey, 'completed', `agent:${requester.id}`, at, at, JSON.stringify({ id }), commandId);
         event({ projectId: request.projectId, sessionId: requester.id, type: 'approval.requested', payload: { requestId: id, kind: 'agent.create', name: payload.name }, correlationId: commandId, at });
-        return agentRequestRow(db.prepare('SELECT * FROM agent_requests WHERE id = ?').get(id));
+        return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(id));
       });
     },
     listAgentRequests(projectId) {
       transaction(db, () => expirePending(projectId, now()));
-      return db.prepare('SELECT * FROM agent_requests WHERE project_id = ? ORDER BY created_at, id').all(projectId).map(agentRequestRow);
+      return db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.project_id = ? ORDER BY r.created_at, r.id`).all(projectId).map(agentRequestRow);
     },
     getAgentRequest(projectId, requestId) {
       transaction(db, () => expirePending(projectId, now()));
-      return agentRequestRow(db.prepare('SELECT * FROM agent_requests WHERE id = ? AND project_id = ?').get(requestId, projectId));
+      return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ? AND r.project_id = ?`).get(requestId, projectId));
     },
     // Aprovação vinculada ao payload exibido e à validade, verificada no momento da execução.
     approveAgentRequest({ projectId, requestId, payloadHash }) {
@@ -341,7 +348,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         if (row.payload_hash !== payloadHash) throw new Error('O conteúdo do pedido não corresponde ao que foi exibido para aprovação.');
         db.prepare("UPDATE agent_requests SET state = 'approved', resolved_at = ?, resolved_by = 'user', version = version + 1 WHERE id = ?").run(at, requestId);
         event({ projectId, sessionId: row.requested_by, type: 'approval.resolved', payload: { requestId, decision: 'approved' }, correlationId: requestId, at });
-        return agentRequestRow(db.prepare('SELECT * FROM agent_requests WHERE id = ?').get(requestId));
+        return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(requestId));
       });
     },
     rejectAgentRequest({ projectId, requestId }) {
@@ -353,7 +360,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         if (row.state !== 'pending') throw new Error(`O pedido já foi resolvido (${row.state}).`);
         db.prepare("UPDATE agent_requests SET state = 'rejected', resolved_at = ?, resolved_by = 'user', version = version + 1 WHERE id = ?").run(at, requestId);
         event({ projectId, sessionId: row.requested_by, type: 'approval.resolved', payload: { requestId, decision: 'rejected' }, correlationId: requestId, at });
-        return agentRequestRow(db.prepare('SELECT * FROM agent_requests WHERE id = ?').get(requestId));
+        return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(requestId));
       });
     },
     completeAgentRequest({ projectId, requestId, sessionId = null, error = null }) {
@@ -369,7 +376,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
           db.prepare("UPDATE agent_requests SET state = 'failed', error = ?, version = version + 1 WHERE id = ?").run(reason, requestId);
           event({ projectId, sessionId: row.requested_by, type: 'approval.failed', payload: { requestId, error: reason }, correlationId: requestId, at });
         }
-        return agentRequestRow(db.prepare('SELECT * FROM agent_requests WHERE id = ?').get(requestId));
+        return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(requestId));
       });
     },
     registerProject({ id, name, path: projectPath }) {

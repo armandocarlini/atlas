@@ -45,11 +45,24 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     const approved = store.approveAgentRequest({ projectId: project.id, requestId, payloadHash });
     reserved.set(project.id, inFlight + 1);
     try {
-      const agent = await agentHost.createAgent({ adapterId: 'kimi-code', name: approved.name, cwd: project.path }, { origin: 'orchestrator' });
-      return { request: store.completeAgentRequest({ projectId: project.id, requestId, sessionId: agent.id }), agent };
-    } catch (error) {
-      store.completeAgentRequest({ projectId: project.id, requestId, error: error.message });
-      throw error;
+      let agent;
+      try {
+        agent = await agentHost.createAgent({ adapterId: 'kimi-code', name: approved.name, cwd: project.path }, { origin: 'orchestrator' });
+      } catch (error) {
+        try {
+          store.completeAgentRequest({ projectId: project.id, requestId, error: error.message });
+        } catch {
+          // O pedido fica `approved` e é reconciliado como falha no próximo início.
+        }
+        throw error;
+      }
+      // O agente já está em execução: uma falha ao registrar o resultado não pode
+      // marcá-lo como falho nem escondê-lo da interface.
+      try {
+        return { request: store.completeAgentRequest({ projectId: project.id, requestId, sessionId: agent.id }), agent };
+      } catch (error) {
+        return { request: null, agent, recordError: error.message };
+      }
     } finally {
       reserved.set(project.id, (reserved.get(project.id) || 1) - 1);
       onChange(project.id);

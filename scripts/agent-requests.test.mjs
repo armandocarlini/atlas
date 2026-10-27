@@ -71,6 +71,19 @@ test('somente a principal do próprio projeto pede agentes, com textos e limites
   assert.throws(() => ask({ idempotencyKey: 'curta' }), /idempotência/);
 });
 
+test('nome e propósito recusam controles e formatação invisível que disfarçariam o pedido', (t) => {
+  const { ask } = harness(t);
+  for (const name of ['ORQUESTRADOR\nrevisor', 'revisor‮odatsil', 'revi​sor', 'revisor\u0007']) {
+    assert.throws(() => ask({ name }), /Nome: use somente caracteres visíveis/);
+  }
+  for (const purpose of ['Revisar‮ texto invertido', 'Revisar‍ junto', 'Revisar\u001b[31m vermelho']) {
+    assert.throws(() => ask({ purpose }), /Propósito: remova caracteres/);
+  }
+  const accepted = ask({ name: 'revisor-ação', purpose: 'Primeira linha.\nSegunda\tcom tab.' });
+  assert.equal(accepted.purpose, 'Primeira linha.\nSegunda\tcom tab.');
+  assert.equal(accepted.requesterName, 'sessao-orchestrator-a');
+});
+
 test('limite de pedidos pendentes por projeto, sem afetar outro projeto', (t) => {
   const { ask, store } = harness(t);
   for (let index = 0; index < AGENT_REQUEST_POLICY.maxPending; index += 1) ask({ name: `agente-${index}` });
@@ -195,6 +208,37 @@ test('falha de spawn vira pedido failed com motivo, sem sessão fictícia', asyn
   assert.equal(failed.sessionId, null);
   assert.deepEqual(changes, ['project-a']);
   assert.equal(store.listEvents('project-a').filter((item) => item.type === 'approval.failed').length, 1);
+});
+
+test('falha de spawn libera a vaga reservada para a próxima aprovação', async (t) => {
+  let attempts = 0;
+  const { ask, call } = harness(t, { policy: { ...AGENT_REQUEST_POLICY, maxActiveAgents: 1 }, createAgent: async (request) => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('Kimi Code não está disponível.');
+    return { id: 'criado-depois', name: request.name, origin: 'orchestrator', cwd: request.cwd, state: 'running' };
+  } });
+  const first = ask({ name: 'primeiro' });
+  const second = ask({ name: 'segundo' });
+  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: first.id, payloadHash: first.payloadHash }), /não está disponível/);
+  const result = await call('agent-request:approve', { cwd: '/fixture/a', requestId: second.id, payloadHash: second.payloadHash });
+  assert.equal(result.agent.id, 'criado-depois');
+});
+
+test('agente iniciado continua visível quando o registro do resultado falha', async (t) => {
+  let spawned = 0;
+  const context = harness(t, { createAgent: async (request) => {
+    spawned += 1;
+    // Simula o fechamento do app no meio do spawn: a reconciliação conclui o pedido antes.
+    context.store.reconcileRuns('application_closed');
+    return { id: 'criado-orfao', name: request.name, origin: 'orchestrator', cwd: request.cwd, state: 'running' };
+  } });
+  const request = context.ask();
+  const result = await context.call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash });
+  assert.equal(spawned, 1);
+  assert.equal(result.agent.id, 'criado-orfao');
+  assert.equal(result.request, null);
+  assert.match(result.recordError, /Somente pedidos aprovados/);
+  assert.deepEqual(context.changes, ['project-a']);
 });
 
 test('recusa resolve o pedido e impede aprovação posterior', async (t) => {
