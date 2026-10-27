@@ -9,15 +9,15 @@ Cockpit local para acompanhar e coordenar agentes de código em múltiplos termi
 
 Projeto criado por [Armando Ciciliano Carlini](https://github.com/armandocarlini) como parte do seu portfólio profissional. O foco é construir uma ferramenta local de trabalho com agentes e demonstrar decisões de arquitetura, interação, segurança e validação com evidências reproduzíveis.
 
-**English:** ATLAS is an open-source, local-first desktop cockpit for AI coding workflows. Interactive PowerShell terminals, read-only Git discovery and a real Kimi Code adapter work today; orchestration and persistent collaboration are on the roadmap.
+**English:** ATLAS is an open-source, local-first desktop cockpit for AI coding workflows. It runs real Kimi Code and OpenCode sessions in interactive terminals, with a read-only planning orchestrator per project, user-approved agent requests, persistent tasks, messages, per-task Git worktrees and review with evidence, all stored locally in SQLite.
 
 ## Estado atual
 
-Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY e descoberta Git somente leitura. O ATLAS detecta o Kimi Code no `PATH` e abre uma sessão principal real de planejamento no projeto autorizado, além das sessões manuais. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`, e o painel Mensagens registra descobertas estruturadas entre sessões reais do projeto, com entrega e leitura persistidas. Com o consentimento explícito do usuário, o ATLAS registra o servidor MCP `atlas` no `mcp.json` do Kimi. Cada sessão iniciada pelo ATLAS recebe então ferramentas restritas ao próprio projeto para listar sessões e tarefas e ler, marcar e enviar mensagens; fora do ATLAS a entrada fica inerte. A sessão principal pode pedir novos agentes; cada pedido aparece no workspace com propósito, validade e política, e o agente só é iniciado, com origem `orchestrator`, depois da aprovação do usuário. A principal também delega tarefas existentes por handoff: o agente de destino aceita ou recusa pelas ferramentas do ATLAS, informa progresso e bloqueios, e o painel Tarefas mostra oferta, responsável e bloqueio, com cancelar oferta e devolver tarefa. Delegar não amplia permissões nem conclui tarefas. Para trabalho isolado, a principal pode pedir o agente com uma worktree Git da tarefa: na aprovação, o ATLAS cria a worktree em `<repositório>.atlas-worktrees/task-…`, na branch `atlas/task-…`, e o agente nasce nela; o ATLAS nunca remove worktrees ou branches. O agente responsável pede revisão com resumo e comandos executados; o ATLAS anexa um retrato Git da worktree coletado por ele mesmo, e só o usuário conclui a tarefa ou pede ajustes no painel Tarefas. A aba Evidências mostra as revisões reais do projeto. Merge continua manual. No Windows, a entrada opcional "Abrir no ATLAS" no menu de pastas do Explorador é adicionada ou removida em "Aparência e configurações", com confirmação; uma pasta nova só vira projeto depois de você confirmar, e o ATLAS não roda `git init`. Os quatro cards de demonstração aparecem somente no navegador e não representam integrações ativas.
+Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY e descoberta Git somente leitura. O ATLAS detecta o Kimi Code e o OpenCode no `PATH`, deixa o usuário escolher CLI e modelo em cada sessão e abre uma sessão principal real de planejamento no projeto autorizado, além das sessões manuais. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`, e o painel Mensagens registra descobertas estruturadas entre sessões reais do projeto, com entrega e leitura persistidas. Com o consentimento explícito do usuário, o ATLAS registra o servidor MCP `atlas` no `mcp.json` do Kimi. Cada sessão iniciada pelo ATLAS recebe então ferramentas restritas ao próprio projeto para listar sessões e tarefas e ler, marcar e enviar mensagens; fora do ATLAS a entrada fica inerte. A sessão principal pode pedir novos agentes; cada pedido aparece no workspace com propósito, validade e política, e o agente só é iniciado, com origem `orchestrator`, depois da aprovação do usuário. A principal também delega tarefas existentes por handoff: o agente de destino aceita ou recusa pelas ferramentas do ATLAS, informa progresso e bloqueios, e o painel Tarefas mostra oferta, responsável e bloqueio, com cancelar oferta e devolver tarefa. Delegar não amplia permissões nem conclui tarefas. Para trabalho isolado, a principal pode pedir o agente com uma worktree Git da tarefa: na aprovação, o ATLAS cria a worktree em `<repositório>.atlas-worktrees/task-…`, na branch `atlas/task-…`, e o agente nasce nela; o ATLAS nunca remove worktrees ou branches. O agente responsável pede revisão com resumo e comandos executados; o ATLAS anexa um retrato Git da worktree coletado por ele mesmo, e só o usuário conclui a tarefa ou pede ajustes no painel Tarefas. A aba Evidências mostra as revisões reais do projeto. Merge continua manual. No Windows, a entrada opcional "Abrir no ATLAS" no menu de pastas do Explorador é adicionada ou removida em "Aparência e configurações", com confirmação; uma pasta nova só vira projeto depois de você confirmar, e o ATLAS não roda `git init`. Os quatro cards de demonstração aparecem somente no navegador e não representam integrações ativas.
 
 Já estão implementados:
 
-- sessões de agente com o Kimi Code real, detectado pelo `PATH` e iniciado em PTY interativo, com versão, diretório e estado (`running`/`exited`) visíveis;
+- sessões de agente com o Kimi Code e o OpenCode reais, detectados pelo `PATH`, com CLI e modelo escolhidos pelo usuário em cada sessão e iniciados em PTY interativo, com versão, diretório e estado (`running`/`exited`) visíveis;
 - ponte MCP local do ATLAS (named pipe, sem porta de rede) com token por run, instalada só após consentimento e removível pela interface;
 
 - PowerShell real com `node-pty` e xterm.js, incluindo ANSI, teclado, resize, seleção e scrollback;
@@ -42,7 +42,7 @@ Já estão implementados:
 
 Para reproduzir o ambiente validado e a CI, prefira **Node.js 24 LTS**.
 
-O `npm ci` aplica uma correção local de ordem de saída no `node-pty` 1.1.0, com versão e hashes verificados. Ela evita anunciar encerramento ConPTY antes do exit code nativo. Atualizar essa dependência exige revisar/remover o patch conforme [docs/PLANO_TAREFAS.md](docs/PLANO_TAREFAS.md).
+O `npm ci` aplica uma correção local de ordem de saída no `node-pty` 1.1.0, com versão e hashes verificados. Ela evita anunciar encerramento ConPTY antes do exit code nativo. Atualizar essa dependência exige revisar/remover o patch conforme [docs/historico/planos/PLANO_TAREFAS.md](docs/historico/planos/PLANO_TAREFAS.md).
 
 ## Clonar em outra máquina
 
@@ -55,7 +55,7 @@ npm run build
 npm start
 ```
 
-Para continuar o desenvolvimento com um agente, comece por [docs/CONTINUIDADE.md](docs/CONTINUIDADE.md). Esse contexto está versionado e acompanha o clone. Preferências locais, credenciais, dados do ai-memory e transcripts de outras máquinas ficam fora do repositório.
+Para continuar o desenvolvimento com um agente, comece por [AGENTS.md](AGENTS.md) e [docs/CONTEXTO.md](docs/CONTEXTO.md). Esse contexto está versionado e acompanha o clone. Preferências locais, credenciais, dados do ai-memory e transcripts de outras máquinas ficam fora do repositório.
 
 ## Executar o aplicativo desktop
 
@@ -160,7 +160,7 @@ O smoke test abre uma instância Electron com preferências isoladas, cria uma f
 
 Capturas de tela, medições de contraste e resultado ficam em `.atlas-smoke-results/`. A porta local de depuração usada é `9333` (substituível por `ATLAS_SMOKE_PORT`); o controle nativo de teste usa a porta seguinte e um token temporário. Esses serviços existem somente no ponto de entrada de teste.
 
-Veja o [relatório de validação e revisão visual](docs/VALIDACAO_DESKTOP.md). O relatório original cobre o shell local e seus terminais; os incrementos posteriores de adaptadores e da base operacional estão registrados em [docs/CONTINUIDADE.md](docs/CONTINUIDADE.md).
+Veja o [relatório de validação e revisão visual](docs/historico/VALIDACAO_DESKTOP.md). O relatório original cobre o shell local e seus terminais; os incrementos posteriores de adaptadores e da base operacional estão registrados em [docs/CONTINUIDADE.md](docs/CONTINUIDADE.md).
 
 ## Estrutura
 
@@ -210,8 +210,8 @@ A janela principal e os pop-ups usam `BroadcastChannel` para sincronizar o estad
 
 ## Privacidade
 
-O ATLAS funciona localmente, sem telemetria ou serviço central obrigatório. Somente pastas autorizadas são descobertas e somente nelas os CLIs de agente são iniciados. A entrada digitada no terminal não é registrada pelo ATLAS; a saída permanece somente em um buffer temporário nesta etapa. Os textos das tarefas criadas pelo usuário são gravados no banco local. Mensagens, evidências e exemplos no navegador continuam ilustrativos.
+O ATLAS funciona localmente, sem telemetria ou serviço central obrigatório. Somente pastas autorizadas são descobertas e somente nelas os CLIs de agente são iniciados. A entrada digitada no terminal não é registrada pelo ATLAS; a saída permanece somente em um buffer temporário nesta etapa. Tarefas, mensagens, revisões e evidências são gravadas no banco local. Os exemplos do navegador continuam ilustrativos.
 
 ## Contribuição e licença
 
-Leia [CONTRIBUTING.md](CONTRIBUTING.md) para preparar o ambiente e enviar alterações. Para continuidade por agentes, as regras operacionais estão em [AGENTS.md](AGENTS.md) e no [contrato autônomo da v0.1](docs/AUTONOMIA_V0_1.md). Relatos de vulnerabilidade seguem [SECURITY.md](SECURITY.md). Distribuído sob a [licença MIT](LICENSE).
+Leia [CONTRIBUTING.md](CONTRIBUTING.md) para preparar o ambiente e enviar alterações. Para continuidade por agentes, as regras operacionais estão em [AGENTS.md](AGENTS.md), com o estado atual em [docs/CONTEXTO.md](docs/CONTEXTO.md) e o plano em [docs/ROADMAP.md](docs/ROADMAP.md). Relatos de vulnerabilidade seguem [SECURITY.md](SECURITY.md). Distribuído sob a [licença MIT](LICENSE).

@@ -32,7 +32,7 @@ Os 12 passos de `docs/AUTONOMIA_V0_1.md`, na ordem em que se encaixam no ATLAS a
 
 - Capturas: pergunta do instalador, menu do Explorador, cartão do pedido, painel Tarefas com responsável e revisão, aba Evidências e estado após reabrir.
 - Do terminal: comandos e respostas relevantes das três sessões, sem dados sensíveis.
-- Limites observados, como falhas do modelo ao chamar ferramentas, para o PR de fechamento e o `docs/CONTINUIDADE.md`.
+- Limites observados, como falhas do modelo ao chamar ferramentas, para o PR de fechamento e o `docs/CONTEXTO.md`.
 
 ## Desfazer depois
 
