@@ -810,6 +810,10 @@ body { transition: background-color .18s ease, color .18s ease; }
 .button.secondary.danger:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface-raised)); }
 .session-header .origin-badge.atlas-tools { color: var(--success); }
 .integration-modal:focus { outline: none; }
+.explorer-integration { display: grid; gap: 10px; }
+.explorer-status { margin: 0; font-size: 12px; color: var(--text); }
+.explorer-integration .integration-path { white-space: pre-wrap; }
+.explorer-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .agent-requests { display: grid; gap: 10px; margin: 10px 12px 0; }
 .agent-request { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 6px; background: var(--surface-raised); color: var(--text); }
 .agent-request h3 { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }

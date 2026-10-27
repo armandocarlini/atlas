@@ -85,7 +85,10 @@ const endpoint = `http://127.0.0.1:${port}`;
 const electron = createRequire(import.meta.url)('electron');
 const controlPort = Number(port) + 1;
 const controlToken = randomUUID();
-const env = { ...process.env, ATLAS_SMOKE_PROFILE: profile, ATLAS_SMOKE_PROJECT: extraProject, ATLAS_SMOKE_CONTROL_PORT: String(controlPort), ATLAS_SMOKE_TOKEN: controlToken, ATLAS_SMOKE_NO_CLI: '1', KIMI_CODE_HOME: kimiHome };
+// Chave de fixture no registro do usuário para a entrada do Explorador; removida ao final.
+const explorerRoot = `HKCU\\Software\\ATLAS-Smoke-${randomUUID()}`;
+const openFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-smoke-open-'));
+const env = { ...process.env, ATLAS_EXPLORER_ROOT: explorerRoot, ATLAS_SMOKE_PROFILE: profile, ATLAS_SMOKE_PROJECT: extraProject, ATLAS_SMOKE_CONTROL_PORT: String(controlPort), ATLAS_SMOKE_TOKEN: controlToken, ATLAS_SMOKE_NO_CLI: '1', KIMI_CODE_HOME: kimiHome };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.VITE_DEV_SERVER_URL;
 // Codex can inject its bundled PowerShell modules; exercise Windows' own modules.
@@ -547,6 +550,60 @@ try {
   await screenshot(main, 'task-evidence');
   await click(main, '.inspector-tabs button', 'Tarefas');
   console.log('PASS revisão de tarefa: declaração do agente, retrato Git do sistema, ajustes e conclusão só pelo usuário');
+  // "Abrir no ATLAS" por uma segunda instância real, como o Explorador faria.
+  const openWith = async (target) => {
+    const second = spawn(electron, [path.join(root, 'scripts/smoke-app.cjs'), `--atlas-open=${target}`], { cwd: fixture, env: { ...env, ATLAS_SMOKE_SECOND_INSTANCE: '1' }, stdio: 'ignore', windowsHide: true });
+    await new Promise((resolve) => second.on('exit', resolve));
+  };
+  const activeTab = () => main.evaluate(`document.querySelector('.project-tab.active')?.textContent || ''`);
+  await main.evaluate(`[...document.querySelectorAll('.project-tab')].find(item => !item.textContent.startsWith('Projeto adicional') && !item.textContent.startsWith('Início'))?.click()`);
+  await until(async () => !(await activeTab()).startsWith('Projeto adicional'), 'other project selected before opening');
+  const nested = path.join(extraProject, 'sub pasta ação & cia');
+  fs.mkdirSync(nested, { recursive: true });
+  await openWith(nested);
+  await until(async () => (await activeTab()).startsWith('Projeto adicional'), 'subfolder opens the containing project');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.integration-modal').length`), 0, 'Known project opens without confirmation');
+  const fresh = path.join(openFixture, 'Novo projeto ação & cia (1)');
+  fs.mkdirSync(fresh);
+  await openWith(fresh);
+  await until(() => main.evaluate(`document.querySelector('.integration-modal')?.innerText.includes('Cadastrar Novo projeto ação & cia (1) como projeto?')`), 'confirmation for new folder');
+  const openText = await main.evaluate(`document.querySelector('.integration-modal').innerText`);
+  assert(openText.includes(fs.realpathSync.native(fresh)) && openText.includes('não executa git init'), `Open modal explains scope and Git: ${openText}`);
+  const openAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(openAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in open folder modal');
+  await screenshot(main, 'open-folder');
+  await click(main, '.integration-modal button', 'Cadastrar e abrir');
+  await until(async () => (await activeTab()).startsWith('Novo projeto ação & cia (1)'), 'new folder registered and opened');
+  await openWith(path.join(openFixture, 'não existe'));
+  await until(() => main.evaluate(`document.body.innerText.includes('Não foi possível abrir a pasta recebida')`), 'invalid path reported');
+  // Regressão: um segundo pedido substitui o modal e descarta o primeiro, sem cadastrar nenhum.
+  const firstPending = path.join(openFixture, 'Pendente A');
+  const secondPending = path.join(openFixture, 'Pendente B');
+  fs.mkdirSync(firstPending);
+  fs.mkdirSync(secondPending);
+  await openWith(firstPending);
+  await until(() => main.evaluate(`document.querySelector('.integration-modal')?.innerText.includes('Cadastrar Pendente A')`), 'first pending modal');
+  await openWith(secondPending);
+  await until(() => main.evaluate(`document.querySelector('.integration-modal')?.innerText.includes('Cadastrar Pendente B')`), 'second request replaces modal');
+  await click(main, '.integration-modal button', 'Cancelar');
+  await until(() => main.evaluate(`!document.querySelector('.integration-modal')`), 'modal closed after cancel');
+  assert.equal(await main.evaluate(`[...document.querySelectorAll('.project-tab')].some(item => item.textContent.startsWith('Pendente'))`), false, 'No pending folder registered');
+  console.log('PASS Abrir no ATLAS: segunda instância, subpasta abre o projeto, pasta nova com confirmação, substituição de pedido e caminho inválido');
+  await click(main, '.title-actions button', 'Aparência');
+  await until(() => main.evaluate(`document.querySelector('.explorer-integration')?.innerText.includes('Não adicionada')`), 'explorer integration status');
+  await click(main, '.explorer-integration button', 'Adicionar ao Explorador');
+  assert((await main.evaluate(`document.querySelector('.explorer-integration').innerText`)).includes(`${explorerRoot}\\Directory\\shell\\ATLAS.Open`), 'Consent shows exact registry keys');
+  assert.throws(() => execFileSync('reg.exe', ['query', explorerRoot], { stdio: 'ignore', windowsHide: true }), undefined, 'Nothing written before confirmation');
+  await click(main, '.explorer-integration button', 'Confirmar e adicionar');
+  await until(() => main.evaluate(`document.querySelector('.explorer-integration')?.innerText.includes('Ativa no menu de pastas')`), 'explorer entry installed');
+  assert(execFileSync('reg.exe', ['query', `${explorerRoot}\\Directory\\Background\\shell\\ATLAS.Open\\command`, '/ve'], { encoding: 'utf8', windowsHide: true }).includes('"--atlas-open=%V"'));
+  await screenshot(main, 'explorer-integration');
+  await click(main, '.explorer-integration button', 'Remover do Explorador');
+  await click(main, '.explorer-integration button', 'Confirmar e remover');
+  await until(() => main.evaluate(`document.querySelector('.explorer-integration')?.innerText.includes('Não adicionada')`), 'explorer entry removed');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await main.evaluate(`document.querySelector('.appearance-modal')?.closest('.modal-backdrop')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
+  console.log('PASS entrada do Explorador adicionada e removida por consentimento em chave de fixture');
   await click(main, '.title-actions button', 'Aparência');
   await click(main, '.background-presets button', 'Névoa');
   assert.equal(await main.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#eef1f4');
@@ -595,6 +652,7 @@ try {
   connections.forEach((item) => item.ws.close());
   await native('quit').catch(() => child.kill());
   child.stdin.end();
+  try { execFileSync('reg.exe', ['delete', explorerRoot, '/f'], { stdio: 'ignore', windowsHide: true }); } catch { /* chave de fixture já ausente */ }
 }
 await until(() => pids.every((pid) => { try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; } }), 'child PowerShell processes stopped');
 let exitTimer;
@@ -630,5 +688,9 @@ const tempReal = fs.realpathSync(os.tmpdir());
 assert.equal(path.dirname(fixtureReal).toLowerCase(), tempReal.toLowerCase());
 assert(path.basename(fixtureReal).startsWith('atlas-smoke-'));
 await fs.promises.rm(fixtureReal, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+const openFixtureReal = fs.realpathSync(openFixture);
+assert.equal(path.dirname(openFixtureReal).toLowerCase(), tempReal.toLowerCase());
+assert(path.basename(openFixtureReal).startsWith('atlas-smoke-open-'));
+await fs.promises.rm(openFixtureReal, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 fs.writeFileSync(path.join(resultsDir, 'result.json'), JSON.stringify({ passed: true, pids, fixtureRemoved: true, checkedAt: new Date().toISOString() }, null, 2));
 console.log('PASS limpeza dos processos PowerShell e da fixture temporária');

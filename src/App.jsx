@@ -47,6 +47,7 @@ import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './Persiste
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
 import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
 import { AgentRequestsPanel } from './AgentRequests.jsx';
+import { OpenFolderModal, ExplorerIntegrationSection } from './OpenFolder.jsx';
 
 // Mensagem de erro do processo principal sem o prefixo técnico do IPC do Electron.
 function cleanIpcError(error) {
@@ -400,6 +401,7 @@ function AppearanceModal({ theme, onChange, onClose }) {
             </div>
           </fieldset>
           <label className="custom-color"><span><strong>Fundo personalizado</strong><small>Claro, escuro ou qualquer cor hexadecimal.</small></span><span className="color-control"><input type="color" value={theme.background} onChange={(event) => onChange({ ...theme, background: event.target.value })} aria-label="Escolher cor de fundo personalizada" /><code>{theme.background.toUpperCase()}</code>{isCustomBackground && <span className="custom-indicator">ATIVA</span>}</span></label>
+          {window.atlasDesktop?.isDesktop && window.atlasDesktop.getExplorerIntegration && <ExplorerIntegrationSection desktop={window.atlasDesktop} />}
           <div className="appearance-preview"><span className="preview-line" /><div><small>PRÉ-VISUALIZAÇÃO</small><strong>O terminal continua em primeiro plano.</strong><p>Destaque e fundo são independentes.</p></div><button className="button primary compact" type="button">Ação principal</button></div>
           <footer><span>Salvo automaticamente neste dispositivo.</span><button type="button" className="button secondary" onClick={onClose}>Concluir</button></footer>
         </div>
@@ -522,6 +524,7 @@ export default function App() {
   const taskScope = useRef({ projectId: null, cwd: '' });
   const taskReloadSequence = useRef(0);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [openFolderRequest, setOpenFolderRequest] = useState(null);
   const [messageState, setMessageState] = useState({ projectId: null, items: [], loading: false, error: '' });
   const [messageModal, setMessageModal] = useState(null);
   const [orchestratorStatus, setOrchestratorStatus] = useState({ loading: false, error: '' });
@@ -1146,6 +1149,49 @@ export default function App() {
     }
   }
 
+  // "Abrir no ATLAS": pedidos chegam do processo principal; o renderer busca o mais recente.
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow || !desktop.takeOpenPath) return undefined;
+    const pull = () => desktop.takeOpenPath().then((request) => {
+      if (!request) return;
+      if (request.kind === 'error') notify(request.message);
+      else if (request.kind === 'known') openProjectFromRequest(request.projectName, request.cwd);
+      // Um pedido novo substitui o anterior, que é descartado no processo principal.
+      else setOpenFolderRequest((current) => {
+        if (current && current.id !== request.id) desktop.dismissOpenPath({ id: current.id }).catch(() => {});
+        return request;
+      });
+    }).catch((error) => notify(cleanIpcError(error)));
+    pull();
+    return desktop.onOpenPathRequested(pull);
+  }, [isSecondaryWindow]);
+
+  function openProjectFromRequest(projectName, cwd) {
+    projectSelectionRef.current = true;
+    setActiveProject(projectName);
+    setWorkingDirectory(cwd);
+    notify(`${projectName} aberto pelo Explorador de Arquivos`);
+  }
+
+  async function authorizeOpenFolder(request) {
+    try {
+      const { projects: items, path: directory } = await desktop.authorizeOpenPath({ id: request.id });
+      setProjects(items);
+      const samePath = (left, right) => left.toLowerCase() === right.toLowerCase();
+      const project = items.find((item) => samePath(item.path, directory));
+      setOpenFolderRequest((current) => (current?.id === request.id ? null : current));
+      openProjectFromRequest(project?.name || request.name, directory);
+      return null;
+    } catch (error) {
+      return cleanIpcError(error);
+    }
+  }
+
+  function cancelOpenFolder(request) {
+    desktop.dismissOpenPath({ id: request.id }).catch(() => {});
+    setOpenFolderRequest((current) => (current?.id === request.id ? null : current));
+  }
+
   function selectWorktree(project, _repository, worktree) {
     projectSelectionRef.current = true;
     setActiveProject(project.name);
@@ -1481,6 +1527,7 @@ export default function App() {
 
       {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
+      {openFolderRequest && <OpenFolderModal key={openFolderRequest.id} request={openFolderRequest} onAuthorize={authorizeOpenFolder} onCancel={cancelOpenFolder} />}
       {taskModalOpen && <NewTaskModal projectName={taskState.projectName} cwd={workingDirectory} onCreate={createTask} onClose={() => setTaskModalOpen(false)} />}
       {integrationModalOpen && kimiIntegration && !kimiIntegration.loading && <KimiIntegrationModal status={kimiIntegration} onInstall={installKimiIntegration} onRemove={removeKimiIntegration} onRefresh={refreshKimiIntegration} onClose={() => setIntegrationModalOpen(false)} />}
       {messageModal && <NewMessageModal projectName={currentProject?.name || activeProject} fromName={messageModal.session.name} toName={projectSessions.find((session) => session.roleKind === 'orchestrator')?.name || 'principal'} onSend={sendDiscovery} onClose={() => setMessageModal(null)} />}

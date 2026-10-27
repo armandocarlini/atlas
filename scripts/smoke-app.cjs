@@ -29,6 +29,8 @@ ipcMain.handle = (channel, handler) => {
   });
 };
 
+// Segunda instância de "Abrir no ATLAS": só repassa argumentos e encerra, sem porta de controle.
+const secondInstance = process.env.ATLAS_SMOKE_SECOND_INSTANCE === '1';
 const server = http.createServer(async (request, response) => {
   if (request.headers.authorization !== process.env.ATLAS_SMOKE_TOKEN) {
     response.writeHead(403).end();
@@ -65,7 +67,8 @@ const server = http.createServer(async (request, response) => {
   } catch (error) {
     response.end(JSON.stringify({ error: error.message }));
   }
-}).listen(Number(process.env.ATLAS_SMOKE_CONTROL_PORT), '127.0.0.1');
+});
+if (!secondInstance) server.listen(Number(process.env.ATLAS_SMOKE_CONTROL_PORT), '127.0.0.1');
 app.on('will-quit', () => server.close());
 if (process.env.ATLAS_SMOKE_NO_CLI === '1') {
   const adapters = require('../electron/agent-adapters.cjs');

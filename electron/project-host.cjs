@@ -47,14 +47,17 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
   async function scanAll() {
     if (scanPromise) return scanPromise;
     scanPromise = (async () => {
-      const roots = await Promise.all(authorizedRoots.map(async (root) => {
+      const snapshot = [...authorizedRoots];
+      const roots = await Promise.all(snapshot.map(async (root) => {
         try {
           return await fs.promises.realpath(root);
         } catch {
           return null;
         }
       }));
-      authorizedRoots = [...new Set(roots.filter(Boolean))];
+      // Raízes autorizadas enquanto a varredura rodava continuam valendo.
+      const added = authorizedRoots.filter((root) => !snapshot.includes(root));
+      authorizedRoots = [...new Set([...roots.filter(Boolean), ...added])];
       const result = await Promise.all(authorizedRoots.map(scanRoot));
       return result;
     })().finally(() => { scanPromise = null; });
@@ -88,15 +91,50 @@ function createProjectHost({ app, dialog, ipcMain, getMainWindow, store }) {
       properties: ['openDirectory'],
     });
     if (result.canceled || !result.filePaths[0]) return null;
-    const root = await fs.promises.realpath(result.filePaths[0]);
+    return authorizeRoot(await fs.promises.realpath(result.filePaths[0]));
+  });
+
+  // Cadastro de pasta já canonicalizada, pelo diálogo ou por "Abrir no ATLAS" confirmado.
+  async function authorizeRoot(root) {
+    await ready;
     if (!authorizedRoots.includes(root)) authorizedRoots.push(root);
     saveRoots();
     await scanRoot(root);
     return [...projects.values()];
-  });
+  }
+
+  const inside = (parent, child) => {
+    const relative = path.relative(parent, child);
+    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  };
 
   return {
     ready,
+    authorizeRoot,
+    // Projetos já autorizados dentro do caminho: aviso antes de cadastrar uma pasta mais ampla.
+    getProjectsInside: (cwd) => {
+      const normalize = (value) => (process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value));
+      return [...projects.values()].filter((project) => inside(normalize(cwd), normalize(project.path)) && normalize(cwd) !== normalize(project.path));
+    },
+    // Projeto cuja pasta (ou worktree descoberta) contém o caminho: abrir sem duplicar.
+    getProjectContaining: (cwd) => {
+      const target = process.platform === 'win32' ? path.resolve(cwd).toLowerCase() : path.resolve(cwd);
+      const normalize = (value) => (process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value));
+      // Projetos podem ser aninhados: vence o caminho mais específico (mais longo).
+      let best = null;
+      let bestLength = -1;
+      for (const project of projects.values()) {
+        const candidates = [project.path, ...project.repositories.flatMap((repository) => repository.worktrees.filter((worktree) => !worktree.statusError).map((worktree) => worktree.path))];
+        for (const candidate of candidates) {
+          const normalized = normalize(candidate);
+          if (inside(normalized, target) && normalized.length > bestLength) {
+            best = project;
+            bestLength = normalized.length;
+          }
+        }
+      }
+      return best;
+    },
     // Nova varredura somente leitura, por exemplo depois de criar uma worktree aprovada.
     // Uma varredura já em andamento pode ter começado antes da mudança: espere e repita.
     refresh: async () => {
