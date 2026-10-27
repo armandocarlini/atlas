@@ -1,4 +1,7 @@
 const { execFile } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { promisify } = require('node:util');
 
 const execFileAsync = promisify(execFile);
@@ -30,26 +33,53 @@ async function defaultReg(args) {
   return stdout;
 }
 
-// A saída de `reg query` usa a página de código OEM e o rótulo localizado do valor
-// padrão; caminhos com acento nunca bateriam. A leitura usa PowerShell em UTF-8, e as
-// chaves chegam por variável de ambiente, nunca interpoladas no script. Todas as
-// chaves saem de um único PowerShell: vários processos em paralelo estouravam o
-// tempo limite em máquinas lentas (regressão vista na CI do Windows).
-const READ_SCRIPT = [
-  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
-  "$results = foreach ($key in ($env:ATLAS_REGISTRY_KEYS -split [char]10)) { $item = Get-Item -LiteralPath ('Registry::' + $key) -ErrorAction SilentlyContinue; if ($null -eq $item) { [pscustomobject]@{ state = 'absent'; value = '' } } else { $value = $item.GetValue(''); if ($null -eq $value) { [pscustomobject]@{ state = 'empty'; value = '' } } else { [pscustomobject]@{ state = 'value'; value = [string]$value } } } }",
-  '[Console]::Out.Write((ConvertTo-Json -InputObject @($results) -Compress))',
-].join('; ');
+// Valor padrão de um .reg: texto entre aspas (escapes \\ e \") ou REG_EXPAND_SZ em hex(2), UTF-16 LE.
+function decodeRegValue(raw) {
+  if (raw.startsWith('"') && raw.endsWith('"')) return raw.slice(1, -1).replace(/\\(.)/g, '$1');
+  const hex = /^hex\(2\):(.*)$/i.exec(raw);
+  if (hex) return Buffer.from(hex[1].split(',').filter(Boolean).map((byte) => parseInt(byte, 16))).toString('utf16le').replace(/\0+$/, '');
+  return '';
+}
 
+// Chave (em minúsculas) -> valor padrão; '' quando a chave existe sem valor padrão.
+function parseRegExport(text) {
+  const sections = new Map();
+  let current = null;
+  for (const line of text.replace(/^\uFEFF/, '').replace(/\\\r?\n\s*/g, '').split(/\r?\n/)) {
+    const header = /^\[(.+)\]$/.exec(line);
+    if (header) { current = header[1].toLowerCase(); sections.set(current, ''); continue; }
+    if (current !== null && line.startsWith('@=')) sections.set(current, decodeRegValue(line.slice(2)));
+  }
+  return sections;
+}
+
+// A saída de `reg query` usa a página de código OEM e o rótulo localizado do valor
+// padrão; caminhos com acento nunca bateriam. `reg export` grava o arquivo em
+// UTF-16 LE, independente do console, e inclui as subchaves: uma exportação por
+// entrada lê as quatro chaves. A versão anterior usava PowerShell, cuja
+// inicialização passou de 30 s no runner do Windows (regressão vista na CI).
 // null: chave ausente; '': chave sem valor padrão; texto: valor padrão.
 async function defaultReadDefaults(keys) {
   const registryKeys = keys.map((key) => key.replace(/^HKCU\\/i, 'HKEY_CURRENT_USER\\'));
-  const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', READ_SCRIPT], {
-    encoding: 'utf8', windowsHide: true, timeout: 30000, env: { ...process.env, ATLAS_REGISTRY_KEYS: registryKeys.join('\n') },
-  });
-  const results = JSON.parse(stdout.replace(/^\uFEFF/, ''));
-  if (!Array.isArray(results) || results.length !== keys.length) throw new Error('Leitura do registro incompleta.');
-  return results.map((item) => (item.state === 'absent' ? null : item.state === 'empty' ? '' : String(item.value)));
+  const roots = registryKeys.filter((key) => !registryKeys.some((other) => key.toLowerCase().startsWith(`${other.toLowerCase()}\\`)));
+  const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'atlas-reg-'));
+  try {
+    const sections = new Map();
+    for (const [index, key] of roots.entries()) {
+      const file = path.join(directory, `${index}.reg`);
+      try {
+        await execFileAsync('reg.exe', ['export', key, file, '/y'], { windowsHide: true, timeout: 10000 });
+      } catch (error) {
+        // reg.exe sai com 1 quando a chave não existe; tempo esgotado ou outra falha sobe.
+        if (error.code === 1) continue;
+        throw error;
+      }
+      for (const [name, value] of parseRegExport(await fs.promises.readFile(file, 'utf16le'))) sections.set(name, value);
+    }
+    return registryKeys.map((key) => (sections.has(key.toLowerCase()) ? sections.get(key.toLowerCase()) : null));
+  } finally {
+    await fs.promises.rm(directory, { recursive: true, force: true });
+  }
 }
 
 function createExplorerIntegration({ execPath, appPath = null, root = DEFAULT_ROOT, reg = defaultReg, readDefault = null, readDefaults = readDefault ? (items) => Promise.all(items.map(readDefault)) : defaultReadDefaults, platform = process.platform }) {
@@ -108,4 +138,4 @@ function createExplorerHost({ ipcMain, isMainSender, integration }) {
   ipcMain.handle('explorer:remove', (event, request) => { guard(event); confirmed(request); return integration.remove(); });
 }
 
-module.exports = { createExplorerIntegration, createExplorerHost, openCommand, KEY_NAME, LABEL };
+module.exports = { createExplorerIntegration, createExplorerHost, openCommand, parseRegExport, KEY_NAME, LABEL };

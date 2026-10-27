@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 const require = createRequire(import.meta.url);
-const { createExplorerIntegration, createExplorerHost, openCommand } = require('../electron/explorer-integration.cjs');
+const { createExplorerIntegration, createExplorerHost, openCommand, parseRegExport } = require('../electron/explorer-integration.cjs');
 const { parseOpenArgument } = require('../electron/open-path-host.cjs');
 
 // Registro em memória que entende os comandos de reg.exe usados pela integração.
@@ -101,7 +101,43 @@ test('reg.exe real em chave de fixture isolada (somente Windows)', { skip: proce
   assert.equal((await integration.install()).state, 'installed');
   const query = execFileSync('reg.exe', ['query', `${root}\\Directory\\shell\\ATLAS.Open\\command`, '/ve'], { encoding: 'utf8', windowsHide: true });
   assert(query.includes('"--atlas-open=%V"'));
+  // O valor gravado como REG_EXPAND_SZ sai do .reg em hex(2) e continua reconhecido.
+  const command = `${root}\\Directory\\Background\\shell\\ATLAS.Open\\command`;
+  execFileSync('reg.exe', ['add', command, '/ve', '/t', 'REG_EXPAND_SZ', '/d', (await integration.getStatus()).command, '/f'], { windowsHide: true, stdio: 'ignore' });
+  assert.equal((await integration.getStatus()).state, 'installed');
+  execFileSync('reg.exe', ['add', command, '/ve', '/d', '"C:\\Outro\\ATLAS.exe" "--atlas-open=%V"', '/f'], { windowsHide: true, stdio: 'ignore' });
+  assert.equal((await integration.getStatus()).state, 'outdated');
   assert.equal((await integration.remove()).state, 'absent');
+});
+
+test('parseRegExport lê o valor padrão de cada chave de um .reg exportado', () => {
+  const bom = String.fromCharCode(0xfeff);
+  const text = bom + [
+    'Windows Registry Editor Version 5.00',
+    '',
+    String.raw`[HKEY_CURRENT_USER\Software\Classes\Directory\shell\ATLAS.Open]`,
+    '@="Abrir no ATLAS"',
+    String.raw`"Icon"="C:\\Outro\\icone.ico"`,
+    '',
+    String.raw`[HKEY_CURRENT_USER\Software\Classes\Directory\shell\ATLAS.Open\command]`,
+    String.raw`@="\"C:\\Usuários\\João\\ATLAS Ação\\ATLAS.exe\" \"--atlas-open=%V\""`,
+    '',
+    String.raw`[HKEY_CURRENT_USER\Software\Classes\Directory\Background\shell\ATLAS.Open]`,
+    '"Icon"="x"',
+    '',
+    String.raw`[HKEY_CURRENT_USER\Software\Classes\Directory\Background\shell\ATLAS.Open\command]`,
+    // "C:\A" em REG_EXPAND_SZ, quebrado em duas linhas como o reg.exe faz.
+    '@=hex(2):22,00,43,00,3a,00,5c,00,\\',
+    '  41,00,22,00,00,00',
+    '',
+  ].join('\r\n');
+  const sections = parseRegExport(text);
+  assert.equal(sections.get(String.raw`hkey_current_user\software\classes\directory\shell\atlas.open`), 'Abrir no ATLAS');
+  assert.equal(sections.get(String.raw`hkey_current_user\software\classes\directory\shell\atlas.open\command`), String.raw`"C:\Usuários\João\ATLAS Ação\ATLAS.exe" "--atlas-open=%V"`);
+  // Chave sem valor padrão existe e fica vazia; o valor nomeado não vaza para o padrão.
+  assert.equal(sections.get(String.raw`hkey_current_user\software\classes\directory\background\shell\atlas.open`), '');
+  assert.equal(sections.get(String.raw`hkey_current_user\software\classes\directory\background\shell\atlas.open\command`), String.raw`"C:\A"`);
+  assert.equal(sections.size, 4);
 });
 
 test('regressão: o estado lê as quatro chaves numa única leitura do registro', async () => {
