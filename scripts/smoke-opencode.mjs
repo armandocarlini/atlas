@@ -72,7 +72,7 @@ delete env.VITE_DEV_SERVER_URL;
 delete env.OPENCODE_CONFIG;
 delete env.OPENCODE_CONFIG_DIR;
 delete env.OPENCODE_CONFIG_CONTENT;
-fs.writeFileSync(path.join(profile, 'atlas-projects.json'), JSON.stringify({ roots: [fs.realpathSync(project)] }));
+fs.writeFileSync(path.join(profile, 'atlas-projects.json'), JSON.stringify({ roots: [fs.realpathSync.native(project)] }));
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(check, label, timeout = 60000) {
@@ -102,7 +102,7 @@ const exited = new Promise((resolve) => child.once('exit', resolve));
 let failed = true;
 try {
   await until(async () => (await native('windows')).some((item) => !item.url.includes('window=')), 'control server', 30000);
-  const cwd = fs.realpathSync(project);
+  const cwd = fs.realpathSync.native(project);
   const adapters = await native('invoke', { channel: 'agent:list-adapters' });
   assert.equal(adapters.find((item) => item.id === 'opencode').status, 'available');
 
@@ -171,7 +171,7 @@ try {
   if (child.exitCode === null) child.kill();
   await delay(1000);
   if (!failed) {
-    const real = fs.realpathSync(fixture);
+    const real = fs.realpathSync.native(fixture);
     assert(path.basename(real).startsWith('atlas-opencode-smoke-'));
     await fs.promises.rm(real, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
     console.log('PASS smoke real do OpenCode');
