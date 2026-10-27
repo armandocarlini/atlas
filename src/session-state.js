@@ -13,7 +13,9 @@ export function agentSession(agent) {
     id: agent.id, ptyId: archived ? null : agent.ptyId, projectId: agent.projectId,
     roleKind: agent.role || 'agent', exited: archived || agent.state === 'exited', runStartedAt: agent.runStartedAt, runAttempt: agent.runAttempt,
     name: agent.name, cli: agent.cli, version: agent.version,
-    role: archived ? 'Histórico de sessão; nenhum processo conectado' : agent.role === 'orchestrator' ? 'Planejamento do projeto; delegação ainda não conectada' : 'Sessão de agente criada pelo usuário',
+    role: archived ? 'Histórico de sessão; nenhum processo conectado'
+      : agent.role === 'orchestrator' ? 'Planejamento do projeto; pede novos agentes com aprovação do usuário'
+        : agent.origin === 'orchestrator' ? 'Agente pedido pela sessão principal e aprovado pelo usuário' : 'Sessão de agente criada pelo usuário',
     origin: agent.role === 'orchestrator' ? 'principal' : agent.origin === 'orchestrator' ? 'orquestrador' : 'manual',
     status, color: archived ? '#8d959d' : '#4ecb8d', worktree: agent.cwd,
     archived, runState: agent.runState, reason: agent.reason, createdAt: agent.createdAt,

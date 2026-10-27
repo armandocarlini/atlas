@@ -89,7 +89,49 @@ const MIGRATIONS = [{
     ) STRICT;
     CREATE INDEX deliveries_unread ON message_deliveries(session_id) WHERE read_at IS NULL;
   `,
+}, {
+  version: 5,
+  sql: `
+    CREATE TABLE agent_requests (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      requested_by TEXT NOT NULL REFERENCES sessions(id),
+      name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 60),
+      purpose TEXT NOT NULL CHECK(length(purpose) BETWEEN 1 AND 1000),
+      payload_hash TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('pending', 'approved', 'rejected', 'expired', 'fulfilled', 'failed')),
+      created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+      resolved_at TEXT, resolved_by TEXT, session_id TEXT REFERENCES sessions(id), error TEXT,
+      version INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX agent_requests_by_project ON agent_requests(project_id, created_at);
+  `,
 }];
+
+// Política padrão da v0.1 para pedidos de agente feitos pela sessão principal.
+const AGENT_REQUEST_POLICY = Object.freeze({ maxPending: 3, ttlMs: 15 * 60 * 1000, maxActiveAgents: 2 });
+
+function agentRequestPayload({ name, purpose, idempotencyKey }) {
+  for (const [label, value, max] of [['Nome', name, 60], ['Propósito', purpose, 1000]]) {
+    if (typeof value !== 'string' || value.length > max || !value.trim()) throw new Error(`${label}: informe texto válido com até ${max} caracteres.`);
+  }
+  // Texto do agente é exibido ao usuário: sem controles nem formatação invisível
+  // (bidi, largura zero) que possam disfarçar o nome ou esconder conteúdo.
+  if (/[\p{Cc}\p{Cf}]/u.test(name)) throw new Error('Nome: use somente caracteres visíveis, sem quebras de linha ou formatação invisível.');
+  if (/\p{Cf}|[^\P{Cc}\n\t]/u.test(purpose)) throw new Error('Propósito: remova caracteres de controle ou formatação invisível.');
+  if (typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(idempotencyKey)) throw new Error('Chave de idempotência inválida.');
+  return { name: name.trim(), purpose: purpose.trim() };
+}
+
+// O nome do solicitante vem do banco: a interface pode ainda não ter carregado a sessão.
+const AGENT_REQUEST_SELECT = 'SELECT r.*, s.name AS requester_name FROM agent_requests r LEFT JOIN sessions s ON s.id = r.requested_by';
+
+function agentRequestRow(row) {
+  return row && {
+    id: row.id, projectId: row.project_id, requestedBy: row.requested_by, requesterName: row.requester_name || null, name: row.name, purpose: row.purpose,
+    payloadHash: row.payload_hash, state: row.state, createdAt: row.created_at, expiresAt: row.expires_at,
+    resolvedAt: row.resolved_at, resolvedBy: row.resolved_by, sessionId: row.session_id, error: row.error, version: row.version,
+  };
+}
 
 function taskPayload({ title, description = '', acceptance, idempotencyKey }) {
   for (const [label, value, max, required] of [
@@ -150,6 +192,13 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   } catch (error) {
     db.close();
     throw error;
+  }
+
+  function expirePending(projectId, at) {
+    for (const row of db.prepare("SELECT id, requested_by FROM agent_requests WHERE project_id = ? AND state = 'pending' AND expires_at <= ?").all(projectId, at)) {
+      db.prepare("UPDATE agent_requests SET state = 'expired', resolved_at = ?, version = version + 1 WHERE id = ?").run(at, row.id);
+      event({ projectId, sessionId: row.requested_by, type: 'approval.resolved', payload: { requestId: row.id, decision: 'expired' }, correlationId: row.id, at });
+    }
   }
 
   function event({ projectId, sessionId = null, runId = null, type, payload = {}, at = now(), correlationId }) {
@@ -252,6 +301,84 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         return true;
       });
     },
+    requestAgent(request) {
+      const payload = agentRequestPayload(request);
+      const policy = { ...AGENT_REQUEST_POLICY, ...(request.policy || {}) };
+      const hash = createHash('sha256').update(JSON.stringify({ ...payload, projectId: request.projectId, requestedBy: request.requestedBy })).digest('hex');
+      return transaction(db, () => {
+        const previous = db.prepare('SELECT payload_hash, result FROM commands WHERE project_id = ? AND idempotency_key = ?').get(request.projectId, request.idempotencyKey);
+        if (previous) {
+          if (previous.payload_hash !== hash) throw new Error('Chave de idempotência já usada com outro conteúdo.');
+          return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(JSON.parse(previous.result).id));
+        }
+        const requester = db.prepare('SELECT id, role FROM sessions WHERE id = ? AND project_id = ?').get(request.requestedBy, request.projectId);
+        if (!requester) throw new Error('Sessão solicitante não pertence a este projeto.');
+        if (requester.role !== 'orchestrator') throw new Error('Somente a sessão principal pode pedir novos agentes.');
+        const at = now();
+        expirePending(request.projectId, at);
+        const pending = db.prepare("SELECT count(*) AS total FROM agent_requests WHERE project_id = ? AND state = 'pending'").get(request.projectId).total;
+        if (pending >= policy.maxPending) throw new Error(`Limite da política: já há ${pending} pedidos de agente aguardando o usuário.`);
+        const id = randomUUID();
+        const commandId = randomUUID();
+        const expiresAt = new Date(Date.parse(at) + policy.ttlMs).toISOString();
+        db.prepare('INSERT INTO agent_requests (id, project_id, requested_by, name, purpose, payload_hash, state, created_at, expires_at, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)')
+          .run(id, request.projectId, requester.id, payload.name, payload.purpose, hash, 'pending', at, expiresAt);
+        db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'agent.request', id, JSON.stringify({ ...payload, requestedBy: requester.id }), hash, request.idempotencyKey, 'completed', `agent:${requester.id}`, at, at, JSON.stringify({ id }), commandId);
+        event({ projectId: request.projectId, sessionId: requester.id, type: 'approval.requested', payload: { requestId: id, kind: 'agent.create', name: payload.name }, correlationId: commandId, at });
+        return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(id));
+      });
+    },
+    listAgentRequests(projectId) {
+      transaction(db, () => expirePending(projectId, now()));
+      return db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.project_id = ? ORDER BY r.created_at, r.id`).all(projectId).map(agentRequestRow);
+    },
+    getAgentRequest(projectId, requestId) {
+      transaction(db, () => expirePending(projectId, now()));
+      return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ? AND r.project_id = ?`).get(requestId, projectId));
+    },
+    // Aprovação vinculada ao payload exibido e à validade, verificada no momento da execução.
+    approveAgentRequest({ projectId, requestId, payloadHash }) {
+      return transaction(db, () => {
+        const at = now();
+        expirePending(projectId, at);
+        const row = db.prepare('SELECT * FROM agent_requests WHERE id = ? AND project_id = ?').get(requestId, projectId);
+        if (!row) throw new Error('Pedido de agente não encontrado neste projeto.');
+        if (row.state === 'expired') throw new Error('O pedido expirou; peça à sessão principal que o refaça.');
+        if (row.state !== 'pending') throw new Error(`O pedido já foi resolvido (${row.state}).`);
+        if (row.payload_hash !== payloadHash) throw new Error('O conteúdo do pedido não corresponde ao que foi exibido para aprovação.');
+        db.prepare("UPDATE agent_requests SET state = 'approved', resolved_at = ?, resolved_by = 'user', version = version + 1 WHERE id = ?").run(at, requestId);
+        event({ projectId, sessionId: row.requested_by, type: 'approval.resolved', payload: { requestId, decision: 'approved' }, correlationId: requestId, at });
+        return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(requestId));
+      });
+    },
+    rejectAgentRequest({ projectId, requestId }) {
+      return transaction(db, () => {
+        const at = now();
+        expirePending(projectId, at);
+        const row = db.prepare('SELECT * FROM agent_requests WHERE id = ? AND project_id = ?').get(requestId, projectId);
+        if (!row) throw new Error('Pedido de agente não encontrado neste projeto.');
+        if (row.state !== 'pending') throw new Error(`O pedido já foi resolvido (${row.state}).`);
+        db.prepare("UPDATE agent_requests SET state = 'rejected', resolved_at = ?, resolved_by = 'user', version = version + 1 WHERE id = ?").run(at, requestId);
+        event({ projectId, sessionId: row.requested_by, type: 'approval.resolved', payload: { requestId, decision: 'rejected' }, correlationId: requestId, at });
+        return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(requestId));
+      });
+    },
+    completeAgentRequest({ projectId, requestId, sessionId = null, error = null }) {
+      return transaction(db, () => {
+        const row = db.prepare('SELECT * FROM agent_requests WHERE id = ? AND project_id = ?').get(requestId, projectId);
+        if (!row || row.state !== 'approved') throw new Error('Somente pedidos aprovados podem ser concluídos.');
+        const at = now();
+        if (sessionId) {
+          db.prepare("UPDATE agent_requests SET state = 'fulfilled', session_id = ?, version = version + 1 WHERE id = ?").run(sessionId, requestId);
+          event({ projectId, sessionId, type: 'approval.fulfilled', payload: { requestId, origin: 'orchestrator', requestedBy: row.requested_by }, correlationId: requestId, at });
+        } else {
+          const reason = String(error || 'Falha desconhecida.').slice(0, 500);
+          db.prepare("UPDATE agent_requests SET state = 'failed', error = ?, version = version + 1 WHERE id = ?").run(reason, requestId);
+          event({ projectId, sessionId: row.requested_by, type: 'approval.failed', payload: { requestId, error: reason }, correlationId: requestId, at });
+        }
+        return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(requestId));
+      });
+    },
     registerProject({ id, name, path: projectPath }) {
       return transaction(db, () => {
         const previous = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
@@ -289,6 +416,14 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         for (const run of active) {
           db.prepare(`UPDATE agent_runs SET state = 'lost', version = version + 1, ended_at = ?, reason = ? WHERE id = ?`).run(at, reason, run.id);
           event({ projectId: run.project_id, sessionId: run.session_id, runId: run.id, type: 'run.lost', payload: { reason }, at });
+        }
+        // Aprovação persistida não autoriza repetir um spawn após interrupção.
+        // Um processo pode ter iniciado antes do crash: mantenha o histórico,
+        // sem inferir sucesso nem criar outra sessão automaticamente.
+        for (const request of db.prepare("SELECT * FROM agent_requests WHERE state = 'approved'").all()) {
+          const error = 'Inicialização interrompida. Confira o histórico de sessões antes de solicitar outro agente.';
+          db.prepare("UPDATE agent_requests SET state = 'failed', error = ?, version = version + 1 WHERE id = ?").run(error, request.id);
+          event({ projectId: request.project_id, sessionId: request.requested_by, type: 'approval.failed', payload: { requestId: request.id, error, reason }, correlationId: request.id, at });
         }
         return active.length;
       });
@@ -332,4 +467,4 @@ function closeOperationalStore(store, onError = console.error) {
   }
 }
 
-module.exports = { createOperationalStore, closeOperationalStore, migrate, MIGRATIONS };
+module.exports = { AGENT_REQUEST_POLICY, createOperationalStore, closeOperationalStore, migrate, MIGRATIONS };

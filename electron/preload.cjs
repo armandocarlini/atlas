@@ -45,4 +45,8 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   getKimiIntegration: () => ipcRenderer.invoke('integration:kimi-mcp-status'),
   installKimiIntegration: (request) => ipcRenderer.invoke('integration:kimi-mcp-install', request),
   removeKimiIntegration: (request) => ipcRenderer.invoke('integration:kimi-mcp-remove', request),
+  listAgentRequests: (request) => ipcRenderer.invoke('agent-request:list', request),
+  approveAgentRequest: (request) => ipcRenderer.invoke('agent-request:approve', request),
+  rejectAgentRequest: (request) => ipcRenderer.invoke('agent-request:reject', request),
+  onAgentRequestsChanged: (callback) => subscribe('agent-request:changed', callback),
 });

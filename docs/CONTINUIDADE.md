@@ -72,7 +72,7 @@ Retomada após a quota do Kimi esgotar antes do commit: a revisão do diff não 
 
 ## Marco 4b-1 — ponte MCP do ATLAS com consentimento
 
-Conforme `docs/PLANO_MCP.md`. O Kimi Code 2.3.3 só lê servidores MCP do `mcp.json` global (ou de `$KIMI_CODE_HOME`) e do `.kimi-code/mcp.json` do projeto. Alterar o repositório do usuário foi descartado. Entre a configuração global e uma `KIMI_CODE_HOME` separada (com novo login), o usuário escolheu a **entrada global com consentimento explícito**.
+Integrado pelo PR #15 como `222ac75`, após CI Ubuntu e Windows verde na execução 40429020566. Conforme `docs/PLANO_MCP.md`. O Kimi Code 2.3.3 só lê servidores MCP do `mcp.json` global (ou de `$KIMI_CODE_HOME`) e do `.kimi-code/mcp.json` do projeto. Alterar o repositório do usuário foi descartado. Entre a configuração global e uma `KIMI_CODE_HOME` separada (com novo login), o usuário escolheu a **entrada global com consentimento explícito**.
 
 Uma sonda em fixture temporária confirmou que o Kimi inicia o servidor stdio como filho direto do PTY, repassa o ambiente da sessão e fala JSON-RPC por linha (`2025-11-25`). Com isso, cada run de agente recebe `ATLAS_MCP_ENDPOINT` e um token aleatório no ambiente do PTY. A ponte (`electron/atlas-mcp-bridge.cjs`, executada pelo Electron em modo Node) repassa as chamadas ao processo principal por named pipe, sem porta de rede. O host (`electron/mcp-host.cjs`) deriva projeto e sessão somente do token, revogado na saída ou em falha de spawn ou persistência. As ferramentas são `sessions_list`, `tasks_list`, `messages_unread`, `messages_mark_read` e `messages_send`, todas limitadas ao projeto da sessão. O conteúdo das mensagens volta marcado como não confiável. O perfil da principal libera `mcp__atlas__*` e continua sem ferramentas de escrita.
 
@@ -93,7 +93,25 @@ Uma revisão independente confirmou o modelo de identidade (projeto, remetente e
 
 Limites: o token fica no ambiente do processo do Kimi, ao alcance de comandos do próprio agente (fronteira: o usuário local, a mesma do SQLite). A entrada aponta para o Electron e o script do clone atual, e muda para `outdated` se o ATLAS mudar de pasta. O instalador do marco 6 define o caminho estável. A chamada de ferramenta pelo modelo depende do smoke opt-in com provedor configurado.
 
-Criação de agente pelo orquestrador sob política e aprovação (4b-2), delegação e claim de tarefas, handoffs e worktrees (4c) continuam pendentes.
+## Marco 4b-2 — orquestrador pede agentes dentro da política
+
+Conforme `docs/PLANO_SOLICITACAO_AGENTES.md`. A política da v0.1 é o modo assistido:
+
+- só a principal pede agentes (profundidade 1);
+- até 3 pedidos pendentes por projeto;
+- validade de 15 minutos por pedido;
+- até 2 agentes da principal em execução;
+- o agente nasce com o Kimi interativo no diretório do projeto, sem flags de autonomia nem prompt inicial.
+
+A migration 5 cria `agent_requests`. O pedido é um comando idempotente com ator `agent:<sessão>` e gera os eventos `approval.requested`, `approval.resolved`, `approval.fulfilled` e `approval.failed`.
+
+A principal usa as ferramentas MCP `agents_request` e `agents_request_status`. A lista de ferramentas depende do papel, e sessões de agente não as recebem. O usuário decide no cartão do workspace, que mostra solicitante, nome, propósito (texto da principal), validade e política. Aprovar exige o hash do conteúdo exibido. O host revalida pendência, validade, hash e limite de ativos no ponto de execução, reservando a vaga durante o spawn. O agente nasce com origem `orchestrator`. Uma falha de spawn vira `failed` com o motivo, permanece visível até ser dispensada e não cria sessão fictícia.
+
+Endurecimento após revisão independente: nome do agente sem controles nem formatação invisível (bidi, largura zero) e propósito só com quebra de linha e tab; o nome do solicitante vem do banco; status consultado pela principal também expira pedidos vencidos; no reinício, aprovação interrompida vira `failed` sem novo spawn; se o agente inicia mas o registro do resultado falha, ele continua visível com aviso, sem ser marcado como falho; o cartão sai da fila ao vencer a validade. O hash de aprovação apenas amarra a decisão ao pedido exibido (o conteúdo é imutável após a criação); não é um controle contra alteração de conteúdo.
+
+Validação local (Windows, Node 24.14.0, gates executados por subagente Sonnet): `npm test` 125/125, `npm run test:agent` 80/80, build, `check:public` 75 arquivos, `npm run test:desktop` 18 PASS (pedidos com conteúdo, validade, política, contraste, recusa e falha honesta sem CLI) e `npm run smoke:agent` 17 PASS com Kimi Code 2.3.3 real (pedido semeado da principal aprovado pela interface, agente com origem `orchestrator` e ponte conectada, estado `fulfilled` e origem preservados após reinício). Os smokes padrão não enviam prompt ao modelo; o caminho MCP `agents_request` é coberto por testes com ponte e host reais.
+
+Delegação e claim de tarefas, handoffs e worktrees (4c) continuam pendentes.
 
 O Kimi foi interrompido durante os testes de dois terminais e descoberta Git. Essa etapa foi concluída: os testes agora são reproduzíveis em `scripts/`, e os marcos confirmados foram atualizados no planejamento. O relatório técnico/visual está em `docs/VALIDACAO_DESKTOP.md`.
 

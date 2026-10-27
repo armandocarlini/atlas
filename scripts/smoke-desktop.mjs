@@ -415,6 +415,37 @@ try {
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'session modal closed');
   console.log('PASS modal de sessão lista somente adaptadores detectados');
+  // Pedidos de agente semeados pela principal da fixture com o app aberto; sem CLI,
+  // a aprovação deve falhar de forma honesta e registrada.
+  const liveStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
+  try {
+    liveStore.startSession({ id: 'smoke-orchestrator', projectId: extraProjectId, name: 'ORQUESTRADOR-fixture', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'user', createdAt: new Date().toISOString(), role: 'orchestrator' });
+    liveStore.requestAgent({ projectId: extraProjectId, requestedBy: 'smoke-orchestrator', name: 'revisor-recusado', purpose: 'Pedido que o usuário vai recusar.', idempotencyKey: 'smoke-request-0001' });
+    liveStore.requestAgent({ projectId: extraProjectId, requestedBy: 'smoke-orchestrator', name: 'revisor-sem-cli', purpose: 'Pedido aprovado sem CLI disponível na fixture.\nSegunda linha preservada.', idempotencyKey: 'smoke-request-0002' });
+  } finally {
+    liveStore.close();
+  }
+  await native('send', { channel: 'agent-request:changed', payload: { projectId: extraProjectId } });
+  await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 2`), 'pending agent requests shown');
+  const requestCards = await main.evaluate(`[...document.querySelectorAll('.agent-request')].map(item => item.innerText)`);
+  assert(requestCards[0].includes('Novo agente: revisor-recusado') && requestCards[0].includes('Pedido de ORQUESTRADOR-fixture'), 'Request names requester and agent');
+  assert(requestCards[1].includes('Segunda linha preservada') && requestCards[1].includes('Vale até') && requestCards[1].includes('Política: até 2 agentes'), 'Request shows purpose, validity and policy');
+  assert(requestCards.every((text) => text.includes('sem flags de autonomia')), 'Request states how the agent starts');
+  const requestAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(requestAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in agent requests');
+  await screenshot(main, 'agent-requests');
+  await main.evaluate(`[...document.querySelectorAll('.agent-request')].find(item => item.innerText.includes('revisor-recusado')).querySelector('button.secondary').click()`);
+  await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 1`), 'rejected request removed');
+  await main.evaluate(`document.querySelector('.agent-request button.primary').click()`);
+  await until(() => main.evaluate(`document.querySelector('.agent-request [role=alert]')?.innerText.includes('CLI ausente')`), 'honest spawn failure inline');
+  const decided = await native('invoke', { channel: 'agent-request:list', args: [{ cwd: extraProject }] });
+  assert.deepEqual(decided.items.map((item) => [item.name, item.state]), [['revisor-recusado', 'rejected'], ['revisor-sem-cli', 'failed']]);
+  assert.match(decided.items[1].error, /CLI ausente/);
+  assert.equal(decided.items[1].sessionId, null, 'No fictitious session for a failed spawn');
+  assert.equal(await main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'revisor-sem-cli')`), false);
+  await click(main, '.agent-request button', 'Dispensar');
+  await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'failed request dismissed');
+  console.log('PASS pedidos de agente da principal: conteúdo, validade, política, recusa e falha honesta sem CLI');
   await click(main, '.title-actions button', 'Aparência');
   await click(main, '.background-presets button', 'Névoa');
   assert.equal(await main.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#eef1f4');

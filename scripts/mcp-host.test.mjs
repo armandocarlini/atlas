@@ -23,7 +23,8 @@ async function harness(t) {
     orchestratorB: session('orchestrator-b', 'project-b', 'orchestrator'),
   };
   const changes = [];
-  const host = createMcpHost({ store, onConnectionChange: (sessionId, connected) => changes.push([sessionId, connected]) });
+  const agentRequests = [];
+  const host = createMcpHost({ store, onConnectionChange: (sessionId, connected) => changes.push([sessionId, connected]), onAgentRequest: (projectId) => agentRequests.push(projectId) });
   await host.listen();
   const tokens = {
     orchestratorA: host.register({ projectId: 'project-a', sessionId: 'orchestrator-a', runId: runs.orchestratorA.id, role: 'orchestrator' }),
@@ -37,7 +38,7 @@ async function harness(t) {
     store.close();
     fs.rmSync(directory, { recursive: true, force: true });
   });
-  return { store, host, tokens, changes, children };
+  return { store, host, tokens, changes, children, agentRequests };
 }
 
 function rawClient(endpoint) {
@@ -347,4 +348,42 @@ test('ponte responde a mensagem JSON-RPC nula sem encerrar o processo', async (t
   assert.equal(JSON.parse(bridge.stdoutLines[0]).error.code, -32600);
   assert.equal((await bridge.initialize()).result.serverInfo.name, 'atlas');
   assert.equal(bridge.child.exitCode, null);
+});
+
+test('ferramentas de pedido de agente aparecem só para a principal e são recusadas às demais', async (t) => {
+  const { host, tokens, children, agentRequests } = await harness(t);
+  const manual = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.manualA });
+  const orchestrator = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.orchestratorA });
+  await manual.initialize();
+  await orchestrator.initialize();
+  const manualTools = (await manual.rpc('tools/list')).result.tools.map((tool) => tool.name);
+  const orchestratorTools = (await orchestrator.rpc('tools/list')).result.tools;
+  assert(!manualTools.includes('agents_request') && !manualTools.includes('agents_request_status'));
+  assert(orchestratorTools.some((tool) => tool.name === 'agents_request'));
+  assert(orchestratorTools.every((tool) => !('roles' in tool)), 'metadados internos não vazam para o cliente');
+  const refused = await manual.call('agents_request', { name: 'intruso', purpose: 'Profundidade 2.' });
+  assert.equal(refused.isError, true);
+  assert.match(refused.text, /Somente a sessão principal/);
+  assert.deepEqual(agentRequests, []);
+});
+
+test('principal pede agente pela ponte: pedido pendente, aviso à interface e status isolado por projeto', async (t) => {
+  const { store, host, tokens, children, agentRequests } = await harness(t);
+  const orchestrator = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.orchestratorA });
+  await orchestrator.initialize();
+  const asked = await orchestrator.call('agents_request', { name: 'revisor-ansi', purpose: 'Investigar a divergência de resize.', idempotencyKey: 'pedido-ansi-01' });
+  assert.equal(asked.isError, false, asked.text);
+  assert.equal(asked.value.state, 'pending');
+  assert.match(asked.value.note, /Nenhum agente foi iniciado/);
+  assert.deepEqual(agentRequests, ['project-a']);
+  assert.equal((await orchestrator.call('agents_request', { name: 'revisor-ansi', purpose: 'Investigar a divergência de resize.', idempotencyKey: 'pedido-ansi-01' })).value.requestId, asked.value.requestId);
+  const stored = store.getAgentRequest('project-a', asked.value.requestId);
+  assert.equal(stored.requestedBy, 'orchestrator-a');
+  const status = await orchestrator.call('agents_request_status', { requestId: asked.value.requestId });
+  assert.deepEqual(status.value, { requestId: asked.value.requestId, name: 'revisor-ansi', state: 'pending', expiresAt: stored.expiresAt, sessionId: null, error: null });
+  const other = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.orchestratorB });
+  await other.initialize();
+  const foreign = await other.call('agents_request_status', { requestId: asked.value.requestId });
+  assert.equal(foreign.isError, true);
+  assert.match(foreign.text, /não encontrado neste projeto/);
 });
