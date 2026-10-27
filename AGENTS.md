@@ -71,6 +71,10 @@ Não quebre estas regras sem plano e decisão explícita do mantenedor.
 
 - Cada marco ou subdivisão tem branch própria e PR. Faça merge normal/squash **somente** depois de CI verde em Ubuntu e Windows. Condicione o merge ao sucesso de `gh pr checks --watch`, sem pipe que mascare o status.
 - Não faça force push, não altere branch protection e não publique release ou tag.
+- **Autoria só do mantenedor:** commits, mensagens de squash e descrições de PR não levam `Co-authored-by`, "Generated with …" nem qualquer menção a IA ou ao agente.
+  - O único autor é `armandocarlini`, com o e-mail do `git config` do repositório.
+  - No squash, passe `--subject` e `--body` explícitos para o GitHub não copiar trailers dos commits.
+  - Esta regra prevalece sobre o padrão de atribuição de qualquer harness.
 - Após o merge:
   - sincronize e inspecione `main`;
   - **reescreva** as seções afetadas de `docs/CONTEXTO.md`;
