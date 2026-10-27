@@ -54,7 +54,7 @@ const project = path.join(fixture, 'Projeto Instalação');
 const profile = path.join(fixture, 'profile');
 const kimiHome = path.join(fixture, 'kimi-home');
 for (const directory of [project, profile, kimiHome]) fs.mkdirSync(directory);
-fs.writeFileSync(path.join(profile, 'atlas-projects.json'), JSON.stringify({ roots: [fs.realpathSync(project)] }));
+fs.writeFileSync(path.join(profile, 'atlas-projects.json'), JSON.stringify({ roots: [fs.realpathSync.native(project)] }));
 let child = null;
 
 function checkLayout(appDirectory) {
@@ -136,7 +136,7 @@ async function checkApp(exe) {
     assert.match(page.url, /app\.asar[\\/]dist[\\/]index\.html/, 'renderer carregado do pacote, sem servidor de desenvolvimento');
     const cdp = await connect(page.webSocketDebuggerUrl);
     await until(() => cdp.evaluate('document.querySelector(".app-shell, #root > *") !== null'), 'interface renderizada');
-    const cwd = fs.realpathSync(project);
+    const cwd = fs.realpathSync.native(project);
     const output = await cdp.evaluate(`(async () => {
       const desktop = window.atlasDesktop;
       const terminal = await desktop.createTerminal({ cwd: ${JSON.stringify(cwd)}, cols: 100, rows: 30 });
@@ -157,8 +157,8 @@ async function checkApp(exe) {
     // Regressão: dentro do asar a ponte não pode ser iniciada pelo CLI do agente.
     const integration = await cdp.evaluate('window.atlasDesktop.getKimiIntegration()');
     const entry = JSON.parse(integration.entryText).mcpServers.atlas;
-    assert.equal(entry.command.toLowerCase(), fs.realpathSync(exe).toLowerCase());
-    assert.equal(entry.args[0].toLowerCase(), path.join(path.dirname(fs.realpathSync(exe)), 'resources', 'app.asar.unpacked', 'electron', 'atlas-mcp-bridge.cjs').toLowerCase());
+    assert.equal(entry.command.toLowerCase(), fs.realpathSync.native(exe).toLowerCase());
+    assert.equal(entry.args[0].toLowerCase(), path.join(path.dirname(fs.realpathSync.native(exe)), 'resources', 'app.asar.unpacked', 'electron', 'atlas-mcp-bridge.cjs').toLowerCase());
     assert(fs.existsSync(entry.args[0]));
     assert.equal(integration.state, 'absent', 'status lido da home de fixture, sem gravar');
     console.log('PASS integração MCP empacotada aponta para a ponte fora do asar');
@@ -220,7 +220,7 @@ try {
 } finally {
   if (child) child.kill();
   await delay(500);
-  const real = fs.realpathSync(fixture);
+  const real = fs.realpathSync.native(fixture);
   assert(path.basename(real).startsWith('atlas-installer-'));
   await fs.promises.rm(real, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 }
