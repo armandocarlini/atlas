@@ -12,9 +12,7 @@ Estas regras valem para **toda** sessão que trabalha no desenvolvimento do ATLA
    - `docs/CONTEXTO.md` (o que existe hoje);
    - `docs/ROADMAP.md` (o que vem depois);
    - os trechos relevantes de `ATLAS_PLANEJAMENTO_ARQUITETURA.md` (visão de longo prazo).
-3. Enquanto a v0.1 não fecha, siga também `docs/AUTONOMIA_V0_1.md`.
-
-`docs/historico/` guarda o diário dos marcos e os planos já executados. Consulte quando precisar do porquê de uma decisão; não é leitura obrigatória.
+`docs/historico/` guarda o diário dos marcos, os planos já executados, o contrato autônomo e o registro do aceite da v0.1. Consulte quando precisar do porquê de uma decisão; não é leitura obrigatória.
 
 ## Memória compartilhada (ai-memory) — obrigatória
 
@@ -78,7 +76,10 @@ Não quebre estas regras sem plano e decisão explícita do mantenedor.
   - **reescreva** as seções afetadas de `docs/CONTEXTO.md`;
   - ajuste `docs/ROADMAP.md`.
   - Evidências detalhadas (números de testes, execuções de CI, incidentes) vão na descrição do PR.
-- **Autonomia:** só vale até a v0.1, nos termos de `docs/AUTONOMIA_V0_1.md`. Itens da v0.2 em diante exigem plano aprovado pelo mantenedor.
+- **Autonomia:**
+  - O trabalho pedido pelo mantenedor ou com plano aprovado segue até o merge sem nova confirmação: branch, PR, CI verde e merge.
+  - Itens marcados **[decidir]** no `docs/ROADMAP.md` não começam sem aprovação.
+  - O contrato autônomo da v0.1 (`docs/historico/AUTONOMIA_V0_1.md`) terminou com o aceite.
 - A autorização de merge cobre o fluxo de desenvolvimento. Ela não elimina aprovações que o produto ATLAS exige em runtime para ações dos agentes.
 
 ## Testes e regressões

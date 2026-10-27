@@ -787,7 +787,8 @@ O recorte do primeiro release não elimina os seguintes requisitos da visão do 
 - [x] Aprovações e trilha de auditoria.
 - [x] Instalador Windows e `Abrir no ATLAS`.
 - [x] Testes automatizados e smoke tests com CLI real.
-- [ ] README, demonstração, documentação e release `v0.1`.
+- [x] README, demonstração e documentação da `v0.1` (aceite em `docs/historico/ACEITE_V0_1.md`).
+- [ ] Release `v0.1`, por decisão do mantenedor.
 
 **Aceite da `v0.1`:** demonstrar o fluxo completo da seção 16 e preservar o estado após fechar e reabrir o aplicativo.
 

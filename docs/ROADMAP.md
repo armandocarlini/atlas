@@ -6,17 +6,20 @@ Este arquivo diz **o que vem depois e em que ordem**. O estado atual está em `d
 
 Itens marcados **[decidir]** dependem de uma decisão do mantenedor antes de virar plano técnico. Nenhum agente deve implementá-los por conta própria.
 
-## Agora — fechar a v0.1
+## Concluído — v0.1
 
-O contrato autônomo (`docs/AUTONOMIA_V0_1.md`) vale até aqui.
+O aceite dos 12 passos foi demonstrado em 27/10/2026 (`docs/historico/ACEITE_V0_1.md`, PR #30). A publicação (release e tag) é decisão do mantenedor.
 
-1. **Demonstração do aceite (marco 6c-2).** Seguir `docs/ROTEIRO_ACEITE_V0_1.md` e registrar evidências e limites no PR de fechamento. A v0.1 termina quando os 12 passos estiverem demonstrados com estado preservado após reinício.
-2. **Revisar os PRs do Dependabot** (#22, #23, #25). Revisar cada um separadamente, com `npm run dist:win` e o job Package verdes, porque mexem no empacotamento validado.
-3. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). Investigar na próxima ocorrência; não reexecutar às cegas.
+## Agora — ajustes observados no aceite
 
-Sem release ou tag automática. Publicar a v0.1 é decisão do mantenedor.
+São correções da v0.1, sem mudar o escopo do produto.
 
-## Próximo — v0.2 (não autorizado para execução autônoma)
+1. **Abertura e início de agente sem esperar a varredura Git de todos os projetos.** A janela deve aparecer antes da varredura. Depois de criar uma worktree, deve ser revarrido só o projeto afetado.
+2. **Aviso do Kimi só quando há sessão Kimi.** O aviso de ferramentas não conectadas não deve aparecer para sessões OpenCode.
+3. **Revisar os PRs do Dependabot** (#22, #23, #25). Revisar cada um separadamente, com `npm run dist:win` e o job Package verdes, porque mexem no empacotamento validado.
+4. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). Investigar na próxima ocorrência; não reexecutar às cegas.
+
+## Próximo — v0.2 (cada item precisa de plano aprovado)
 
 A ordem abaixo é uma proposta. Cada item precisa de plano aprovado antes de começar.
 
@@ -68,5 +71,5 @@ A ordem vem da arquitetura, ajustada ao que já foi entregue: o segundo adaptado
 | LLM por função | Ideia aprovada em conversa; falta definir escopo e mudar a regra do `AGENTS.md` |
 | Troca de modelo sem perder a tela | Investigar a capacidade dos CLIs |
 | Suíte de regressão liga/desliga | Definir o significado exato |
-| Publicação da v0.1 | Depois do aceite, por decisão do mantenedor |
+| Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |

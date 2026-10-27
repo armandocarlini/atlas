@@ -1,6 +1,6 @@
 # Contexto atual do ATLAS
 
-Última revisão: 27/10/2026, sobre a `main` em `2b91c80`.
+Última revisão: 27/10/2026, sobre a `main` em `e3789af`.
 
 Este arquivo descreve **o que existe hoje**. Ele é reescrito a cada marco: não acrescente diário aqui. A história de como chegamos até este ponto fica em `docs/historico/`. O que vem depois fica em `docs/ROADMAP.md`.
 
@@ -10,9 +10,9 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 
 ## Onde estamos
 
-- Versão `0.1.0`. Os marcos 1 a 6c-1 da v0.1 estão integrados.
-- **Falta para fechar a v0.1:** a demonstração do aceite (marco 6c-2), conforme `docs/ROTEIRO_ACEITE_V0_1.md`. Ela usa o OpenCode com um modelo gratuito da NVIDIA.
-- Sem release nem tag. O instalador sai só como artefato da CI.
+- Versão `0.1.0`. **A v0.1 está completa:** os 12 passos do aceite foram demonstrados em 27/10/2026 com o ATLAS instalado, o OpenCode e um modelo gratuito da NVIDIA, com estado preservado após reabrir (`docs/historico/ACEITE_V0_1.md`).
+- Sem release nem tag. Publicar a v0.1 é decisão do mantenedor. O instalador sai só como artefato da CI.
+- Os próximos passos estão em `docs/ROADMAP.md`.
 
 ## O que funciona de verdade
 
@@ -79,6 +79,8 @@ A CI (`.github/workflows/ci.yml`) roda Verify em Ubuntu e Windows, mais o job Pa
 
 ## Limites e pendências conhecidas
 
+- **Abertura lenta com projetos grandes:** a janela principal só aparece depois da varredura Git de todos os projetos cadastrados (148–172 s numa máquina com um projeto de 50 worktrees). Criar a worktree de uma tarefa revarre tudo, e o agente demora cerca de 2 min para iniciar.
+- **Aviso do Kimi fora de contexto:** "Ferramentas ATLAS no Kimi: não conectadas" aparece mesmo quando as sessões usam o OpenCode.
 - **Intermitências abertas:**
   - O NSIS silencioso deu access violation (`0xC0000005`) uma vez no runner.
   - O `test:desktop` deu `CDP timeout` uma vez após o pop-up "sempre no topo".
