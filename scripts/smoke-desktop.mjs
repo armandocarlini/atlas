@@ -78,7 +78,8 @@ seed.startSession({ id: 'history-fixture', projectId, name: 'histórico-fixture'
 const extraProjectId = idFor(fs.realpathSync(extraProject));
 seed.registerProject({ id: extraProjectId, name: path.basename(extraProject), path: fs.realpathSync(extraProject) });
 seed.startSession({ id: 'reauthorized-fixture', projectId: extraProjectId, name: 'histórico-reauthorized', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'user', createdAt: new Date(Date.now() - 60000).toISOString() });
-seed.startSession({ id: 'reauthorized-fixture-2', projectId: extraProjectId, name: 'histórico-extra', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'user', createdAt: new Date(Date.now() - 55000).toISOString() });
+// Histórico do Kimi Code no projeto extra: é ali que o aviso de integração deve aparecer.
+seed.startSession({ id: 'reauthorized-fixture-2', projectId: extraProjectId, name: 'histórico-extra', adapterId: 'kimi-code', cli: 'Kimi Code', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'user', createdAt: new Date(Date.now() - 55000).toISOString() });
 seed.sendMessage({ projectId: extraProjectId, fromSessionId: 'reauthorized-fixture', toSessionId: 'reauthorized-fixture-2', kind: 'discovery', subject: 'Descoberta da fixture', body: 'Mensagem persistida antes do crash simulado.', idempotencyKey: 'fixture-msg-0001' });
 seed.close();
 const endpoint = `http://127.0.0.1:${port}`;
@@ -181,6 +182,8 @@ try {
   assert.equal(await main.evaluate(`document.querySelectorAll('.origin-badge.demo').length`), 0, 'Desktop must not show illustrative agent cards');
   // Sem CLI padrão: a principal só inicia depois de o usuário escolher CLI e modelo.
   await until(() => main.evaluate(`document.querySelector('.orchestrator-choice-note')?.innerText.includes('ainda não foi iniciada')`), 'principal aguarda a escolha do agente');
+  // Regressão: sem sessão Kimi no projeto, nada de aviso do Kimi (só o indicador discreto).
+  assert.equal(await main.evaluate(`document.querySelectorAll('.integration-notice').length`), 0, 'Kimi notice only with a Kimi session');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 1, 'Unauthorized project history must remain hidden');
   const restoredHistory = await main.evaluate(`(() => { const history = document.querySelector('.session-history'); const card = history.closest('.session-card'); return { text: history.innerText, inputs: card.querySelectorAll('input, textarea').length, popup: [...card.querySelectorAll('button')].some(item => item.textContent === 'Pop-up'), tokens: Boolean(card.querySelector('.token-count')) }; })()`);
   assert(restoredHistory.text.includes('resultado incerto'));

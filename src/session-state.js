@@ -40,3 +40,9 @@ export function sessionExit(current, sessionId, exit) {
   return current.map((session) => session.id === sessionId && typeof exit.ptyId === 'string' && exit.ptyId === session.ptyId
     ? { ...session, exited: true, status: `encerrado · código ${exit.exitCode}` } : session);
 }
+
+// O aviso de ferramentas do Kimi só faz sentido com sessão Kimi no projeto (ativa ou
+// no histórico, que a próxima execução retoma). OpenCode recebe as ferramentas por run.
+export function usesKimi(sessions) {
+  return sessions.some((session) => typeof session.cli === 'string' && /kimi/i.test(session.cli));
+}

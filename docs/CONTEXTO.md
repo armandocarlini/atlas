@@ -22,7 +22,7 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 | Projetos e Git | Pastas autorizadas e descoberta Git **somente leitura** (repositórios, branches, worktrees) | `electron/project-host.cjs`, `electron/git-discovery.cjs` |
 | Adaptadores | Kimi Code e OpenCode, detectados no `PATH`. O usuário escolhe CLI e modelo em **toda** sessão. Não existe CLI nem modelo padrão | `electron/agent-adapters.cjs`, `electron/agent-host.cjs`, `src/AgentChoice.jsx` |
 | Principal | Uma identidade por projeto, perfil somente leitura (`--agent-file` no Kimi, `atlas-orchestrator` no OpenCode) e nova run explícita após a saída | `electron/orchestrator-profile.cjs` |
-| Ponte MCP | Named pipe e token por run. O projeto e a sessão vêm só do token. No Kimi, a entrada vai para o `mcp.json` com consentimento; no OpenCode, só pela run (`OPENCODE_CONFIG_CONTENT`) | `electron/mcp-host.cjs`, `electron/atlas-mcp-bridge.cjs`, `electron/kimi-mcp-config.cjs`, `src/KimiIntegration.jsx` |
+| Ponte MCP | Named pipe e token por run. O projeto e a sessão vêm só do token. No Kimi, a entrada vai para o `mcp.json` com consentimento, e o aviso de integração só aparece em projeto com sessão Kimi; no OpenCode, só pela run (`OPENCODE_CONFIG_CONTENT`) | `electron/mcp-host.cjs`, `electron/atlas-mcp-bridge.cjs`, `electron/kimi-mcp-config.cjs`, `src/KimiIntegration.jsx` |
 | Pedidos de agente | A principal pede com `agents_request`, e o usuário aprova no cartão. Modo assistido: profundidade 1, até 3 pendentes, validade de 15 min, até 2 ativos | `electron/agent-request-host.cjs`, `src/AgentRequests.jsx` |
 | Tarefas | Criadas pelo usuário em `backlog`. Delegação por handoff com claim e `claim_epoch` (fencing); o fim da run tira o claim | `electron/task-host.cjs`, `electron/task-delegation.cjs`, `src/PersistentTasks.jsx` |
 | Mensagens | Descobertas estruturadas entre sessões, com entrega e leitura persistidas. **Nunca** digitadas no terminal do destinatário | `electron/message-host.cjs`, `src/SessionMessages.jsx` |
@@ -84,7 +84,6 @@ A CI (`.github/workflows/ci.yml`) roda Verify em Ubuntu e Windows, mais o job Pa
   - Ações numa pasta esperam só o projeto dela. Depois de criar a worktree de uma tarefa, só esse projeto é revarrido.
   - Um repositório com dezenas de worktrees continua levando minutos para ser lido (cerca de 3 min com 50 worktrees), mas não atrasa os outros.
   - Uma pasta fora das raízes autorizadas, como a worktree de uma tarefa ao lado do repositório, ainda espera a varredura inicial completa.
-- **Aviso do Kimi fora de contexto:** "Ferramentas ATLAS no Kimi: não conectadas" aparece mesmo quando as sessões usam o OpenCode.
 - **Intermitências abertas:**
   - O NSIS silencioso deu access violation (`0xC0000005`) uma vez no runner.
   - O `test:desktop` deu `CDP timeout` uma vez após o pop-up "sempre no topo".
