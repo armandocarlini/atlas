@@ -88,7 +88,6 @@ A CI (`.github/workflows/ci.yml`) roda Verify em Ubuntu e Windows, mais o job Pa
   - O NSIS silencioso deu access violation (`0xC0000005`) uma vez no runner.
   - O `test:desktop` deu `CDP timeout` uma vez após o pop-up "sempre no topo".
   - Se repetirem, investigue em vez de reexecutar.
-- Os PRs #22, #23 e #25 do Dependabot (electron-builder etc.) aguardam revisão própria, porque mexem no empacotamento.
 - O token MCP fica no ambiente do processo do agente: a fronteira de confiança é o usuário local.
 - O agente não é avisado de ofertas fora das ferramentas e precisa consultar `handoffs_pending`.
 - O modo Foco não desconta a altura dos avisos do workspace.
