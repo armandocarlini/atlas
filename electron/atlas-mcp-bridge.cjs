@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Ponte MCP stdio do ATLAS, iniciada pelo Kimi Code a partir do mcp.json.
+// Ponte MCP stdio do ATLAS, iniciada pelo CLI do agente (mcp.json do Kimi ou
+// configuração da run no OpenCode).
 // Fora de uma sessão iniciada pelo ATLAS (sem endpoint e token no ambiente)
 // fica inerte: responde ao handshake e não expõe ferramentas.
 // stdout carrega somente JSON-RPC; diagnósticos vão para stderr.
