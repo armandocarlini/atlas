@@ -5,7 +5,7 @@ const path = require('node:path');
 const { createHash, randomBytes, randomUUID } = require('node:crypto');
 const gitEvidence = require('./git-evidence.cjs');
 
-// Ponto local de ferramentas do ATLAS para a ponte MCP de cada sessão Kimi.
+// Ponto local de ferramentas do ATLAS para a ponte MCP de cada sessão de agente.
 // Sem porta de rede: named pipe no Windows, socket Unix nos demais sistemas.
 // A identidade vem somente do token registrado para a run; argumentos de
 // ferramenta nunca escolhem projeto, remetente ou sessão chamadora.
@@ -17,7 +17,7 @@ const TOOLS = [
   {
     name: 'agents_request',
     roles: ['orchestrator'],
-    description: 'Pede ao usuário a criação de um novo agente Kimi neste projeto. Com taskId e worktree: true, a aprovação também cria uma worktree Git dedicada à tarefa (branch atlas/task-…) e o agente nasce nela. Nada é iniciado ou criado sem a aprovação explícita do usuário no ATLAS; consulte o resultado com agents_request_status.',
+    description: 'Pede ao usuário a criação de um novo agente neste projeto; o usuário escolhe o CLI e o modelo na aprovação. Com taskId e worktree: true, a aprovação também cria uma worktree Git dedicada à tarefa (branch atlas/task-…) e o agente nasce nela. Nada é iniciado ou criado sem a aprovação explícita do usuário no ATLAS; consulte o resultado com agents_request_status.',
     inputSchema: {
       type: 'object',
       properties: {
