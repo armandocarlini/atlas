@@ -64,7 +64,7 @@ if (process.argv.includes('--git-only')) {
 
 const port = process.env.ATLAS_SMOKE_PORT || '9333';
 // Simulate a previous process crash using only this run's isolated profile.
-const { createOperationalStore } = createRequire(import.meta.url)('../electron/operational-store.cjs');
+const { createOperationalStore, MIGRATIONS } = createRequire(import.meta.url)('../electron/operational-store.cjs');
 const { idFor } = createRequire(import.meta.url)('../electron/git-discovery.cjs');
 const seed = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
 const projectId = idFor(fs.realpathSync(fixture));
@@ -73,6 +73,8 @@ seed.startSession({ id: 'history-fixture', projectId, name: 'histórico-fixture'
 const extraProjectId = idFor(fs.realpathSync(extraProject));
 seed.registerProject({ id: extraProjectId, name: path.basename(extraProject), path: fs.realpathSync(extraProject) });
 seed.startSession({ id: 'reauthorized-fixture', projectId: extraProjectId, name: 'histórico-reauthorized', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'user', createdAt: new Date(Date.now() - 60000).toISOString() });
+seed.startSession({ id: 'reauthorized-fixture-2', projectId: extraProjectId, name: 'histórico-extra', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'user', createdAt: new Date(Date.now() - 55000).toISOString() });
+seed.sendMessage({ projectId: extraProjectId, fromSessionId: 'reauthorized-fixture', toSessionId: 'reauthorized-fixture-2', kind: 'discovery', subject: 'Descoberta da fixture', body: 'Mensagem persistida antes do crash simulado.', idempotencyKey: 'fixture-msg-0001' });
 seed.close();
 const endpoint = `http://127.0.0.1:${port}`;
 const electron = createRequire(import.meta.url)('electron');
@@ -179,7 +181,7 @@ try {
   console.log('PASS histórico restaurado como lost, sem PTY, composer ou métricas fictícias');
   await native('focus');
   await click(main, '.add-project');
-  await until(() => main.evaluate(`window.atlasDesktop.listAgents().then(items => items.length === 2)`), 'history loaded after project authorization without reload');
+  await until(() => main.evaluate(`window.atlasDesktop.listAgents().then(items => items.length === 3)`), 'history loaded after project authorization without reload');
   console.log('PASS autorizar projeto restaura histórico adicional sem recarregar a UI');
   await until(() => main.evaluate(`document.querySelectorAll('.worktree-item').length >= 2`), 'Git discovery UI');
   await until(() => main.evaluate(`!document.querySelector('.discovery-heading button').disabled`), 'project loading finished');
@@ -214,11 +216,29 @@ try {
   createdTaskId = createdTasks.items[0].id;
   assert.equal(createdTasks.items[0].state, 'backlog');
   console.log('PASS criar tarefa real: foco, textarea, validação, contraste e backlog persistente');
+  await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Mensagens')).click()`);
+  await until(() => main.evaluate(`document.querySelector('.messages-panel')?.innerText.includes('Descoberta da fixture')`), 'persisted message listed in panel');
+  const messagesText = await main.evaluate(`document.querySelector('.messages-panel').innerText`);
+  assert(messagesText.includes('histórico-reauthorized') && messagesText.includes('histórico-extra'), 'Message route shows real session names');
+  assert(messagesText.includes('1 não lida'), 'Unread count announced as text');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.messages-panel .scope-note').length`), 0, 'Desktop must not mark real messages as illustrative');
+  assert(await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Mensagens')).textContent.includes('1')`), 'Unread badge on messages tab');
+  await main.evaluate(`[...document.querySelectorAll('button.message-card')].find(item => item.innerText.includes('Descoberta da fixture')).click()`);
+  await until(() => main.evaluate(`document.querySelector('.messages-panel')?.innerText.includes('0 não lidas')`), 'message marked read');
+  const readMessages = await native('invoke', { channel: 'message:list', args: [{ cwd: extraProject }] });
+  assert.equal(readMessages.items.length, 1);
+  assert(readMessages.items[0].readAt, 'Read state persisted by the main process');
+  await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Tarefas')).click()`);
+  console.log('PASS mensagem real listada com rota, badge de não lida e leitura persistida');
   const target = `.worktree-item[title=${JSON.stringify(worktree)}]`;
   await click(main, target);
   await until(() => main.evaluate(`document.querySelector('.persistent-tasks').innerText.includes('Nenhuma tarefa criada')`), 'task scope changed');
   assert(!(await main.evaluate(`document.querySelector('.persistent-tasks').innerText`)).includes('Tarefa real · smoke'));
-  console.log('PASS tarefas isoladas ao trocar projeto/worktree');
+  await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Mensagens')).click()`);
+  await until(() => main.evaluate(`document.querySelector('.messages-panel')?.innerText.includes('Nenhuma mensagem')`), 'message scope changed');
+  assert(!(await main.evaluate(`document.querySelector('.messages-panel').innerText`)).includes('Descoberta da fixture'));
+  await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Tarefas')).click()`);
+  console.log('PASS tarefas e mensagens isoladas ao trocar projeto/worktree');
   await click(main, target);
   async function createTerminal(name) {
     await native('focus');
@@ -337,6 +357,10 @@ try {
   await until(() => main.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa real · smoke')`), 'task restored after renderer reload');
   assert((await main.evaluate(`document.querySelector('.persistent-tasks').innerText`)).includes('Preservar após recarregar e reabrir o banco'));
   await screenshot(main, 'task-persisted');
+  await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Mensagens')).click()`);
+  await until(() => main.evaluate(`document.querySelector('.messages-panel')?.innerText.includes('Descoberta da fixture')`), 'message persisted after renderer reload');
+  assert(await main.evaluate(`document.querySelector('.messages-panel')?.innerText.includes('lida em')`), 'read state persisted after renderer reload');
+  await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Tarefas')).click()`);
   console.log('PASS ocultar e restaurar as duas colunas');
   await click(main, '.toolbar-actions button', 'Sessão');
   await until(() => main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].some(item => item.textContent.includes('Kimi Code'))`), 'adapters listed in session modal');
@@ -402,7 +426,7 @@ await Promise.race([childExit, new Promise((_, reject) => { exitTimer = setTimeo
 assert(!stderr.includes('AttachConsole failed'), 'Closing an exited PTY must not kill the same console again');
 const persisted = new DatabaseSync(path.join(profile, 'atlas.sqlite'), { readOnly: true });
 try {
-  assert.equal(persisted.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(persisted.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.length);
   const paths = persisted.prepare('SELECT path FROM projects').all().map((item) => item.path);
   assert(paths.includes(fs.realpathSync(fixture)), 'Initial project must persist in SQLite');
   assert(paths.includes(fs.realpathSync(extraProject)), 'Authorized project must persist in SQLite');
@@ -412,6 +436,9 @@ try {
   assert.equal(persistedTask.title, 'Tarefa real · smoke');
   assert.equal(persistedTask.acceptance, 'Preservar após recarregar e reabrir o banco');
   assert.equal(persistedTask.state, 'backlog');
+  const persistedMessage = persisted.prepare('SELECT subject FROM messages').get();
+  assert.equal(persistedMessage.subject, 'Descoberta da fixture');
+  assert(persisted.prepare('SELECT read_at FROM message_deliveries').get().read_at, 'Message read state must persist in SQLite');
 } finally {
   persisted.close();
 }

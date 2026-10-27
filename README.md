@@ -13,7 +13,7 @@ Projeto criado por [Armando Ciciliano Carlini](https://github.com/armandocarlini
 
 ## Estado atual
 
-Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY e descoberta Git somente leitura. O ATLAS detecta o Kimi Code no `PATH` e abre uma sessão principal real de planejamento no projeto autorizado, além das sessões manuais. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`. Delegação, execução de tarefas, mensagens e evidências estruturadas permanecem nos próximos marcos. Os quatro cards de demonstração aparecem somente no navegador e não representam integrações ativas.
+Esta etapa contém o shell desktop em Electron, terminais PowerShell reais via PTY e descoberta Git somente leitura. O ATLAS detecta o Kimi Code no `PATH` e abre uma sessão principal real de planejamento no projeto autorizado, além das sessões manuais. A base SQLite registra projetos, identidade de sessões, runs, tarefas e eventos no processo principal. No desktop, o painel Tarefas cria e lista tarefas reais do projeto selecionado, com critérios de aceite e estado inicial `backlog`, e o painel Mensagens registra descobertas estruturadas entre sessões reais do projeto, com entrega e leitura persistidas. Delegação pelo orquestrador, execução de tarefas, handoffs e evidências estruturadas permanecem nos próximos marcos. Os quatro cards de demonstração aparecem somente no navegador e não representam integrações ativas.
 
 Já estão implementados:
 
@@ -112,6 +112,10 @@ Há uma identidade principal por projeto. Depois de saída ou interrupção, **N
 
 No desktop, selecione o projeto ou uma de suas worktrees e abra **Tarefas → Nova tarefa**. Informe título e critérios de aceite; a descrição é opcional. A tarefa entra no backlog e permanece após reinício. O comando de criação usa chave de idempotência para tolerar envio repetido sem duplicar a tarefa. Trocar de projeto altera a lista; a janela de acompanhamento recebe o mesmo estado para leitura. Execução, atribuição, revisão e conclusão ainda não estão disponíveis neste incremento.
 
+## Mensagens entre sessões
+
+Uma sessão manual real pode enviar uma **descoberta estruturada** à principal do projeto pelo botão **Descoberta** no card da sessão. Assunto e conteúdo são registrados no banco do projeto com comando idempotente (`message.send`), entrega por destinatário e eventos `message.sent`/`message.read` na trilha de auditoria. O painel **Mensagens** lista as mensagens reais do projeto selecionado com rota, data e estado de leitura; clicar em uma mensagem não lida a marca como lida. Nada é digitado no terminal do destinatário: neste incremento a mensagem é um registro visível para o usuário, não uma entrada para o modelo. Mensagens não concedem permissões nem executam ações, e projetos isolam listagem, leitura e chaves de idempotência.
+
 ## Validação
 
 ```powershell
@@ -157,12 +161,15 @@ electron/
   agent-host.cjs        Identidade e ciclo de vida das sessões de agente
   operational-store.cjs SQLite, migrations, runs e eventos persistentes
   task-host.cjs         Criação e listagem de tarefas em escopo autorizado
+  message-host.cjs      Envio, listagem e leitura de mensagens entre sessões
   orchestrator-profile.cjs Perfil de planejamento somente de leitura
 scripts/                Inicialização desktop, testes e smokes
 src/
   App.jsx               Cockpit e estado compartilhado
   TerminalView.jsx      Terminal xterm.js
   GitDiscovery.jsx      Árvore Git na navegação
+  PersistentTasks.jsx   Painel e modal de tarefas reais
+  SessionMessages.jsx   Painel e modal de mensagens reais
   appearance.js         Cores semânticas e contraste
   useModalFocus.js      Foco e isolamento dos modais
 ATLAS_PLANEJAMENTO_ARQUITETURA.md

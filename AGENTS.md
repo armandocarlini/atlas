@@ -10,8 +10,8 @@ Leia `docs/AUTONOMIA_V0_1.md`, `docs/CONTINUIDADE.md`, `README.md` e os trechos 
 
 - Electron, PowerShell via PTY, descoberta Git e janelas nativas funcionam.
 - O adaptador Kimi Code é real: o CLI é detectado pelo `PATH` e inicia sessões interativas em pastas autorizadas, com estado `running`/`exited` e sem flags de autonomia.
-- Tarefas criadas pelo usuário no desktop são reais e persistentes em `backlog`. Mensagens e evidências são ilustrativas. Os quatro cards de demonstração aparecem somente no navegador. Não os apresente como integrações ativas.
-- A base SQLite registra projetos, sessões, runs, tarefas, comandos de criação e eventos. Sessões anteriores de escopos ainda autorizados reaparecem como histórico sem PTY. Execução de tarefas, delegação e coordenação são próximos incrementos.
+- Tarefas criadas pelo usuário no desktop são reais e persistentes em `backlog`. Mensagens estruturadas entre sessões (descobertas da sessão manual para a principal) são reais e persistidas com entrega e leitura; não são digitadas no terminal do destinatário. Evidências são ilustrativas. Os quatro cards de demonstração aparecem somente no navegador. Não os apresente como integrações ativas.
+- A base SQLite registra projetos, sessões, runs, tarefas, mensagens, comandos de criação e eventos. Sessões anteriores de escopos ainda autorizados reaparecem como histórico sem PTY. Execução de tarefas, delegação pelo orquestrador, handoffs, worktrees sob política e evidências estruturadas são próximos incrementos.
 - Descoberta Git deve permanecer somente leitura. Não inicialize nem altere repositórios do usuário como parte da descoberta.
 - A sessão principal de planejamento usa perfil Kimi somente de leitura, identidade única por projeto e nova run explícita após saída. Delegação ainda não está conectada. O smoke opt-in de conversa é `npm run smoke:orchestrator`, com provedor já configurado e um único prompt curto em fixture.
 

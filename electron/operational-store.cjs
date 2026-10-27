@@ -68,6 +68,27 @@ const MIGRATIONS = [{
     CREATE UNIQUE INDEX run_attempt_per_session ON agent_runs(session_id, attempt);
     UPDATE agent_runs SET cli_version = (SELECT cli_version FROM sessions WHERE sessions.id = agent_runs.session_id), cwd = (SELECT cwd FROM sessions WHERE sessions.id = agent_runs.session_id);
   `,
+}, {
+  version: 4,
+  sql: `
+    CREATE TABLE messages (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      from_session_id TEXT NOT NULL REFERENCES sessions(id),
+      to_session_id TEXT NOT NULL REFERENCES sessions(id),
+      kind TEXT NOT NULL CHECK(kind IN ('discovery', 'note')),
+      subject TEXT NOT NULL CHECK(length(subject) BETWEEN 1 AND 160),
+      body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 4000),
+      created_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX messages_by_project ON messages(project_id, created_at);
+    CREATE TABLE message_deliveries (
+      message_id TEXT NOT NULL REFERENCES messages(id),
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      read_at TEXT,
+      PRIMARY KEY (message_id, session_id)
+    ) STRICT;
+    CREATE INDEX deliveries_unread ON message_deliveries(session_id) WHERE read_at IS NULL;
+  `,
 }];
 
 function taskPayload({ title, description = '', acceptance, idempotencyKey }) {
@@ -78,6 +99,15 @@ function taskPayload({ title, description = '', acceptance, idempotencyKey }) {
   }
   if (typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(idempotencyKey)) throw new Error('Chave de idempotência inválida.');
   return { title: title.trim(), description: description.trim(), acceptance: acceptance.trim() };
+}
+
+function messagePayload({ kind = 'discovery', subject, body, idempotencyKey }) {
+  if (!['discovery', 'note'].includes(kind)) throw new Error('Tipo de mensagem inválido.');
+  for (const [label, value, max] of [['Assunto', subject, 160], ['Conteúdo', body, 4000]]) {
+    if (typeof value !== 'string' || value.length > max || !value.trim()) throw new Error(`${label}: informe texto válido com até ${max} caracteres.`);
+  }
+  if (typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(idempotencyKey)) throw new Error('Chave de idempotência inválida.');
+  return { kind, subject: subject.trim(), body: body.trim() };
 }
 
 function transaction(db, operation) {
@@ -170,6 +200,54 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       });
     },
     listTasks: (projectId) => db.prepare(`SELECT id, project_id AS projectId, title, description, acceptance, state, version, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt FROM tasks WHERE project_id = ? ORDER BY created_at, id`).all(projectId).map((row) => ({ ...row })),
+    sendMessage(request) {
+      const payload = messagePayload(request);
+      if (request.fromSessionId === request.toSessionId) throw new Error('A sessão não pode enviar mensagem para si mesma.');
+      const encoded = JSON.stringify({ ...payload, fromSessionId: request.fromSessionId, toSessionId: request.toSessionId });
+      const hash = createHash('sha256').update(encoded).digest('hex');
+      return transaction(db, () => {
+        const previous = db.prepare('SELECT payload_hash, result FROM commands WHERE project_id = ? AND idempotency_key = ?').get(request.projectId, request.idempotencyKey);
+        if (previous) {
+          if (previous.payload_hash !== hash) throw new Error('Chave de idempotência já usada com outro conteúdo.');
+          return JSON.parse(previous.result);
+        }
+        const findSession = db.prepare('SELECT id, name FROM sessions WHERE id = ? AND project_id = ?');
+        const from = findSession.get(request.fromSessionId, request.projectId);
+        const to = findSession.get(request.toSessionId, request.projectId);
+        if (!from || !to) throw new Error('Remetente e destinatário devem ser sessões deste projeto.');
+        const id = randomUUID();
+        const commandId = randomUUID();
+        const at = now();
+        const message = { id, projectId: request.projectId, fromSessionId: from.id, toSessionId: to.id, ...payload, readAt: null, createdAt: at };
+        db.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, request.projectId, from.id, to.id, payload.kind, payload.subject, payload.body, at);
+        db.prepare('INSERT INTO message_deliveries (message_id, session_id) VALUES (?, ?)').run(id, to.id);
+        db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'message.send', id, encoded, hash, request.idempotencyKey, 'completed', 'user', at, at, JSON.stringify(message), commandId);
+        event({ projectId: request.projectId, sessionId: to.id, type: 'message.sent', payload: { messageId: id, fromSessionId: from.id, kind: payload.kind }, correlationId: commandId, at });
+        return message;
+      });
+    },
+    listMessages: (projectId) => db.prepare(`
+      SELECT m.id, m.project_id AS projectId, m.from_session_id AS fromSessionId, m.to_session_id AS toSessionId,
+        origin.name AS fromName, target.name AS toName, m.kind, m.subject, m.body,
+        d.read_at AS readAt, m.created_at AS createdAt
+      FROM messages m
+      JOIN sessions origin ON origin.id = m.from_session_id
+      JOIN sessions target ON target.id = m.to_session_id
+      JOIN message_deliveries d ON d.message_id = m.id
+      WHERE m.project_id = ? ORDER BY m.created_at, m.id`).all(projectId).map((row) => ({ ...row })),
+    markMessageRead({ projectId, messageId, sessionId }) {
+      return transaction(db, () => {
+        const delivery = db.prepare(`
+          SELECT d.read_at, m.project_id FROM message_deliveries d JOIN messages m ON m.id = d.message_id
+          WHERE d.message_id = ? AND d.session_id = ? AND m.project_id = ?`).get(messageId, sessionId, projectId);
+        if (!delivery) throw new Error('Mensagem não encontrada para esta sessão neste projeto.');
+        if (delivery.read_at) return false;
+        const at = now();
+        db.prepare('UPDATE message_deliveries SET read_at = ? WHERE message_id = ? AND session_id = ?').run(at, messageId, sessionId);
+        event({ projectId, sessionId, type: 'message.read', payload: { messageId }, at });
+        return true;
+      });
+    },
     registerProject({ id, name, path: projectPath }) {
       return transaction(db, () => {
         const previous = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);

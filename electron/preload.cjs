@@ -38,4 +38,7 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   openOrchestrator: (request) => ipcRenderer.invoke('agent:open-orchestrator', request),
   listTasks: (request) => ipcRenderer.invoke('task:list', request),
   createTask: (request) => ipcRenderer.invoke('task:create', request),
+  sendMessage: (request) => ipcRenderer.invoke('message:send', request),
+  listMessages: (request) => ipcRenderer.invoke('message:list', request),
+  markMessageRead: (request) => ipcRenderer.invoke('message:mark-read', request),
 });

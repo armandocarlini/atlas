@@ -204,6 +204,30 @@ try {
   }, 'status exibe diretório e permissões');
   console.log('PASS /status respondido pelo harness sem prompt ao modelo');
 
+  await callMain('Page.reload', {});
+  const manualCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'smoke-kimi')`;
+  await until(() => evaluateMain(`Boolean(${principalCard}) && Boolean(${manualCard})`), 'cards principal e manual após reload');
+  assert(await evaluateMain(`[...${manualCard}.querySelectorAll('button')].some(button => button.textContent === 'Descoberta')`), 'sessão manual deve oferecer envio de descoberta');
+  assert(await evaluateMain(`[...${principalCard}.querySelectorAll('button')].every(button => button.textContent !== 'Descoberta')`), 'principal não envia descoberta para si mesma');
+  await evaluateMain(`[...${manualCard}.querySelectorAll('button')].find(button => button.textContent === 'Descoberta').click()`);
+  await until(() => evaluateMain(`document.activeElement?.name === 'subject'`), 'modal de descoberta com foco no assunto');
+  assert(await evaluateMain(`document.querySelector('.modal button[type=submit]').disabled`), 'descoberta vazia não deve enviar');
+  await evaluateMain(`(() => { for (const [name, value] of Object.entries({ subject: 'Descoberta real do smoke', body: 'Sequência ANSI de resize diverge entre ConPTY e WinPTY.' })) { const field = document.querySelector('.modal [name=' + name + ']'); Object.getOwnPropertyDescriptor(name === 'subject' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype, 'value').set.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })); } })()`);
+  await evaluateMain(`document.querySelector('.modal form').requestSubmit()`);
+  await until(() => evaluateMain(`!document.querySelector('.modal-backdrop')`), 'descoberta enviada pelo modal');
+  const sentMessages = await native('invoke', { channel: 'message:list', args: [{ cwd: fixture }] });
+  assert.equal(sentMessages.items.length, 1);
+  assert.equal(sentMessages.items[0].subject, 'Descoberta real do smoke');
+  assert.equal(sentMessages.items[0].fromSessionId, agent.id);
+  assert.equal(sentMessages.items[0].toSessionId, principal.id);
+  assert.equal(sentMessages.items[0].readAt, null);
+  await evaluateMain(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Mensagens')).click()`);
+  await until(() => evaluateMain(`document.querySelector('.messages-panel')?.innerText.includes('Descoberta real do smoke')`), 'descoberta listada no painel');
+  assert(await evaluateMain(`document.querySelector('.messages-panel').innerText.includes('1 não lida')`), 'contagem de não lidas');
+  await evaluateMain(`[...document.querySelectorAll('button.message-card')].find(item => item.innerText.includes('Descoberta real do smoke')).click()`);
+  await until(() => evaluateMain(`document.querySelector('.messages-panel')?.innerText.includes('0 não lidas')`), 'descoberta marcada como lida');
+  console.log('PASS descoberta real entre sessões: modal, persistência, painel e leitura');
+
   await native('invoke', { channel: 'terminal:write', args: [{ terminalId: agent.ptyId, data: '/exit\r' }] });
   await until(async () => {
     const agents = await native('invoke', { channel: 'agent:list' });
@@ -252,7 +276,11 @@ try {
   assert.equal(restoredPrincipal.archived, true);
   assert.equal(restoredPrincipal.ptyId, null);
   assert.equal(restoredPrincipal.runState, 'lost');
-  console.log('PASS reinício real do Electron preserva identidade e saída do Kimi sem recriar PTY');
+  const persistedMessages = await native('invoke', { channel: 'message:list', args: [{ cwd: fixture }] });
+  assert.equal(persistedMessages.items.length, 1);
+  assert.equal(persistedMessages.items[0].subject, 'Descoberta real do smoke');
+  assert(persistedMessages.items[0].readAt, 'Leitura da descoberta preservada após reinício');
+  console.log('PASS reinício real do Electron preserva identidade, saída do Kimi e mensagens sem recriar PTY');
 
   fs.writeFileSync(path.join(resultsDir, 'agent-result.json'), JSON.stringify({ passed: true, version: kimi.version, conversation: configuredModel, fixture: null }, null, 2));
   exitCode = 0;
