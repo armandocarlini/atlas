@@ -7,6 +7,7 @@ const { createAgentHost } = require('./agent-host.cjs');
 const { createPtyTransport, registerTransportChannels } = require('./pty-transport.cjs');
 const { createOperationalStore, closeOperationalStore } = require('./operational-store.cjs');
 const { createTaskHost } = require('./task-host.cjs');
+const { createMessageHost } = require('./message-host.cjs');
 const { ensureOrchestratorProfile } = require('./orchestrator-profile.cjs');
 
 let mainWindow = null;
@@ -244,6 +245,7 @@ app.whenReady().then(async () => {
   });
   await projectHost.ready;
   createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
+  createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
   createMainWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

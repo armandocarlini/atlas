@@ -44,6 +44,7 @@ import { appearanceTokens, contrastInk } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
 import { agentSession, mergeAgentSessions, sessionExit } from './session-state.js';
 import { PersistentTaskPanel, NewTaskModal } from './PersistentTasks.jsx';
+import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
 
 const THEME_PRESETS = [
   { name: 'Laranja', color: '#f2994a' },
@@ -254,7 +255,7 @@ function HarnessIntro({ harness, session }) {
   );
 }
 
-function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onExit, onRestart, desktop, theme, detached = false, popup = false }) {
+function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onExit, onRestart, onSendDiscovery, desktop, theme, detached = false, popup = false }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
@@ -286,6 +287,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
         <div className="session-actions">
           {!session.ptyId && !session.archived && <span className="token-count">{session.tokens} <span>tokens</span></span>}
           {session.roleKind === 'orchestrator' && session.exited && onRestart && <button className="session-control" onClick={(event) => { event.stopPropagation(); onRestart(session); }}>Nova execução</button>}
+          {onSendDiscovery && session.roleKind === 'agent' && !session.archived && <button className="session-control" title="Enviar descoberta estruturada à sessão principal" onClick={(event) => { event.stopPropagation(); onSendDiscovery(session); }}>Descoberta</button>}
           {!session.archived && <button className="session-control" onClick={(event) => { event.stopPropagation(); onPopup(session); }}>{detached || popup ? 'Reintegrar' : 'Pop-up'}</button>}
           {!popup && !detached && <button className="session-control" title="Alternar foco" aria-label={`Focar ${session.name}`} onClick={(event) => { event.stopPropagation(); onFocus(session.id); }}>{focused ? 'Grid' : 'Foco'}</button>}
         </div>
@@ -400,7 +402,7 @@ function AppearanceModal({ theme, onChange, onClose }) {
 
 const PANEL_LABELS = { task: 'Tarefas', messages: 'Mensagens', evidence: 'Evidências' };
 
-function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReorderPanel, columnDragOver, columnDragging, onColumnPointerDown, style, detached = false, native = false, onToggleDetach, onPopupPointerDown, onHideColumn, taskPanel }) {
+function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReorderPanel, columnDragOver, columnDragging, onColumnPointerDown, style, detached = false, native = false, onToggleDetach, onPopupPointerDown, onHideColumn, taskPanel, messagesPanel, unreadMessages }) {
   const [dragOverPanel, setDragOverPanel] = useState(null);
   const activePanel = panels.includes(tab) ? tab : panels[0];
   return (
@@ -444,7 +446,7 @@ function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReord
                   setDragOverPanel(null);
                 }}
                 title={`Arrastar para reordenar ${PANEL_LABELS[id]} dentro da coluna`}
-              >{PANEL_LABELS[id]}{id === 'messages' && <span className="tab-badge">2</span>}</button>
+              >{PANEL_LABELS[id]}{id === 'messages' && (messagesPanel ? (unreadMessages > 0 && <span className="tab-badge">{unreadMessages}</span>) : <span className="tab-badge">2</span>)}</button>
             ))}
           </div>
         </div>
@@ -471,14 +473,13 @@ function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReord
         </section>
       </>)}
 
-      {activePanel === 'messages' && <section className="messages-panel">
-        {taskPanel && <p className="scope-note">Mensagens ilustrativas · integração pendente.</p>}
+      {activePanel === 'messages' && (messagesPanel || <section className="messages-panel">
         <div className="section-kicker"><span>COLABORAÇÃO</span><span>2 não lidas</span></div>
         <h2>Mensagens entre sessões</h2>
         <div className="message-card unread"><div className="message-route"><span>exploracao-terminal</span><Send size={12} /><span>orquestrador</span></div><p>Resize e entrada validados. Encontrei uma divergência no tratamento de sequências ANSI.</p><small>ATL-024 · agora · mensagem #0184</small></div>
         <div className="message-card unread"><div className="message-route"><span>atlas-core</span><Send size={12} /><span>orquestrador</span></div><p>Contratos revisados. Handoff pronto para revisão com 17 testes registrados.</p><small>ATL-031 · 2 min · handoff #0042</small></div>
         <div className="message-card"><div className="message-route"><span>orquestrador</span><Send size={12} /><span>atlas-core</span></div><p>Priorize o caso de entrega duplicada antes de submeter a revisão.</p><small>ATL-031 · 8 min · lida</small></div>
-      </section>}
+      </section>)}
 
       {activePanel === 'evidence' && <section className="evidence-panel">
         {taskPanel && <p className="scope-note">Evidências ilustrativas · integração pendente.</p>}
@@ -512,6 +513,8 @@ export default function App() {
   const [activeTask, setActiveTask] = useState(tasks[0]);
   const [taskState, setTaskState] = useState({ projectId: null, projectName: '', items: [], loading: false, error: '' });
   const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [messageState, setMessageState] = useState({ projectId: null, items: [], loading: false, error: '' });
+  const [messageModal, setMessageModal] = useState(null);
   const [orchestratorStatus, setOrchestratorStatus] = useState({ loading: false, error: '' });
   const [inspectorTab, setInspectorTab] = useState('task');
   const [initialDockLayout] = useState(getInitialDockLayout);
@@ -533,7 +536,7 @@ export default function App() {
   const isSecondaryWindow = isNativePanelWindow || isNativeTerminalWindow;
   const panelChannelRef = useRef(null);
   const panelStateRef = useRef(null);
-  panelStateRef.current = { activeTask, inspectorTab, docks, theme, sessions, selectedId, taskState };
+  panelStateRef.current = { activeTask, inspectorTab, docks, theme, sessions, selectedId, taskState, messageState };
 
   const currentProject = useMemo(() => {
     const equal = (left, right) => left.toLowerCase() === right.toLowerCase();
@@ -569,6 +572,7 @@ export default function App() {
         setSessions(data.state.sessions);
         setSelectedId(data.state.selectedId);
         if (data.state.taskState) setTaskState(data.state.taskState);
+        if (data.state.messageState) setMessageState(data.state.messageState);
       };
       channel.postMessage({ type: 'ready' });
     } else {
@@ -597,7 +601,7 @@ export default function App() {
   useEffect(() => {
     if (isSecondaryWindow || !panelChannelRef.current) return;
     panelChannelRef.current.postMessage({ type: 'state', state: panelStateRef.current });
-  }, [activeTask, inspectorTab, docks, theme, sessions, selectedId, taskState, isSecondaryWindow]);
+  }, [activeTask, inspectorTab, docks, theme, sessions, selectedId, taskState, messageState, isSecondaryWindow]);
 
   useEffect(() => {
     if (!desktop?.isDesktop || isSecondaryWindow) return undefined;
@@ -668,10 +672,16 @@ export default function App() {
       || projects.find((item) => item.repositories.some((repo) => repo.worktrees.some((worktree) => !worktree.statusError && samePath(worktree.path, workingDirectory))));
     let active = true;
     setTaskState({ projectId: project?.id || null, projectName: project?.name || '', items: [], loading: Boolean(project), error: '' });
+    setMessageState({ projectId: project?.id || null, items: [], loading: Boolean(project), error: '' });
     if (project) desktop.listTasks({ cwd: workingDirectory }).then((state) => {
       if (active) setTaskState({ ...state, loading: false, error: '' });
     }).catch((error) => {
       if (active) setTaskState({ projectId: project.id, projectName: project.name, items: [], loading: false, error: error.message });
+    });
+    if (project) desktop.listMessages({ cwd: workingDirectory }).then((state) => {
+      if (active) setMessageState({ ...state, loading: false, error: '' });
+    }).catch((error) => {
+      if (active) setMessageState({ projectId: project.id, items: [], loading: false, error: error.message });
     });
     return () => { active = false; };
   }, [isSecondaryWindow, projects, workingDirectory]);
@@ -688,7 +698,34 @@ export default function App() {
     }
   }
 
+  async function sendDiscovery(request) {
+    const from = messageModal?.session;
+    const to = projectSessions.find((session) => session.roleKind === 'orchestrator');
+    if (!from || !to || from.id === to.id) return 'Selecione uma sessão manual e a principal do projeto.';
+    try {
+      const message = await desktop.sendMessage({ ...request, cwd: workingDirectory, fromSessionId: from.id, toSessionId: to.id });
+      setMessageState((state) => state.projectId === message.projectId ? { ...state, items: [...state.items.filter((item) => item.id !== message.id), { ...message, fromName: from.name, toName: to.name }] } : state);
+      setMessageModal(null);
+      notify('Descoberta registrada para a sessão principal');
+      return null;
+    } catch (error) {
+      return error.message;
+    }
+  }
+
+  async function markMessageRead(message) {
+    try {
+      await desktop.markMessageRead({ cwd: workingDirectory, messageId: message.id, sessionId: message.toSessionId });
+      setMessageState((state) => state.projectId === message.projectId
+        ? { ...state, items: state.items.map((item) => item.id === message.id && !item.readAt ? { ...item, readAt: new Date().toISOString() } : item) }
+        : state);
+    } catch (error) {
+      notify(`Não foi possível marcar a mensagem como lida: ${error.message}`);
+    }
+  }
+
   const persistentTaskPanel = desktop?.isDesktop ? <PersistentTaskPanel state={taskState} onNew={isSecondaryWindow ? undefined : () => setTaskModalOpen(true)} /> : null;
+  const sessionMessagesPanel = desktop?.isDesktop ? <SessionMessagesPanel state={messageState} readOnly={isSecondaryWindow} onMarkRead={markMessageRead} /> : null;
 
   useEffect(() => {
     document.body.classList.toggle('native-panel-window', Boolean(isNativePanelWindow));
@@ -1050,6 +1087,8 @@ export default function App() {
         <Inspector
           activeTask={activeTask}
           taskPanel={persistentTaskPanel}
+          messagesPanel={sessionMessagesPanel}
+          unreadMessages={messageState.items.filter((message) => !message.readAt).length}
           onTaskSelect={(task) => {
             setActiveTask(task);
             panelChannelRef.current?.postMessage({ type: 'task', taskId: task.id });
@@ -1194,6 +1233,7 @@ export default function App() {
               onPopup={toggleTerminalPopup}
               onExit={updateSessionExit}
               onRestart={restartOrchestrator}
+              onSendDiscovery={desktop?.isDesktop && projectSessions.some((session) => session.roleKind === 'orchestrator') ? (session) => setMessageModal({ session }) : undefined}
               onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
             />)}
             {!focusId && <button className="empty-session" onClick={() => setModal('session')}><span><Plus size={19} /></span><strong>Nova sessão de agente</strong><small>Manual, no diretório selecionado</small></button>}
@@ -1203,6 +1243,8 @@ export default function App() {
         {!panelsDetached && !hiddenColumns.right && <Inspector
           activeTask={activeTask} onTaskSelect={setActiveTask}
           taskPanel={persistentTaskPanel}
+          messagesPanel={sessionMessagesPanel}
+          unreadMessages={messageState.items.filter((message) => !message.readAt).length}
           tab={inspectorTab} onTabChange={setInspectorTab}
           panels={docks.right} onReorderPanel={reorderPanel}
           columnDragOver={columnDrag?.target === 'right'}
@@ -1223,6 +1265,8 @@ export default function App() {
         <Inspector
           activeTask={activeTask} onTaskSelect={setActiveTask}
           taskPanel={persistentTaskPanel}
+          messagesPanel={sessionMessagesPanel}
+          unreadMessages={messageState.items.filter((message) => !message.readAt).length}
           tab={inspectorTab} onTabChange={setInspectorTab}
           panels={docks.right} onReorderPanel={reorderPanel}
           detached onToggleDetach={toggleDetachedPanels}
@@ -1238,6 +1282,7 @@ export default function App() {
       {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
       {taskModalOpen && <NewTaskModal projectName={taskState.projectName} cwd={workingDirectory} onCreate={createTask} onClose={() => setTaskModalOpen(false)} />}
+      {messageModal && <NewMessageModal projectName={currentProject?.name || activeProject} fromName={messageModal.session.name} toName={projectSessions.find((session) => session.roleKind === 'orchestrator')?.name || 'principal'} onSend={sendDiscovery} onClose={() => setMessageModal(null)} />}
       {toast && <div className="toast" role="status"><CheckCircle2 size={15} />{toast}</div>}
     </div>
   );

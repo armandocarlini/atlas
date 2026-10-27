@@ -229,6 +229,10 @@ kbd { color: var(--faint); background: #13171a; border: 1px solid var(--border);
 .queue-item > svg { color: #41494e; }
 .messages-panel h2, .evidence-panel h2 { margin-top: 18px; }
 .message-card { padding: 12px 0; border-bottom: 1px solid var(--border-soft); position: relative; }
+button.message-card { display: block; width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid var(--border-soft); color: inherit; font: inherit; cursor: pointer; }
+button.message-card:disabled { cursor: default; }
+button.message-card:not(:disabled):hover .message-route span:first-child { color: var(--accent-text); }
+button.message-card strong { display: block; font-size: 11px; font-weight: 550; margin-top: 6px; }
 .message-card.unread::before { content: ""; position: absolute; left: -14px; top: 17px; width: 2px; height: 25px; background: var(--accent); }
 .message-route { display: flex; align-items: center; gap: 6px; color: #849096; font: 7px var(--mono); }
 .message-route span:first-child { color: #75c9c8; }
