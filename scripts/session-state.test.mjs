@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { agentSession, mergeAgentSessions, sessionExit } from '../src/session-state.js';
+import { agentSession, mergeAgentSessions, sessionExit, usesKimi } from '../src/session-state.js';
 
 const agent = { id: 'session-a', name: 'Agente', cli: 'Kimi Code', version: '2.3.2', cwd: '/fixture', projectId: 'project-a', state: 'running', ptyId: 'pty-a', origin: 'user' };
 
@@ -44,4 +44,12 @@ test('saída atrasada do PTY anterior não encerra nova run da mesma sessão', (
   assert.deepEqual(sessionExit(current, agent.id, { ptyId: 'old-pty', exitCode: 0 }), current);
   assert.deepEqual(sessionExit(current, agent.id, { exitCode: 0 }), current);
   assert.equal(sessionExit(current, agent.id, { ptyId: 'new-pty', exitCode: 0 })[0].exited, true);
+});
+
+test('regressão: aviso do Kimi só com sessão Kimi no projeto', () => {
+  assert.equal(usesKimi([]), false);
+  assert.equal(usesKimi([{ cli: 'OpenCode' }, { cli: 'OpenCode', archived: true }]), false, 'sessões OpenCode não pedem a integração do Kimi');
+  assert.equal(usesKimi([{ cli: 'OpenCode' }, { cli: 'Kimi Code' }]), true);
+  assert.equal(usesKimi([{ cli: 'Kimi Code', archived: true }]), true, 'histórico Kimi: a próxima execução precisa das ferramentas');
+  assert.equal(usesKimi([{ cli: undefined }]), false);
 });

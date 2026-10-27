@@ -42,7 +42,7 @@ import TerminalView from './TerminalView.jsx';
 import GitDiscovery from './GitDiscovery.jsx';
 import { appearanceTokens, contrastInk } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
-import { agentSession, mergeAgentSessions, sessionExit } from './session-state.js';
+import { agentSession, mergeAgentSessions, sessionExit, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
@@ -1512,7 +1512,7 @@ export default function App() {
 
           {/* Avisos ocupam uma única linha da grade; a grade de sessões fica com o espaço restante. */}
           <div className="workspace-notices">
-          {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModalOpen(true)} onDismiss={() => setIntegrationNoticeDismissed(true)} />}
+          {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed && usesKimi(projectSessions) && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModalOpen(true)} onDismiss={() => setIntegrationNoticeDismissed(true)} />}
           {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} adapters={adapters} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}
 
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.loading && <p className="scope-note" role="status">Abrindo sessão principal…</p>}
