@@ -11,6 +11,8 @@ const { createMessageHost } = require('./message-host.cjs');
 const { createMcpHost } = require('./mcp-host.cjs');
 const { createIntegrationHost } = require('./integration-host.cjs');
 const { createAgentRequestHost } = require('./agent-request-host.cjs');
+const { createOpenPathHost } = require('./open-path-host.cjs');
+const { createExplorerIntegration, createExplorerHost } = require('./explorer-integration.cjs');
 const { ensureOrchestratorProfile } = require('./orchestrator-profile.cjs');
 
 let mainWindow = null;
@@ -222,6 +224,13 @@ ipcMain.handle('terminal-window:close', (event, { sessionId } = {}) => {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+// "Abrir no ATLAS" numa instância já aberta: a segunda instância só repassa os argumentos.
+let openPathHost = null;
+const earlyOpenRequests = [];
+app.on('second-instance', (_event, argv) => {
+  if (openPathHost) openPathHost.handleArgv(argv).catch((error) => console.error(error));
+  else earlyOpenRequests.push(argv);
+});
 app.whenReady().then(async () => {
   operationalStore = createOperationalStore({ filename: path.join(app.getPath('userData'), 'atlas.sqlite') });
   operationalStore.reconcileRuns();
@@ -278,6 +287,26 @@ app.whenReady().then(async () => {
   createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
   createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
   createMainWindow();
+  openPathHost = createOpenPathHost({
+    ipcMain,
+    projectHost,
+    isMainSender: terminalHost.isMainSender,
+    notify: (request) => sendToMain('open-path:requested', { kind: request.kind }),
+    focusMain: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    },
+  });
+  // Smokes usam uma chave de fixture no registro; o aplicativo instalado grava só em HKCU\Software\Classes.
+  const explorerRoot = !app.isPackaged && process.env.ATLAS_SMOKE_PROFILE && process.env.ATLAS_EXPLORER_ROOT ? process.env.ATLAS_EXPLORER_ROOT : undefined;
+  createExplorerHost({
+    ipcMain,
+    isMainSender: terminalHost.isMainSender,
+    integration: createExplorerIntegration({ execPath: process.execPath, appPath: app.isPackaged ? null : app.getAppPath(), root: explorerRoot }),
+  });
+  for (const argv of [process.argv, ...earlyOpenRequests.splice(0)]) openPathHost.handleArgv(argv).catch((error) => console.error(error));
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });

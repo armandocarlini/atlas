@@ -53,4 +53,11 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   approveAgentRequest: (request) => ipcRenderer.invoke('agent-request:approve', request),
   rejectAgentRequest: (request) => ipcRenderer.invoke('agent-request:reject', request),
   onAgentRequestsChanged: (callback) => subscribe('agent-request:changed', callback),
+  takeOpenPath: () => ipcRenderer.invoke('open-path:take'),
+  authorizeOpenPath: (request) => ipcRenderer.invoke('open-path:authorize', request),
+  dismissOpenPath: (request) => ipcRenderer.invoke('open-path:dismiss', request),
+  onOpenPathRequested: (callback) => subscribe('open-path:requested', callback),
+  getExplorerIntegration: () => ipcRenderer.invoke('explorer:status'),
+  installExplorerIntegration: (request) => ipcRenderer.invoke('explorer:install', request),
+  removeExplorerIntegration: (request) => ipcRenderer.invoke('explorer:remove', request),
 });
