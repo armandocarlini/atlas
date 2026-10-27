@@ -3,7 +3,7 @@ const config = require('./kimi-mcp-config.cjs');
 
 // IPC da integração MCP do ATLAS com o Kimi Code. Instalar ou remover exige
 // confirmação explícita vinda do diálogo de consentimento da janela principal.
-function createIntegrationHost({ ipcMain, isMainSender, execPath = process.execPath, bridgePath = path.join(__dirname, config.BRIDGE_FILE), env = process.env }) {
+function createIntegrationHost({ ipcMain, isMainSender, execPath = process.execPath, bridgePath = config.bridgePathFor(__dirname), env = process.env }) {
   const entry = config.atlasEntry({ execPath, bridgePath });
   const entryText = JSON.stringify({ mcpServers: { [config.SERVER_NAME]: entry } }, null, 2);
 

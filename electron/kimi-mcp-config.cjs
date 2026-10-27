@@ -13,6 +13,12 @@ function kimiHome(env = process.env) {
   return env.KIMI_CODE_HOME || path.join(os.homedir(), '.kimi-code');
 }
 
+// No app empacotado a ponte fica fora do app.asar (asarUnpack): o CLI do agente a
+// inicia como processo Node separado, que lê o arquivo diretamente do disco.
+function bridgePathFor(directory) {
+  return path.join(directory, BRIDGE_FILE).replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+}
+
 function atlasEntry({ execPath, bridgePath }) {
   return { command: execPath, args: [bridgePath], env: { ELECTRON_RUN_AS_NODE: '1' } };
 }
@@ -100,4 +106,4 @@ function remove({ home, entry }) {
   return getStatus({ home, entry });
 }
 
-module.exports = { SERVER_NAME, BRIDGE_FILE, kimiHome, atlasEntry, isManaged, getStatus, install, remove };
+module.exports = { SERVER_NAME, BRIDGE_FILE, bridgePathFor, kimiHome, atlasEntry, isManaged, getStatus, install, remove };
