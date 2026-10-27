@@ -103,3 +103,18 @@ test('reg.exe real em chave de fixture isolada (somente Windows)', { skip: proce
   assert(query.includes('"--atlas-open=%V"'));
   assert.equal((await integration.remove()).state, 'absent');
 });
+
+test('regressão: o estado lê as quatro chaves numa única leitura do registro', async () => {
+  const registry = fakeRegistry();
+  const batches = [];
+  const readDefaults = async (keys) => { batches.push(keys); return Promise.all(keys.map(registry.readDefault)); };
+  const integration = createExplorerIntegration({ execPath: EXE, root: 'HKCU\\Software\\Teste', reg: registry.reg, readDefaults, platform: 'win32' });
+  assert.equal((await integration.install()).state, 'installed');
+  assert.equal(batches.length, 1, 'um único PowerShell por consulta');
+  assert.deepEqual(batches[0], [
+    'HKCU\\Software\\Teste\\Directory\\shell\\ATLAS.Open',
+    'HKCU\\Software\\Teste\\Directory\\shell\\ATLAS.Open\\command',
+    'HKCU\\Software\\Teste\\Directory\\Background\\shell\\ATLAS.Open',
+    'HKCU\\Software\\Teste\\Directory\\Background\\shell\\ATLAS.Open\\command',
+  ]);
+});
