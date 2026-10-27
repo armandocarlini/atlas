@@ -157,8 +157,9 @@ async function checkApp(exe) {
     // Regressão: dentro do asar a ponte não pode ser iniciada pelo CLI do agente.
     const integration = await cdp.evaluate('window.atlasDesktop.getKimiIntegration()');
     const entry = JSON.parse(integration.entryText).mcpServers.atlas;
-    assert.equal(entry.command.toLowerCase(), fs.realpathSync.native(exe).toLowerCase());
-    assert.equal(entry.args[0].toLowerCase(), path.join(path.dirname(fs.realpathSync.native(exe)), 'resources', 'app.asar.unpacked', 'electron', 'atlas-mcp-bridge.cjs').toLowerCase());
+    const canonical = (file) => fs.realpathSync.native(file).toLowerCase();
+    assert.equal(canonical(entry.command), canonical(exe));
+    assert.equal(canonical(entry.args[0]), canonical(path.join(path.dirname(exe), 'resources', 'app.asar.unpacked', 'electron', 'atlas-mcp-bridge.cjs')));
     assert(fs.existsSync(entry.args[0]));
     assert.equal(integration.state, 'absent', 'status lido da home de fixture, sem gravar');
     console.log('PASS integração MCP empacotada aponta para a ponte fora do asar');
