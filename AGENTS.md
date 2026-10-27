@@ -30,6 +30,7 @@ Todo agente que trabalha no ATLAS usa o ai-memory, para que o que uma sessão ap
   - Confira com `ai-memory doctor`.
   - Se um CLI aparecer "sem captura", instale o hook com `ai-memory install-hooks --agent <cli> --apply`.
   - Sem permissão para isso, avise o usuário.
+  - **Codex:** além de instalado, cada hook precisa ser *confiado* pelo usuário em `/hooks` no Codex CLI. A confiança é registrada contra o hash do hook. Hook novo ou alterado (inclusive depois de `install-hooks --apply`) é ignorado em silêncio até ser confiado de novo. Não use `--dangerously-bypass-hook-trust`: a confiança é decisão do usuário.
 - **Indisponível:** se o ai-memory não responder, siga pelos documentos versionados e registre "ai-memory indisponível" no PR. A ausência dele nunca bloqueia o trabalho.
 - **O que vai para onde:**
   - regras vão para este arquivo;
