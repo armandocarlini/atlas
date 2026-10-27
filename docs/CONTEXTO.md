@@ -79,7 +79,11 @@ A CI (`.github/workflows/ci.yml`) roda Verify em Ubuntu e Windows, mais o job Pa
 
 ## Limites e pendências conhecidas
 
-- **Abertura lenta com projetos grandes:** a janela principal só aparece depois da varredura Git de todos os projetos cadastrados (148–172 s numa máquina com um projeto de 50 worktrees). Criar a worktree de uma tarefa revarre tudo, e o agente demora cerca de 2 min para iniciar.
+- **Projeto grande demora a ser lido:**
+  - A janela abre sem esperar a varredura Git; cada projeto aparece quando a dele termina, e a barra lateral mostra os que ainda estão sendo lidos.
+  - Ações numa pasta esperam só o projeto dela. Depois de criar a worktree de uma tarefa, só esse projeto é revarrido.
+  - Um repositório com dezenas de worktrees continua levando minutos para ser lido (cerca de 3 min com 50 worktrees), mas não atrasa os outros.
+  - Uma pasta fora das raízes autorizadas, como a worktree de uma tarefa ao lado do repositório, ainda espera a varredura inicial completa.
 - **Aviso do Kimi fora de contexto:** "Ferramentas ATLAS no Kimi: não conectadas" aparece mesmo quando as sessões usam o OpenCode.
 - **Intermitências abertas:**
   - O NSIS silencioso deu access violation (`0xC0000005`) uma vez no runner.

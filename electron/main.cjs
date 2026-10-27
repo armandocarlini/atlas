@@ -234,7 +234,11 @@ app.on('second-instance', (_event, argv) => {
 app.whenReady().then(async () => {
   operationalStore = createOperationalStore({ filename: path.join(app.getPath('userData'), 'atlas.sqlite') });
   operationalStore.reconcileRuns();
-  projectHost = createProjectHost({ app, dialog, ipcMain, getMainWindow, store: operationalStore });
+  // Cada projeto avisa a interface quando a varredura dele termina.
+  projectHost = createProjectHost({
+    app, dialog, ipcMain, getMainWindow, store: operationalStore,
+    onChange: (project) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('project:changed', project); },
+  });
   ptyTransport = createPtyTransport({ getMainWindow });
   const terminalHost = createTerminalHost({
     ipcMain,
@@ -285,7 +289,8 @@ app.whenReady().then(async () => {
     agentHost,
     onChange: (projectId) => sendToMain('agent-request:changed', { projectId }),
   });
-  await projectHost.ready;
+  // A janela não espera a varredura Git: os projetos chegam conforme terminam.
+  await projectHost.rootsReady;
   createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
   createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
   createMainWindow();

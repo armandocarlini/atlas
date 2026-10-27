@@ -1,5 +1,6 @@
 const { randomUUID } = require('node:crypto');
 const { discoverAdapters, listModels, launchFor, MODEL_PATTERN } = require('./agent-adapters.cjs');
+const { waitForCwd } = require('./project-host.cjs');
 
 const MODELS_CACHE_MS = 60 * 1000;
 
@@ -117,7 +118,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
   });
 
   async function createAgent(request = {}, { role = 'agent', existing = null, origin = 'user', launch: resolved = null } = {}) {
-    await projectHost.ready;
+    await waitForCwd(projectHost, request.cwd);
 
     const { adapter, model } = resolved || await resolveLaunch(request.adapterId, request.model);
 
@@ -212,7 +213,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
   ipcMain.handle('agent:open-orchestrator', async (event, request = {}) => {
     if (!isMainSender(event)) throw new Error('Janela não autorizada a abrir o orquestrador.');
     if (!store || typeof orchestratorProfile !== 'string') throw new Error('Perfil do orquestrador não configurado.');
-    await projectHost.ready;
+    await waitForCwd(projectHost, request?.cwd);
     if (!request || !projectHost.isAllowedCwd(request.cwd)) throw new Error('Selecione uma pasta autorizada.');
     const project = projectHost.getProjectForCwd(request.cwd);
     if (!project || !projectHost.isAllowedCwd(project.path)) throw new Error('Projeto não encontrado para a pasta autorizada.');

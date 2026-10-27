@@ -17,6 +17,8 @@ export default function GitDiscovery({ projects, selectedWorktree, onSelect, onR
   const [collapsed, setCollapsed] = useState({});
   const repositories = projects.flatMap((project) => project.repositories.map((repository) => ({ project, repository })));
   const errors = projects.flatMap((project) => project.errors.map((error) => ({ ...error, project: project.name })));
+  // Projetos ainda em varredura: a janela abre antes e eles aparecem ao terminar.
+  const scanning = projects.filter((project) => project.scanning);
 
   return (
     <section className="git-discovery" aria-label="Repositórios e worktrees descobertos">
@@ -26,6 +28,7 @@ export default function GitDiscovery({ projects, selectedWorktree, onSelect, onR
       </div>
       <div className="discovery-content">
         {!loading && repositories.length === 0 && <p className="discovery-empty">Nenhum repositório Git nas pastas autorizadas.</p>}
+        {scanning.length > 0 && <p className="discovery-empty" role="status">Lendo o Git de {scanning.map((project) => project.name).join(', ')}…</p>}
         {repositories.map(({ project, repository }) => {
           const isCollapsed = collapsed[repository.id];
           return (
