@@ -61,6 +61,17 @@ A ordem vem da arquitetura, ajustada ao que já foi entregue: o segundo adaptado
 - **v0.5:** runner independente da UI e recuperação ampliada.
 - **Futuro:** acesso remoto, iPhone, notificações push, Voice-to-Prompt e runners na nuvem.
 
+## Possíveis ideias (sem decisão)
+
+Anotações para avaliar mais tarde. Não são plano nem compromisso, e nenhum agente começa estes itens sem pedido do mantenedor.
+
+### Redesign visual do ATLAS
+
+O mantenedor pretende refazer todo o design visual mais adiante, e a direção ainda não está definida. Pontos observados em 27/10/2026, para considerar nessa hora:
+
+- **Terminal com a aparência do terminal do sistema.** O processo já é nativo (ConPTY), mas o desenho no xterm.js usa as cores do ATLAS: fundo do tema, cursor e seleção na cor de destaque, paleta ANSI padrão do xterm, fonte 13 com entrelinha 1,25, sem margem interna. Possível caminho: ler, só para leitura, o `settings.json` do Terminal do Windows (fonte, tamanho, esquema de cores, cursor) e cair no padrão do Windows (Cascadia Mono, Campbell) quando ele não existir; copiar e colar como no Windows; cor do ATLAS só na moldura do card.
+- **Abertura sem "resultado incerto".** Hoje o processo morre com o app, e na abertura seguinte a reconciliação marca a run como `lost`. Todo projeto abre no card "Histórico de sessão" com borda de erro e datas em ISO. Possível caminho: registrar o fechamento normal do ATLAS como encerramento, guardar a última tela do terminal e mostrá-la só para leitura, com "Nova execução" no próprio card. Guardar a tela também ajuda o item 2 da v0.2.
+
 ## Decisões em aberto
 
 | Tema | Situação |
