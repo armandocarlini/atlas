@@ -1,6 +1,6 @@
 # Plano v0.2 — LLM por função
 
-Situação: **proposta, aguardando aprovação do mantenedor.** Nada deste plano foi implementado.
+Situação: **aprovado pelo mantenedor em 29/10/2026**, com os ajustes registrados em cada decisão. A implementação segue as fases abaixo.
 
 Cobre o item 1 do `docs/ROADMAP.md` (LLM por função) e registra a investigação do item 2 (trocar o LLM de um agente sem perder a tela). O item 3 (suíte de regressão liga/desliga) e o redesign visual ficam fora.
 
@@ -64,17 +64,30 @@ Fica no banco, e não em arquivo de configuração, para entrar no backup e rest
   - não aparece para os pedidos de agente;
   - não pode ser apagada;
   - o diálogo da principal vem preenchido com ela.
-- **"LLM mais potente como recomendada":** os CLIs devolvem só nomes de modelos (`listModels`), sem nenhuma medida de capacidade. Por isso, no MVP, a recomendação é **orientação na tela, não pré-seleção automática**.
-  - Ao configurar o Orquestrador, o ATLAS diz: "Recomendado: o modelo mais capaz que você tiver. O Orquestrador planeja e delega, e um erro dele se espalha pelos agentes."
-  - O usuário escolhe, e essa escolha passa a preencher a principal.
-  - Ordenar os modelos por capacidade de verdade depende do catálogo de modelos da v0.4. Uma lista de nomes "fortes" mantida à mão no código envelheceria rápido e viraria, na prática, um modelo padrão do ATLAS.
+- **Recomendação de modelo:** o Orquestrador, como toda função, tem modelos recomendados pelo ATLAS, curados pelo mantenedor (veja "Recomendações curadas" abaixo). A recomendação aparece em destaque, mas **não é escolhida pelo usuário automaticamente**: ele aceita com um clique ou escolhe outro, e essa escolha passa a preencher a principal.
 - A principal continua só iniciando com o clique do usuário. O preenchimento não inicia a run sozinho, nem depois de uma saída.
 - O perfil somente leitura (`--agent-file` no Kimi, `atlas-orchestrator` no OpenCode) não depende da função. A função escolhe só CLI e modelo.
 - Em **Nova sessão** manual aparece a lista "Usar função", com as cinco padrão e as do usuário, que só preenche. O componente é o mesmo (`AgentChoice`), e o custo é baixo.
 
+### Recomendações curadas (decidido pelo mantenedor, 29/10/2026)
+
+O ATLAS recomenda, para cada função, modelos que de fato são bons para ela. **Quem escolhe as recomendações é o mantenedor do ATLAS.** O ATLAS mostra a recomendação, e quem escolhe é o usuário.
+
+- **Onde fica:** `electron/model-recommendations.json`, versionado. Por função (inclusive `orquestrador`), uma lista ordenada de `{ adapterId, model, motivo }`, mais `revisadoEm`.
+- **Quem altera:** só o mantenedor, ou um agente por instrução explícita dele. Agentes não acrescentam, removem nem reordenam recomendações por conta própria. Essa regra vai para o `AGENTS.md`.
+- **Como aparece:**
+  - na tela de funções, no diálogo da principal e no cartão, o ATLAS mostra a primeira recomendação **disponível nos CLIs detectados** (comparada com a lista que o CLI devolve), por exemplo "Recomendado pelo ATLAS: X — motivo", com o botão "Usar recomendado";
+  - recomendações cujo modelo o usuário não tem ficam de fora, e sem nenhuma disponível aparece "Nenhum modelo recomendado disponível nos seus CLIs";
+  - quando o modelo escolhido é diferente do recomendado, o ATLAS só mostra a recomendação ao lado, sem avisos insistentes.
+- **Não é pré-seleção:** a recomendação nunca preenche o seletor sozinha. Uma função nunca configurada continua vazia até o usuário escolher, mesmo com recomendação disponível.
+- **Kimi:** a lista do Kimi vem dos apelidos do `config.toml` do usuário, então a comparação precisa usar o nome real do modelo por trás do apelido. Detalhe a resolver na fase 2.
+- **Arquivo inicial:** o mantenedor fornece as recomendações. Até lá, o arquivo existe vazio, e a interface trata isso como "sem recomendação".
+
 ### Como a função é escolhida e como o pedido chega ao agente certo
 
-Quem escolhe a função é a **principal (Orquestrador)**. O **usuário confirma ou troca** no cartão. O ATLAS não roteia nada sozinho: ele valida, preenche, registra e só executa depois do clique do usuário.
+**Decidido pelo mantenedor (29/10/2026):** o Orquestrador delega a tarefa ao agente especializado, escolhendo a função correta sozinho. O usuário pode mudar o LLM e/ou a função do agente escolhido.
+
+O ATLAS não escolhe a função: ele valida, preenche, registra e só executa depois do clique do usuário. A aprovação humana de cada novo agente continua (invariante da v0.1).
 
 1. **O usuário pede ao Orquestrador**, no terminal da principal, por exemplo: "implemente o filtro da tarefa 12 e depois revise".
    - Se quiser, ele mesmo nomeia a função: "use a função revisar".
@@ -115,7 +128,8 @@ O que o ATLAS **não** faz: escolher a função pelo Orquestrador, digitar no te
 **No cartão:**
 - Uma linha nova, "Função: *implementar* (escolhida pelo Orquestrador)", com uma lista para o usuário trocar a função.
 - `AgentChoice` vem preenchido com o CLI e o modelo da função. O botão "Aprovar e iniciar" continua exigindo clique explícito.
-- **Função não configurada, CLI ausente ou modelo fora da lista do CLI:** o cartão abre vazio, como hoje, com aviso do motivo, por exemplo "O modelo X da função *revisar* não está mais na lista do OpenCode". Não há troca silenciosa por outro modelo.
+- **Função não configurada, CLI ausente ou modelo fora da lista do CLI:** o cartão abre vazio, como hoje, com aviso do motivo, por exemplo "O modelo X da função *revisar* não está mais na lista do OpenCode", e com a recomendação curada e o botão "Usar recomendado". Não há troca silenciosa por outro modelo.
+- **Agente já em execução, reaproveitado pelo Orquestrador:** o usuário pode trocar a função dele no card da sessão. Isso muda só o rótulo, que o Orquestrador usa nas próximas delegações. A troca do LLM de um agente em execução é a troca nativa do CLI (item 2).
 - O usuário pode mudar CLI ou modelo. O cartão mostra "alterado em relação à função", e a run registra `function_overridden = 1`.
 - **Pedido sem função:** o comportamento é o de hoje, com o cartão vazio.
 - `resolveLaunch` continua sendo a conferência final no ponto de execução.
@@ -124,9 +138,9 @@ O que o ATLAS **não** faz: escolher a função pelo Orquestrador, digitar no te
 
 ### 5. O que muda no AGENTS.md
 
-**Recomendação:** trocar a frase do invariante "CLIs e modelos" pelo texto abaixo, no mesmo PR que implementar a fase 3 (antes disso, a regra atual continua valendo):
+**Aprovado pelo mantenedor (29/10/2026).** O texto abaixo substitui a frase do invariante "CLIs e modelos" no mesmo PR que implementar a fase 3. Antes disso, a regra atual continua valendo.
 
-> **CLIs e modelos:** os adaptadores (Kimi Code, OpenCode) detectam o CLI pelo `PATH` e iniciam sessões interativas em pastas autorizadas, sem flags de autonomia. Não existe CLI nem modelo padrão **do ATLAS**: o código não escolhe CLI ou modelo por conta própria. O usuário pode definir **funções** com CLI e modelo, que só **preenchem** a escolha. Cada sessão (manual, principal ou pedida) continua iniciando apenas com a confirmação explícita do usuário, que pode trocar a sugestão. Configuração ausente ou inválida nunca é substituída em silêncio.
+> **CLIs e modelos:** os adaptadores (Kimi Code, OpenCode) detectam o CLI pelo `PATH` e iniciam sessões interativas em pastas autorizadas, sem flags de autonomia. Não existe CLI nem modelo padrão **do ATLAS**: o código não escolhe CLI ou modelo por conta própria. O usuário pode definir **funções** com CLI e modelo, que só **preenchem** a escolha. O ATLAS pode **recomendar** modelos por função, a partir da lista curada pelo mantenedor (`electron/model-recommendations.json`), mas a recomendação nunca é selecionada sem o usuário. Agentes não alteram essa lista sem instrução explícita do mantenedor. Cada sessão (manual, principal ou pedida) continua iniciando apenas com a confirmação explícita do usuário, que pode trocar a sugestão. Configuração ausente ou inválida nunca é substituída em silêncio.
 
 Também entram:
 - em "Integração MCP": `agent_functions_list` não expõe CLI nem modelo à principal;
@@ -136,10 +150,17 @@ Também entram:
 
 Cada fase tem branch e PR próprios e CI verde em Ubuntu e Windows.
 
-1. **Banco e host.** Migration 10, CRUD de funções no main process com validação de slug, limite e ordem, e IPC só para a janela principal.
-   - Testes: migration a partir do banco v9, backup/restore, slug duplicado, limite, função apagada com runs antigas.
-2. **Tela de funções.** Configurações → Funções: lista, criar, editar, apagar e as sugestões iniciais, reaproveitando `AgentChoice`. Usa as skills ui-ux-pro-max e apple-design e segue `design-system/atlas/MASTER.md`.
-   - Testes: `test:desktop` cobrindo foco, teclado e erro de CLI ausente.
+1. **Banco e host.**
+   - Migration 10, que semeia `orquestrador` e as cinco padrão.
+   - CRUD de funções no processo principal, com validação de slug, limite e ordem, e proteção das padrão e do Orquestrador (não se apagam e não se renomeiam).
+   - IPC só para a janela principal.
+   - Leitor validado de `electron/model-recommendations.json`, que começa vazio.
+   - Testes: migration a partir do banco v9, backup/restore, slug duplicado ou reservado, limite, apagar ou renomear uma padrão (recusado), função apagada com runs antigas e arquivo de recomendações inválido (recusado com erro claro).
+2. **Tela de funções.**
+   - Configurações → Funções: lista com as padrão e as do usuário, criar, editar e apagar as do usuário, e trocar CLI e modelo de todas.
+   - A recomendação curada aparece com "Usar recomendado", reaproveitando `AgentChoice`.
+   - Usa as skills ui-ux-pro-max e apple-design e segue `design-system/atlas/MASTER.md`.
+   - Testes: `test:desktop` cobrindo foco, teclado, erro de CLI ausente e recomendação que nunca preenche sozinha.
 3. **Ponte e cartão.**
    - `function` em `agents_request`, `agent_functions_list`, cartão preenchido e auditoria em `agent_runs`.
    - Mudança no `AGENTS.md` e nas instruções da principal (`electron/orchestrator-profile.cjs`), que passam a citar `agent_functions_list` e o campo `function`.
@@ -155,7 +176,7 @@ Cada fase tem branch e PR próprios e CI verde em Ubuntu e Windows.
 4. **Principal e sessão manual.** "Usar função" nos dois diálogos.
    - Testes: preencher não inicia a run, e uma nova run depois da saída continua pedindo confirmação.
 
-Fora do escopo: sobrescrita por projeto, custo e quota por função (v0.4) e escolha automática de função pelo ATLAS.
+Fora do escopo: sobrescrita por projeto, custo e quota por função (v0.4), escolha da função pelo próprio ATLAS (ela é do Orquestrador) e aprovação automática de agentes.
 
 ## Investigação do item 2 — trocar o LLM sem perder a tela
 
@@ -193,12 +214,14 @@ Feita em 27/10/2026 com o **Kimi Code 2.3.3** e o **OpenCode 1.18.21** instalado
 
 "Não perder" passa a valer para a tela **e** para o contexto da conversa: a troca nativa cumpre os dois.
 
-## Decisões que dependem do mantenedor
+## Decisões do mantenedor (29/10/2026)
 
-1. ~~Quais funções~~ **Decidido:** cinco padrão (sem apagar, nome fixo, CLI e modelo trocáveis), mais funções do usuário, com limite de 12. Confirmar só que as padrão nascem sem modelo e o ATLAS pede para configurar na primeira vez.
-2. Escopo global na v0.2, com o banco já pronto para sobrescrita por projeto: **aprovar ou pedir por projeto já**.
-3. ~~Principal~~ **Decidido:** sempre o Orquestrador. Confirmar que, no MVP, "mais potente recomendada" é orientação na tela, sem ranking automático até o catálogo da v0.4.
-3b. O fluxo de escolha (o Orquestrador escolhe pela descrição, reaproveita um agente da função se houver, e o usuário pode trocar a função no cartão): **aprovar**.
-4. `agent_functions_list` sem CLI nem modelo, e `function` dentro do hash: **aprovar**.
-5. Novo texto do invariante "CLIs e modelos" no `AGENTS.md`: **aprovar o texto**.
-6. Item 2: começar pela troca nativa com rótulo honesto e deixar a nova run com retomada como plano B: **aprovar a direção**.
+1. **Funções:** cinco funções padrão, que não podem ser apagadas, têm nome fixo e CLI e modelo trocáveis, mais as funções do usuário, até 12 no total. As padrão nascem sem modelo, e o ATLAS pede para configurá-las na primeira vez.
+2. **Recomendações:** o ATLAS recomenda, por função, modelos realmente bons, curados pelo mantenedor. A recomendação nunca é escolhida pelo usuário automaticamente.
+3. **Principal:** é sempre o Orquestrador, com recomendação de modelo e escolha do usuário.
+4. **Escolha da função:** o Orquestrador escolhe sozinho a função do agente e delega a ele. O usuário pode mudar o LLM e/ou a função no cartão. A aprovação de cada novo agente continua.
+5. **Escopo:** global na v0.2.
+6. **AGENTS.md:** texto aprovado, já com a regra das recomendações.
+7. **Item 2:** começar pela troca nativa do CLI com rótulo honesto. A nova run com retomada fica como plano B.
+
+**Pendente com o mantenedor:** a lista inicial de recomendações (função → CLI e modelo, com motivo). Até ela chegar, o arquivo fica vazio, e a interface mostra "sem recomendação".
