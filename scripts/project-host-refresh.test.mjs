@@ -36,6 +36,16 @@ test('regressão: refresh com varredura em andamento faz uma nova varredura comp
   assert.equal(scans.filter((item) => item === root).length - before, 2, 'refresh não pode devolver a varredura que já estava em andamento');
 });
 
+// Espera uma condição com prazo real: no runner do Windows o realpath assíncrono
+// pode levar mais que algumas voltas do event loop.
+async function eventually(condition, label, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`Tempo esgotado: ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 // Descoberta controlada: cada raiz só termina quando o teste libera.
 function gatedDiscovery(gated) {
   const gates = new Map();
@@ -52,7 +62,7 @@ function gatedDiscovery(gated) {
   };
   // Espera a varredura daquela raiz começar e a libera.
   const release = async (root, which = 'oldest') => {
-    for (let i = 0; i < 50 && !gates.get(root)?.length; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    await eventually(() => gates.get(root)?.length, `varredura pendente em ${root}`);
     const next = which === 'newest' ? gates.get(root)?.pop() : gates.get(root)?.shift();
     if (!next) throw new Error(`sem varredura pendente em ${root}`);
     next();
@@ -132,9 +142,10 @@ test('regressão: revarrer um projeto não revarre os outros e resultado antigo 
   const before = calls.length;
   // Uma varredura de tudo começa (resultado antigo) e, depois, só o projeto rápido é revarrido.
   const full = host.refresh();
-  for (let i = 0; i < 50 && calls.length < before + 2; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  // Regressão do teste: antes esperava só 50 voltas do event loop e falhava no runner Windows.
+  await eventually(() => calls.length >= before + 2, 'varredura completa iniciada');
   const single = host.refreshRoot(rapido);
-  await new Promise((resolve) => setImmediate(resolve));
+  await eventually(() => calls.length >= before + 3, 'revarredura do projeto iniciada');
   assert.deepEqual(calls.slice(before), [rapido, lento, rapido], 'refreshRoot varre só a raiz pedida');
   await release(rapido, 'newest'); // a mais nova (refreshRoot) termina primeiro
   await single;
