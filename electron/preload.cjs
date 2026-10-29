@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   listAgentModels: (request) => ipcRenderer.invoke('agent:list-models', request),
   createAgent: (request) => ipcRenderer.invoke('agent:create', request),
   setAgentFunction: (request) => ipcRenderer.invoke('agent:set-function', request),
+  declareAgentModel: (request) => ipcRenderer.invoke('agent:declare-model', request),
   listAgents: () => ipcRenderer.invoke('agent:list'),
   openOrchestrator: (request) => ipcRenderer.invoke('agent:open-orchestrator', request),
   listTasks: (request) => ipcRenderer.invoke('task:list', request),

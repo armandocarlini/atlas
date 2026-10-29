@@ -565,3 +565,50 @@ test('funções: auditoria calculada no núcleo, principal sempre Orquestrador e
   transport.records.find((record) => record.id === manual.ptyId).emitExit(0, null);
   await assert.rejects(handlers.get('agent:set-function')(mainEvent, { sessionId: manual.id, functionSlug: 'testes' }), /em execução não encontrada/);
 });
+
+// v0.2, troca de modelo: o usuário troca no CLI e informa; a run continua a mesma.
+test('modelo informado pelo usuário: mesma run, auditoria, validação e recusas', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const { handlers, mainEvent, transport } = createHarness({ ...fixture, listModelsImpl: async (adapter) => (adapter.id === 'kimi-code' ? ['prov/a', 'prov/b'] : []) });
+  const { store } = fixture;
+  const revisar = store.getFunctionBySlug('revisar');
+  store.updateFunction({ id: revisar.id, expectedVersion: revisar.version, adapterId: 'kimi-code', model: 'prov/a' });
+  const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', model: 'prov/a', cwd: 'C:\\projeto', functionSlug: 'revisar' });
+  const runOf = (sessionId) => store.listRuns('project-a').filter((run) => run.session_id === sessionId).at(-1);
+  assert.equal(runOf(agent.id).function_overridden, 0);
+  const declared = await handlers.get('agent:declare-model')(mainEvent, { sessionId: agent.id, model: 'prov/b' });
+  assert.equal(declared.model, 'prov/a', 'o modelo de início não muda');
+  assert.equal(declared.currentModel, 'prov/b');
+  assert.equal(declared.ptyId, agent.ptyId, 'mesmo terminal');
+  assert.equal(declared.runId, agent.runId, 'mesma run');
+  const run = runOf(agent.id);
+  assert.deepEqual([run.model, run.current_model, run.function_overridden], ['prov/a', 'prov/b', 1], 'modelo diferente do salvo na função');
+  assert.equal(store.listRuns('project-a').filter((item) => item.session_id === agent.id).length, 1, 'nenhuma run nova');
+  const events = store.listEvents('project-a').filter((item) => item.type === 'run.model_declared');
+  assert.deepEqual(events.map((item) => item.payload), [{ from: 'prov/a', to: 'prov/b', source: 'user' }]);
+  // Duas declarações concorrentes: ambas auditadas, vale a última.
+  await Promise.all([
+    handlers.get('agent:declare-model')(mainEvent, { sessionId: agent.id, model: 'prov/a' }),
+    handlers.get('agent:declare-model')(mainEvent, { sessionId: agent.id, model: 'prov/b' }),
+  ]);
+  assert.equal(store.listEvents('project-a').filter((item) => item.type === 'run.model_declared').length, 3);
+  assert.equal(runOf(agent.id).current_model, 'prov/b');
+  // Recusas: modelo fora da lista, inválido, janela secundária, CLI sem lista e run encerrada.
+  await assert.rejects(handlers.get('agent:declare-model')(mainEvent, { sessionId: agent.id, model: 'prov/c' }), /não foi identificado/);
+  await assert.rejects(handlers.get('agent:declare-model')(mainEvent, { sessionId: agent.id, model: 'a b' }), /Modelo inválido/);
+  await assert.rejects(handlers.get('agent:declare-model')({ sender: 'popup' }, { sessionId: agent.id, model: 'prov/a' }), /não autorizada/);
+  transport.records.find((record) => record.id === agent.ptyId).emitExit(0, null);
+  await assert.rejects(handlers.get('agent:declare-model')(mainEvent, { sessionId: agent.id, model: 'prov/a' }), /em execução não encontrada/);
+  assert.throws(() => store.declareRunModel({ runId: agent.runId, model: 'prov/a' }), /em execução não encontrada/);
+  // O histórico (após reabrir) mostra o modelo de início e o informado.
+  const reopened = fixture.reopen();
+  const history = reopened.listRuns('project-a').find((item) => item.session_id === agent.id);
+  assert.deepEqual([history.model, history.current_model], ['prov/a', 'prov/b']);
+});
+
+test('CLI que não informa modelos não aceita troca informada', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const { handlers, mainEvent } = createHarness({ ...fixture, listModelsImpl: async () => [] });
+  const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' });
+  await assert.rejects(handlers.get('agent:declare-model')(mainEvent, { sessionId: agent.id, model: 'prov/a' }), /não informa modelos/);
+});
