@@ -15,7 +15,7 @@ function createAgentFunctionHost({ ipcMain, store, isMainSender, onChange = () =
   }
 
   function requireMain(event) {
-    if (!isMainSender(event)) throw new Error('Janela não autorizada a alterar funções de agente.');
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a acessar funções de agente.');
   }
 
   function payload(request) {

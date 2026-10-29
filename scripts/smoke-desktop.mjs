@@ -464,6 +464,46 @@ try {
   await click(main, '.modal button', 'Cancelar');
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'orchestrator choice closed');
   console.log('PASS escolha explícita de CLI e modelo para sessão e principal, sem padrão e com falha honesta');
+  // Funções de agente (v0.2): Orquestrador e cinco padrão nascem sem CLI nem modelo;
+  // a escolha salva só preenche e volta preenchida ao editar.
+  await until(() => main.evaluate(`document.querySelector('.functions-pending')?.textContent === '6 a configurar'`), 'aviso de funções a configurar');
+  await click(main, '.workspace-settings', 'Funções de agente6 a configurar');
+  await until(() => main.evaluate(`document.querySelectorAll('.functions-modal .function-row').length === 6`), 'Orquestrador e cinco funções padrão');
+  assert.deepEqual(await main.evaluate(`[...document.querySelectorAll('.functions-modal .function-row strong')].map(item => item.textContent)`), ['Orquestrador', 'Planejar', 'Explorar', 'Implementar', 'Revisar', 'Testes']);
+  assert.equal(await main.evaluate(`[...document.querySelectorAll('.functions-modal .function-row-choice.pending')].length`), 6, 'todas nascem não configuradas');
+  await click(main, '.functions-modal .function-row', 'RevisarRevisa um diff ou uma branch em busca de bugs, riscos e desvios do plano.Não configurada');
+  await until(() => main.evaluate(`Boolean(document.querySelector('.function-editor'))`), 'editor da função');
+  assert.equal(await main.evaluate(`Boolean(document.querySelector('.function-editor input[name=name]'))`), false, 'nome fixo na função padrão');
+  assert.equal(await main.evaluate(`[...document.querySelectorAll('.function-editor button')].some(item => item.textContent === 'Apagar função')`), false, 'função padrão não se apaga');
+  assert.equal(await main.evaluate(`document.querySelector('.function-editor select[name=cli]').value`), '', 'sem CLI pré-selecionado pelo ATLAS');
+  await choose(main, '.function-editor', 'cli', 'opencode');
+  await until(() => main.evaluate(`document.querySelectorAll('.function-editor select[name=model] option').length === 3`), 'modelos para a função');
+  await choose(main, '.function-editor', 'model', 'fixture/modelo-forte');
+  const functionsAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(functionsAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in agent functions');
+  await screenshot(main, 'agent-function-editor');
+  await click(main, '.function-editor button[type=submit]', 'Salvar');
+  await until(() => main.evaluate(`[...document.querySelectorAll('.functions-modal .function-row')].some(item => item.innerText.includes('Revisar') && item.innerText.includes('OpenCode · fixture/modelo-forte'))`), 'função salva com CLI e modelo');
+  await until(() => main.evaluate(`document.querySelector('.functions-pending')?.textContent === '5 a configurar'`), 'aviso atualizado');
+  // Regressão: a escolha salva volta preenchida ao editar, após a lista do CLI chegar.
+  await click(main, '.functions-modal .function-row', 'RevisarRevisa um diff ou uma branch em busca de bugs, riscos e desvios do plano.OpenCode · fixture/modelo-forte');
+  await until(() => main.evaluate(`document.querySelector('.function-editor select[name=model]')?.value === 'fixture/modelo-forte'`), 'modelo salvo preenchido');
+  await click(main, '.function-editor button', 'Cancelar');
+  // Função do usuário: criar sem CLI e apagar com confirmação.
+  await click(main, '.functions-modal footer button', 'Nova função');
+  await main.evaluate(`(() => { for (const [name, value] of Object.entries({ slug: 'documentar', name: 'Documentar' })) { const field = document.querySelector('.function-editor [name=' + name + ']'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })); } })()`);
+  assert.equal(await main.evaluate(`document.querySelector('.function-editor button[type=submit]').disabled`), false, `criar habilitado: ${await main.evaluate(`JSON.stringify([...document.querySelectorAll('.function-editor input')].map(item => [item.name, item.value]))`)}`);
+  await click(main, '.function-editor button[type=submit]', 'Criar função');
+  await until(() => main.evaluate(`!document.querySelector('.function-editor') || document.querySelector('.function-editor [role=alert]')?.innerText`), 'criação respondida').then((value) => assert.equal(value, true, `erro ao criar: ${value}`));
+  await until(() => main.evaluate(`[...document.querySelectorAll('.functions-modal .function-row strong')].some(item => item.textContent === 'Documentar')`), 'função do usuário criada');
+  await click(main, '.functions-modal .function-row', 'DocumentarSem descrição.Não configurada');
+  await click(main, '.function-editor button', 'Apagar função');
+  await until(() => main.evaluate(`Boolean(document.querySelector('.function-delete-confirm'))`), 'confirmação antes de apagar');
+  await click(main, '.function-delete-confirm button', 'Apagar');
+  await until(() => main.evaluate(`!document.querySelector('.function-editor') && ![...document.querySelectorAll('.functions-modal .function-row strong')].some(item => item.textContent === 'Documentar')`), 'função do usuário apagada');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'funções fechadas');
+  console.log('PASS funções de agente: padrão sem modelo, escolha salva preenchida, função do usuário criada e apagada');
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'session modal closed');
   console.log('PASS modal de sessão lista somente adaptadores detectados');
   // Pedidos de agente semeados pela principal da fixture com o app aberto; o CLI

@@ -48,6 +48,8 @@ import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './Persiste
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
 import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
 import { AgentRequestsPanel } from './AgentRequests.jsx';
+import { AgentFunctionsModal } from './AgentFunctions.jsx';
+import { pendingConfiguration } from './agent-functions.js';
 import { OpenFolderModal, ExplorerIntegrationSection } from './OpenFolder.jsx';
 
 // Mensagem de erro do processo principal sem o prefixo técnico do IPC do Electron.
@@ -576,6 +578,9 @@ export default function App() {
   const [toast, setToast] = useState('');
   const [theme, setTheme] = useState(getInitialTheme);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [functionsOpen, setFunctionsOpen] = useState(false);
+  // Funções de agente: o aviso na barra lateral conta as que ainda pedem CLI e modelo.
+  const [agentFunctions, setAgentFunctions] = useState([]);
   const desktop = window.atlasDesktop;
   const isNativePanelWindow = desktop?.windowKind === 'panels';
   const isNativeTerminalWindow = desktop?.windowKind === 'terminal';
@@ -995,6 +1000,7 @@ export default function App() {
         if (columnDragRef.current) cancelColumnDrag();
         setModal(null);
         setAppearanceOpen(false);
+        setFunctionsOpen(false);
       }
       if ((event.ctrlKey || event.metaKey) && event.key === ',') {
         event.preventDefault();
@@ -1014,7 +1020,17 @@ export default function App() {
     };
   }, []);
 
-  const needsAdapters = modal === 'session' || Boolean(orchestratorChoice) || agentRequestState.items.some((request) => request.state === 'pending');
+  useEffect(() => {
+    // Janelas de terminal destacadas não leem funções: só a principal tem acesso.
+    if (!desktop?.isDesktop || isSecondaryWindow || !desktop.listAgentFunctions) return undefined;
+    let active = true;
+    const load = () => desktop.listAgentFunctions().then((result) => { if (active) setAgentFunctions(result.items); }).catch(() => {});
+    load();
+    const unsubscribe = desktop.onAgentFunctionsChanged?.(load);
+    return () => { active = false; unsubscribe?.(); };
+  }, []);
+
+  const needsAdapters = modal === 'session' || functionsOpen || Boolean(orchestratorChoice) || agentRequestState.items.some((request) => request.state === 'pending');
   const sessionModalOpen = modal === 'session';
   useEffect(() => {
     if (!needsAdapters || !desktop?.isDesktop) return undefined;
@@ -1478,6 +1494,7 @@ export default function App() {
             <div className="sidebar-bottom">
               <div className="local-card"><div><ShieldCheck size={15} /><strong>Local e privado</strong></div><p>Git + PTY local<br />Nenhuma telemetria ativa</p><span><StatusDot color="#7dbb91" />Núcleo disponível</span></div>
               <button className="workspace-settings" onClick={resetLayout}><span>Restaurar layout</span></button>
+              {desktop?.isDesktop && desktop.listAgentFunctions && <button className="workspace-settings" onClick={() => setFunctionsOpen(true)}><Workflow size={14} /><span>Funções de agente</span>{pendingConfiguration(agentFunctions) > 0 && <small className="functions-pending">{pendingConfiguration(agentFunctions)} a configurar</small>}<ChevronRight size={13} /></button>}
               <button className="workspace-settings" onClick={() => setAppearanceOpen(true)}><Palette size={14} /><span>Aparência e configurações</span><ChevronRight size={13} /></button>
             </div>
           </aside>
@@ -1585,6 +1602,7 @@ export default function App() {
 
       {orchestratorChoice && <OrchestratorChoiceModal adapters={adapters} previousCli={orchestratorChoice.previousCli} busy={orchestratorChoice.busy} error={orchestratorChoice.error} onClose={() => { if (!orchestratorChoice.busy) setOrchestratorChoice(null); }} onStart={startOrchestrator} />}
       {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
+      {functionsOpen && <AgentFunctionsModal desktop={desktop} adapters={adapters} onClose={() => setFunctionsOpen(false)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
       {openFolderRequest && <OpenFolderModal key={openFolderRequest.id} request={openFolderRequest} onAuthorize={authorizeOpenFolder} onCancel={cancelOpenFolder} />}
       {taskModalOpen && <NewTaskModal projectName={taskState.projectName} cwd={workingDirectory} onCreate={createTask} onClose={() => setTaskModalOpen(false)} />}
