@@ -23,7 +23,7 @@ A ordem abaixo é uma proposta. Cada item precisa de plano aprovado antes de com
 
 ### 1. LLM por função — entregue
 
-Plano: `docs/planos/PLANO_V0_2_LLM_POR_FUNCAO.md` (aprovado em 29/10/2026), entregue nas fases 1 a 4 (PRs #38, #39, #40 e o da fase 4). **Pendente com o mantenedor:** a lista inicial de recomendações de modelo em `electron/model-recommendations.json`; até lá, a interface mostra "sem recomendação".
+Plano: `docs/planos/PLANO_V0_2_LLM_POR_FUNCAO.md` (aprovado em 29/10/2026), entregue nas fases 1 a 4 (PRs #38 a #41). **Adiado pelo mantenedor:** a lista inicial de recomendações de modelo em `electron/model-recommendations.json`, que depende de pesquisa de benchmarks dele. Até lá, a interface mostra "sem recomendação".
 
 O objetivo é escolher CLI e modelo uma vez por *função*, em vez de a cada sessão. A ideia: modelos mais econômicos onde bastam e mais capazes onde o retrabalho custa caro.
 
@@ -32,7 +32,9 @@ O objetivo é escolher CLI e modelo uma vez por *função*, em vez de a cada ses
 - O ATLAS recomenda modelos por função, a partir de uma lista curada pelo mantenedor, sem nunca escolher pelo usuário.
 - Escopo global na v0.2. O novo texto da regra "CLIs e modelos" entra no `AGENTS.md` junto com a fase 3.
 
-### 2. Trocar o LLM de um agente sem perder a tela — direção aprovada, falta plano
+### 2. Trocar o LLM de um agente sem perder a tela — plano aprovado, em execução
+
+Plano: `docs/planos/PLANO_V0_2_TROCA_DE_MODELO.md`.
 
 Requisito do mantenedor: trocar o modelo de um agente em execução **sem perder o que está na tela**.
 
@@ -79,8 +81,8 @@ O mantenedor pretende refazer todo o design visual mais adiante, e a direção a
 
 | Tema | Situação |
 |---|---|
-| LLM por função | Entregue; recomendações iniciais de modelo aguardam o mantenedor |
-| Troca de modelo sem perder a tela | Investigado (seção do plano da v0.2); direção aprovada: troca nativa do CLI primeiro |
+| LLM por função | Entregue; recomendações iniciais adiadas (benchmarks do mantenedor) |
+| Troca de modelo sem perder a tela | Plano aprovado (`docs/planos/PLANO_V0_2_TROCA_DE_MODELO.md`), em execução |
 | Suíte de regressão liga/desliga | Definir o significado exato |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |
