@@ -4,6 +4,7 @@ const { randomUUID, createHash } = require('node:crypto');
 const { DatabaseSync, backup } = require('node:sqlite');
 const { createTaskDelegation } = require('./task-delegation.cjs');
 const { createTaskReview } = require('./task-review.cjs');
+const { createAgentFunctions } = require('./agent-functions.cjs');
 
 const MIGRATIONS = [{
   version: 1,
@@ -175,6 +176,38 @@ const MIGRATIONS = [{
     ALTER TABLE agent_runs ADD COLUMN adapter_id TEXT;
     ALTER TABLE agent_runs ADD COLUMN model TEXT;
   `,
+}, {
+  // Funções de agente (v0.2): CLI e modelo escolhidos uma vez por função, só para
+  // preencher a escolha. project_id NULL = global; a sobrescrita por projeto fica
+  // para depois. O Orquestrador e as cinco padrão nascem sem CLI nem modelo.
+  version: 10,
+  sql: `
+    CREATE TABLE agent_functions (
+      id TEXT PRIMARY KEY, project_id TEXT REFERENCES projects(id), slug TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('orchestrator', 'builtin', 'custom')),
+      name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', adapter_id TEXT, model TEXT,
+      position INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      CHECK(model IS NULL OR adapter_id IS NOT NULL),
+      CHECK(kind = 'custom' OR project_id IS NULL)
+    ) STRICT;
+    CREATE UNIQUE INDEX agent_functions_global_slug ON agent_functions(slug) WHERE project_id IS NULL;
+    CREATE UNIQUE INDEX agent_functions_project_slug ON agent_functions(project_id, slug) WHERE project_id IS NOT NULL;
+    INSERT INTO agent_functions (id, project_id, slug, kind, name, description, position, created_at, updated_at)
+    SELECT 'function-' || slug, NULL, slug, kind, name, description, position,
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    FROM (
+      SELECT 'orquestrador' AS slug, 'orchestrator' AS kind, 'Orquestrador' AS name, 'Sessão principal: planeja, divide o trabalho em tarefas e delega aos agentes de cada função.' AS description, 0 AS position
+      UNION ALL SELECT 'planejar', 'builtin', 'Planejar', 'Quebra um objetivo em passos, avalia riscos e propõe a abordagem antes do código.', 1
+      UNION ALL SELECT 'explorar', 'builtin', 'Explorar', 'Lê o código e a documentação para responder perguntas e localizar onde mexer, sem alterar arquivos.', 2
+      UNION ALL SELECT 'implementar', 'builtin', 'Implementar', 'Escreve e altera código numa worktree da tarefa.', 3
+      UNION ALL SELECT 'revisar', 'builtin', 'Revisar', 'Revisa um diff ou uma branch em busca de bugs, riscos e desvios do plano.', 4
+      UNION ALL SELECT 'testes', 'builtin', 'Testes', 'Escreve testes, roda as suítes e relata falhas com evidência.', 5
+    );
+    -- Auditoria da v0.2: função usada na run e se o usuário trocou a sugestão.
+    ALTER TABLE agent_runs ADD COLUMN function_slug TEXT;
+    ALTER TABLE agent_runs ADD COLUMN function_overridden INTEGER CHECK(function_overridden IN (0, 1));
+  `,
 }];
 
 // Política padrão da v0.1 para pedidos de agente feitos pela sessão principal.
@@ -292,6 +325,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   const delegation = createTaskDelegation({ db, now, event, transaction });
   const { loseClaims, requireClaim, ...delegationApi } = delegation;
   const review = createTaskReview({ db, now, event, transaction, requireClaim, getTask: delegation.getTask });
+  const agentFunctions = createAgentFunctions({ db, now, transaction });
 
   function finishRun({ runId, expectedVersion, exitCode, signal = null }) {
     if (!Number.isInteger(exitCode) || (signal !== null && !Number.isInteger(signal))) throw new Error('Saída de processo inválida.');
@@ -334,6 +368,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       });
     },
     ...delegationApi,
+    ...agentFunctions,
     ...review,
     sendMessage(request) {
       const payload = messagePayload(request);
