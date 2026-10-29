@@ -141,6 +141,41 @@ try {
   assert.doesNotMatch(debug('debug config'), /hostil/, 'MCP do repositório ignorado na principal');
   console.log('PASS principal no OpenCode continua somente leitura com configuração hostil no repositório');
 
+  // Troca de modelo pela própria TUI (/models), sem prompt ao modelo: a sessão, o PTY,
+  // a ponte MCP e o perfil somente leitura continuam; o usuário informa o modelo novo.
+  assert(models.length > 1, 'o smoke precisa de dois modelos para trocar');
+  const write = (data) => native('invoke', { channel: 'terminal:write', args: [{ terminalId: principal.ptyId, data }] });
+  const recentFile = path.join(xdg, 'state', 'opencode', 'model.json');
+  const recent = () => { try { return JSON.parse(fs.readFileSync(recentFile, 'utf8')).recent || []; } catch { return []; } };
+  await write('/models');
+  await delay(800);
+  await write('\r');
+  await until(async () => {
+    const screen = plain((await attach(principal)).scrollback).slice(-6000);
+    fs.writeFileSync(path.join(fixture, 'models-dialog.txt'), screen);
+    return /select model|search/i.test(screen);
+  }, 'diálogo de modelos do OpenCode', 30000);
+  // O diálogo lista nomes de exibição: desce um item e confirma; o modelo escolhido
+  // é lido do registro de recentes do próprio OpenCode (XDG isolado da fixture).
+  await write('\x1b[B');
+  await delay(600);
+  await write('\r');
+  const target = await until(() => recent().map((item) => `${item.providerID}/${item.modelID}`).find((item) => item !== model), 'OpenCode registrou o modelo escolhido no diálogo', 30000);
+  assert(models.includes(target), `modelo escolhido na TUI (${target}) está na lista do ATLAS`);
+  const listed = await native('invoke', { channel: 'agent:list' });
+  const after = listed.find((item) => item.id === principal.id);
+  assert.equal(after.state, 'running', 'a principal continua em execução');
+  assert.equal(after.ptyId, principal.ptyId, 'mesmo terminal');
+  assert.equal(after.runId, principal.runId, 'mesma run');
+  await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === principal.id)?.atlasTools === true, 'ponte MCP continua conectada após a troca', 30000);
+  const toolsAfter = JSON.parse(debug('debug agent atlas-orchestrator')).tools;
+  for (const tool of ['bash', 'edit', 'write', 'grep', 'task', 'webfetch']) assert.equal(toolsAfter[tool], false, `principal continua sem ${tool} após a troca`);
+  const declared = await native('invoke', { channel: 'agent:declare-model', args: [{ sessionId: principal.id, model: target }] });
+  assert.equal(declared.model, model, 'modelo de início preservado');
+  assert.equal(declared.currentModel, target);
+  fs.writeFileSync(path.join(fixture, 'principal-after-switch.txt'), plain((await attach(principal)).scrollback).slice(-4000));
+  console.log(`PASS troca de modelo na TUI do OpenCode (${model} → ${target}): mesma run e terminal, ponte conectada, principal somente leitura e modelo informado`);
+
   const agent = await native('invoke', { channel: 'agent:create', args: [{ adapterId: 'opencode', model, name: 'smoke-opencode', cwd }] });
   assert.equal(agent.state, 'running');
   assert.equal(agent.model, model);
@@ -152,6 +187,7 @@ try {
   try {
     const runs = store.listRuns(principal.projectId);
     assert.deepEqual(runs.map((run) => [run.adapter_id, run.model]).sort(), [['opencode', model], ['opencode', model]]);
+    assert.equal(runs.find((run) => run.session_id === principal.id).current_model, target, 'troca informada gravada na mesma run');
   } finally {
     store.close();
   }
