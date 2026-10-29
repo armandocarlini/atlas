@@ -14,15 +14,16 @@ O aceite dos 12 passos foi demonstrado em 27/10/2026 (`docs/historico/ACEITE_V0_
 
 São correções da v0.1, sem mudar o escopo do produto.
 
-1. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). Investigar na próxima ocorrência; não reexecutar às cegas.
+1. **Kimi Code 2.4.0 sem a ponte MCP.** Investigar por que o Kimi 2.4.0 não registra o runtime local do workspace ao iniciar o servidor `atlas` por stdio (veja `docs/CONTEXTO.md`) e adaptar o ATLAS ou documentar o passo do usuário. Até lá, o OpenCode é o CLI com integração completa.
+2. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). O `CDP timeout` do `test:desktop` ganhou uma correção por hipótese (oclusão de janela). Investigar na próxima ocorrência; não reexecutar às cegas.
 
 ## Próximo — v0.2 (cada item precisa de plano aprovado)
 
 A ordem abaixo é uma proposta. Cada item precisa de plano aprovado antes de começar.
 
-### 1. LLM por função — plano aprovado, em execução
+### 1. LLM por função — entregue
 
-Plano: `docs/planos/PLANO_V0_2_LLM_POR_FUNCAO.md` (aprovado em 29/10/2026). Fases 1 (banco e host), 2 (tela de funções) e 3 (ponte e cartão) entregues; segue a fase 4 (principal e sessão manual, e trocar a função de um agente já em execução). Pendente com o mantenedor: a lista inicial de recomendações de modelo.
+Plano: `docs/planos/PLANO_V0_2_LLM_POR_FUNCAO.md` (aprovado em 29/10/2026), entregue nas fases 1 a 4 (PRs #38, #39, #40 e o da fase 4). **Pendente com o mantenedor:** a lista inicial de recomendações de modelo em `electron/model-recommendations.json`; até lá, a interface mostra "sem recomendação".
 
 O objetivo é escolher CLI e modelo uma vez por *função*, em vez de a cada sessão. A ideia: modelos mais econômicos onde bastam e mais capazes onde o retrabalho custa caro.
 
@@ -78,7 +79,7 @@ O mantenedor pretende refazer todo o design visual mais adiante, e a direção a
 
 | Tema | Situação |
 |---|---|
-| LLM por função | Plano aprovado; recomendações iniciais de modelo aguardam o mantenedor |
+| LLM por função | Entregue; recomendações iniciais de modelo aguardam o mantenedor |
 | Troca de modelo sem perder a tela | Investigado (seção do plano da v0.2); direção aprovada: troca nativa do CLI primeiro |
 | Suíte de regressão liga/desliga | Definir o significado exato |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |

@@ -49,7 +49,7 @@ import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
 import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
 import { AgentRequestsPanel } from './AgentRequests.jsx';
 import { AgentFunctionsModal } from './AgentFunctions.jsx';
-import { pendingConfiguration } from './agent-functions.js';
+import { choiceFromFunction, pendingConfiguration, pickRecommendation } from './agent-functions.js';
 import { OpenFolderModal, ExplorerIntegrationSection } from './OpenFolder.jsx';
 
 // Mensagem de erro do processo principal sem o prefixo técnico do IPC do Electron.
@@ -266,7 +266,7 @@ function HarnessIntro({ harness, session }) {
   );
 }
 
-function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false }) {
+function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
@@ -294,6 +294,16 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
           <span className={`origin-badge ${session.origin}`}>{session.origin}</span>
           {session.demo && <span className="origin-badge demo">ilustrativo</span>}
           <span className="session-cli" title={session.model ? `Modelo: ${session.model}` : undefined}>{session.version ? `${session.cli} ${session.version}` : session.cli}{session.model ? ` · ${session.model}` : ''}</span>
+          {(() => {
+            const agentFunctions = (functions?.items || []).filter((item) => item.kind !== 'orchestrator');
+            const label = (functions?.items || []).find((item) => item.slug === session.functionSlug)?.name || session.functionSlug;
+            // Agente em execução: o usuário troca a função (rótulo usado pela principal nas próximas delegações).
+            if (onSetFunction && session.roleKind === 'agent' && !session.exited && agentFunctions.length) return <select className="session-function" aria-label={`Função de ${session.name}`} value={session.functionSlug || ''} onClick={(event) => event.stopPropagation()} onChange={(event) => onSetFunction(session, event.target.value)}>
+              <option value="">Sem função</option>
+              {agentFunctions.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}
+            </select>;
+            return label ? <span className="origin-badge function-badge" title="Função do agente">{label}</span> : null;
+          })()}
           {atlasConnected && !session.exited && <span className="origin-badge atlas-tools" title="Ferramentas do ATLAS conectadas a esta sessão pelo MCP">ATLAS conectado</span>}
         </div>
         <div className="session-actions">
@@ -336,12 +346,19 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
   );
 }
 
-function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees, onDirectoryChange, busy, adapters = null, loadingAdapters = false }) {
+function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees, onDirectoryChange, busy, adapters = null, loadingAdapters = false, functions = null }) {
   const dialogRef = useModalFocus();
   const [error, setError] = useState('');
   const isTerminal = kind === 'terminal';
   const realAdapters = !isTerminal && Array.isArray(adapters);
   const [choice, setChoice] = useState({ adapterId: '', model: '', ready: false });
+  // Função opcional: só preenche CLI e modelo com o que o usuário salvou nela.
+  const agentFunctions = (functions?.items || []).filter((item) => item.kind !== 'orchestrator');
+  const [functionSlug, setFunctionSlug] = useState('');
+  function selectFunction(slug) {
+    setFunctionSlug(slug);
+    setChoice(choiceFromFunction(agentFunctions.find((item) => item.slug === slug) || null));
+  }
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section ref={dialogRef} className="modal" onMouseDown={(event) => event.stopPropagation()} aria-modal="true" role="dialog" aria-labelledby="new-session-title">
@@ -357,12 +374,18 @@ function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees,
           const data = new FormData(event.currentTarget);
           setError('');
           if (realAdapters && !choice.ready) return;
-          const failure = await onCreate({ kind, name: data.get('name'), cli: realAdapters ? choice.adapterId : data.get('cli'), model: realAdapters ? choice.model || null : null, cwd: data.get('cwd') || workingDirectory });
+          const failure = await onCreate({ kind, name: data.get('name'), cli: realAdapters ? choice.adapterId : data.get('cli'), model: realAdapters ? choice.model || null : null, functionSlug: realAdapters ? functionSlug || null : null, cwd: data.get('cwd') || workingDirectory });
           if (failure) setError(failure);
         }}>
           <label>Nome da {isTerminal ? 'janela' : 'sessão'}<input name="name" defaultValue={isTerminal ? 'powershell-local' : 'nova-investigacao'} autoFocus /></label>
+          {!isTerminal && realAdapters && agentFunctions.length > 0 && <label>Usar função
+            <select name="function" value={functionSlug} onChange={(event) => selectFunction(event.target.value)} disabled={busy}>
+              <option value="">Sem função</option>
+              {agentFunctions.map((item) => <option key={item.slug} value={item.slug}>{item.name}{item.adapterId ? '' : ' (não configurada)'}</option>)}
+            </select>
+          </label>}
           {!isTerminal && (realAdapters || loadingAdapters)
-            ? <AgentChoice adapters={loadingAdapters ? null : adapters} value={choice} onChange={setChoice} disabled={busy} />
+            ? <AgentChoice key={functionSlug || 'none'} adapters={loadingAdapters ? null : adapters} value={choice} onChange={setChoice} disabled={busy} recommendation={functionSlug ? pickRecommendation(functions?.recommendations, functionSlug, adapters) : null} />
             : !isTerminal && <label>CLI / harness<select name="cli" defaultValue="Claude Code"><option>Claude Code</option><option>Kimi Code</option><option>Codex</option><option>CLI personalizado</option></select></label>}
           <label>Worktree ou diretório<select name="cwd" value={workingDirectory} onChange={(event) => onDirectoryChange(event.target.value)}>{worktrees.map((item) => <option value={item.path} key={item.path}>{item.label} — {item.branch || 'diretório autorizado'}</option>)}</select></label>
           <div className="path-input"><FolderGit2 size={15} /><span>{workingDirectory}</span><CheckCircle2 size={15} /></div>
@@ -376,9 +399,10 @@ function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees,
   );
 }
 
-function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, onStart }) {
+function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, onStart, functions = null }) {
   const dialogRef = useModalFocus();
-  const [choice, setChoice] = useState({ adapterId: '', model: '', ready: false });
+  const orchestrator = (functions?.items || []).find((item) => item.kind === 'orchestrator') || null;
+  const [choice, setChoice] = useState(() => choiceFromFunction(orchestrator));
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section ref={dialogRef} className="modal" onMouseDown={(event) => event.stopPropagation()} aria-modal="true" role="dialog" aria-labelledby="orchestrator-choice-title">
@@ -390,7 +414,8 @@ function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, 
           <button className="icon-button" onClick={onClose} title="Fechar" aria-label="Fechar"><X size={18} /></button>
         </header>
         <form onSubmit={(event) => { event.preventDefault(); if (choice.ready && !busy) onStart(choice); }}>
-          <AgentChoice adapters={adapters} value={choice} onChange={setChoice} disabled={busy} />
+          <p className="agent-choice-note">{orchestrator?.adapterId ? 'Preenchido com o que você salvou para o Orquestrador. Confirme ou troque.' : 'Recomendado: o modelo mais capaz que você tiver; o Orquestrador planeja e delega, e um erro dele se espalha pelos agentes. Salve a escolha em Funções de agente para vir preenchida.'}</p>
+          <AgentChoice adapters={adapters} value={choice} onChange={setChoice} disabled={busy} recommendation={pickRecommendation(functions?.recommendations, 'orquestrador', adapters)} />
           <div className="scope-note"><ShieldCheck size={16} /><span>A principal planeja e delega: abre somente leitura, com as ferramentas do ATLAS deste projeto.{previousCli ? ` A execução anterior usou ${previousCli}; a identidade, as tarefas e as mensagens continuam.` : ''}</span></div>
           {error && <div className="scope-note error-note" role="alert"><ShieldCheck size={16} /><span>{error}</span></div>}
           <footer><button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancelar</button><button type="submit" className="button primary" disabled={busy || !choice.ready}>{busy ? 'Iniciando…' : 'Iniciar principal'}</button></footer>
@@ -1320,7 +1345,17 @@ export default function App() {
     setSelectedId(target.id);
   }
 
-  async function createSession({ kind, name, cli, model, cwd }) {
+  async function setSessionFunction(session, functionSlug) {
+    try {
+      const agent = await desktop.setAgentFunction({ sessionId: session.id, functionSlug: functionSlug || null });
+      setSessions((current) => mergeAgentSessions(current, [agent]));
+      notify(functionSlug ? `Função de ${session.name} trocada` : `${session.name} ficou sem função`);
+    } catch (error) {
+      notify(cleanIpcError(error));
+    }
+  }
+
+  async function createSession({ kind, name, cli, model, functionSlug = null, cwd }) {
     let id = `${kind}-${Date.now()}`;
     const isTerminal = kind === 'terminal';
     let pty = null;
@@ -1329,7 +1364,7 @@ export default function App() {
       setCreatingTerminal(true);
       try {
         if (isTerminal) pty = await desktop.createTerminal({ cwd });
-        else agent = await desktop.createAgent({ adapterId: cli, model, name, cwd });
+        else agent = await desktop.createAgent({ adapterId: cli, model, name, cwd, functionSlug });
       } catch (error) {
         setCreatingTerminal(false);
         return isTerminal ? `Não foi possível iniciar o PowerShell: ${error.message}` : error.message;
@@ -1553,6 +1588,8 @@ export default function App() {
               onRestart={openOrchestratorChoice}
               atlasConnected={toolConnections[session.id] ?? session.atlasTools}
               onSendDiscovery={desktop?.isDesktop && projectSessions.some((session) => session.roleKind === 'orchestrator') ? (session) => setMessageModal({ session }) : undefined}
+              functions={agentFunctions}
+              onSetFunction={desktop?.isDesktop && desktop.setAgentFunction ? setSessionFunction : undefined}
               onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
             />)}
             {!focusId && <button className="empty-session" onClick={() => setModal('session')}><span><Plus size={19} /></span><strong>Nova sessão de agente</strong><small>Manual, no diretório selecionado</small></button>}
@@ -1600,8 +1637,8 @@ export default function App() {
         return session ? <div className="detached-terminal-window" style={{ right: 24 + index * 24, top: 72 + index * 24 }} key={id}><SessionCard session={session} selected popup desktop={desktop} theme={theme} onSelect={setSelectedId} onFocus={() => {}} onPopup={toggleTerminalPopup} onExit={updateSessionExit} onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)} /></div> : null;
       })}
 
-      {orchestratorChoice && <OrchestratorChoiceModal adapters={adapters} previousCli={orchestratorChoice.previousCli} busy={orchestratorChoice.busy} error={orchestratorChoice.error} onClose={() => { if (!orchestratorChoice.busy) setOrchestratorChoice(null); }} onStart={startOrchestrator} />}
-      {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
+      {orchestratorChoice && <OrchestratorChoiceModal adapters={adapters} functions={agentFunctions} previousCli={orchestratorChoice.previousCli} busy={orchestratorChoice.busy} error={orchestratorChoice.error} onClose={() => { if (!orchestratorChoice.busy) setOrchestratorChoice(null); }} onStart={startOrchestrator} />}
+      {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} functions={desktop?.isDesktop ? agentFunctions : null} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
       {functionsOpen && <AgentFunctionsModal desktop={desktop} adapters={adapters} onClose={() => setFunctionsOpen(false)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
       {openFolderRequest && <OpenFolderModal key={openFolderRequest.id} request={openFolderRequest} onAuthorize={authorizeOpenFolder} onCancel={cancelOpenFolder} />}

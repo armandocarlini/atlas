@@ -21,6 +21,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       cli: agent.cli,
       version: agent.version,
       model: agent.model,
+      functionSlug: agent.functionSlug ?? null,
       cwd: agent.cwd,
       origin: agent.origin,
       ptyId: agent.ptyId,
@@ -50,7 +51,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
         if (!run) continue;
         history.push({
           id: session.id, name: session.name, adapterId: session.adapter_id, cli: session.cli,
-          version: session.cli_version, model: run.model ?? null, cwd: session.cwd, origin: session.origin,
+          version: session.cli_version, model: run.model ?? null, functionSlug: run.function_slug ?? null, cwd: session.cwd, origin: session.origin,
           projectId: project.id, ptyId: null, state: 'exited', archived: true,
           runId: run.id, runState: run.state, reason: run.reason,
           exit: run.exit_code === null ? null : { exitCode: run.exit_code, signal: run.signal },
@@ -209,9 +210,32 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     return describe(agent);
   }
 
+  // Auditoria da função usada para preencher a escolha: calculada aqui, nunca vinda
+  // da interface. Trocar o que estava salvo na função conta como alteração.
+  function functionAudit(slug, adapterId, model, { orchestrator = false } = {}) {
+    if (slug === undefined || slug === null || slug === '' || !store) return { functionSlug: null, functionOverridden: null };
+    const fn = typeof slug === 'string' ? store.getFunctionBySlug(slug) : null;
+    if (!fn || (fn.kind === 'orchestrator') !== orchestrator) throw new Error('Função de agente inválida para esta sessão.');
+    return { functionSlug: fn.slug, functionOverridden: fn.adapterId !== adapterId || (fn.model || null) !== (model || null) };
+  }
+
   ipcMain.handle('agent:create', async (event, request = {}) => {
     if (!isMainSender(event)) throw new Error('Janela não autorizada a criar sessões de agente.');
-    return createAgent(request);
+    return createAgent({ ...request, ...functionAudit(request?.functionSlug, request?.adapterId, request?.model) });
+  });
+
+  // Troca o rótulo de função de um agente em execução (o Orquestrador usa nas próximas
+  // delegações). Não reinicia nada nem muda CLI ou modelo.
+  ipcMain.handle('agent:set-function', async (event, request = {}) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a alterar sessões de agente.');
+    const agent = typeof request?.sessionId === 'string' ? agents.get(request.sessionId) : null;
+    if (!agent || agent.state !== 'running' || !agent.runId) throw new Error('Sessão de agente em execução não encontrada.');
+    if (agent.role === 'orchestrator') throw new Error('A sessão principal é sempre o Orquestrador.');
+    const { functionSlug } = functionAudit(request.functionSlug, agent.adapterId, agent.model);
+    store?.setRunFunction({ runId: agent.runId, functionSlug });
+    agent.functionSlug = functionSlug;
+    agent.functionOverridden = functionSlug ? true : null;
+    return describe(agent);
   });
 
   ipcMain.handle('agent:open-orchestrator', async (event, request = {}) => {
@@ -232,7 +256,8 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     }
     // Sem escolha do usuário a principal não inicia: a interface pergunta o CLI e o modelo.
     if (typeof request.adapterId !== 'string' || !request.adapterId) return { needsChoice: true, projectId: project.id, previousCli: existing?.cli || null };
-    const operation = createAgent({ adapterId: request.adapterId, model: request.model, name: 'ORQUESTRADOR', cwd: project.path }, { role: 'orchestrator', existing })
+    // A principal é sempre o Orquestrador: a run registra se a escolha seguiu o que está salvo nele.
+    const operation = createAgent({ adapterId: request.adapterId, model: request.model, name: 'ORQUESTRADOR', cwd: project.path, ...functionAudit('orquestrador', request.adapterId, request.model, { orchestrator: true }) }, { role: 'orchestrator', existing })
       .finally(() => pendingOrchestrators.delete(project.id));
     pendingOrchestrators.set(project.id, operation);
     return operation;

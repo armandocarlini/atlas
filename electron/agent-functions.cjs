@@ -77,6 +77,15 @@ function createAgentFunctions({ db, now, transaction }) {
         return get(id);
       });
     },
+    // Rótulo de função de uma run em execução, trocado pelo usuário.
+    setRunFunction({ runId, functionSlug }) {
+      return transaction(db, () => {
+        const run = db.prepare("SELECT id FROM agent_runs WHERE id = ? AND state = 'running'").get(runId);
+        if (!run) throw new Error('Run em execução não encontrada.');
+        db.prepare('UPDATE agent_runs SET function_slug = ?, function_overridden = ? WHERE id = ?').run(functionSlug, functionSlug ? 1 : null, runId);
+        return { runId, functionSlug };
+      });
+    },
     // Só funções do usuário. Runs passadas guardam o slug e não dependem da linha.
     deleteFunction({ id, expectedVersion }) {
       return transaction(db, () => {

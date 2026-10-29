@@ -504,6 +504,19 @@ try {
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'funções fechadas');
   console.log('PASS funções de agente: padrão sem modelo, escolha salva preenchida, função do usuário criada e apagada');
+  // Sessão manual: "Usar função" só preenche com o que foi salvo; sem função, nada vem escolhido.
+  await click(main, '.toolbar-actions button', 'Sessão');
+  await until(() => main.evaluate(`Boolean(document.querySelector('.modal select[name=function]'))`), 'sessão manual oferece funções');
+  assert.equal(await main.evaluate(`document.querySelector('.modal select[name=function]').value`), '', 'nenhuma função pré-selecionada');
+  assert.equal(await main.evaluate(`[...document.querySelectorAll('.modal select[name=function] option')].some(item => item.value === 'orquestrador')`), false);
+  await choose(main, '.modal', 'function', 'revisar');
+  await until(() => main.evaluate(`document.querySelector('.modal select[name=model]')?.value === 'fixture/modelo-forte'`), 'sessão manual preenchida pela função');
+  assert.equal(await main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`), false);
+  await choose(main, '.modal', 'function', '');
+  assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]').value`), '', 'sem função volta a ficar sem escolha');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'sessão manual fechada');
+  console.log('PASS sessão manual usa função só para preencher CLI e modelo');
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'session modal closed');
   console.log('PASS modal de sessão lista somente adaptadores detectados');
   // Pedidos de agente semeados pela principal da fixture com o app aberto; o CLI

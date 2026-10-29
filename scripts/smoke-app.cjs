@@ -5,6 +5,10 @@ const path = require('node:path');
 
 if (!process.env.ATLAS_SMOKE_PROFILE) throw new Error('Missing isolated smoke profile');
 app.setPath('userData', process.env.ATLAS_SMOKE_PROFILE);
+// O pop-up "sempre no topo" encobre a janela principal; com a detecção de oclusão
+// do Windows o Chromium para de produzir quadros nela e Page.captureScreenshot fica
+// esperando (o CDP timeout intermitente visto duas vezes logo após esse passo). Só no smoke.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [process.env.ATLAS_SMOKE_PROJECT] });
 const terminals = [];
 let defaultsResolved = false;
