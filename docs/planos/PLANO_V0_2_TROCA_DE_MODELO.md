@@ -1,6 +1,6 @@
 # Plano v0.2 — trocar o LLM de um agente sem perder a tela
 
-Situação: **proposta, aguardando aprovação do mantenedor.** Nada deste plano foi implementado.
+Situação: **aprovado pelo mantenedor em 29/10/2026.** A implementação segue as fases abaixo.
 
 Cobre o item 2 do `docs/ROADMAP.md`. A investigação dos CLIs está na seção "Investigação do item 2" de `docs/planos/PLANO_V0_2_LLM_POR_FUNCAO.md`. A direção aprovada em 29/10/2026 é **começar pela troca nativa do CLI**, com rótulo honesto, e deixar a nova run com retomada como plano B.
 
