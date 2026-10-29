@@ -381,7 +381,7 @@ test('principal pede agente pela ponte: pedido pendente, aviso à interface e st
   const stored = store.getAgentRequest('project-a', asked.value.requestId);
   assert.equal(stored.requestedBy, 'orchestrator-a');
   const status = await orchestrator.call('agents_request_status', { requestId: asked.value.requestId });
-  assert.deepEqual(status.value, { requestId: asked.value.requestId, name: 'revisor-ansi', state: 'pending', expiresAt: stored.expiresAt, sessionId: null, error: null, taskId: null, worktree: null });
+  assert.deepEqual(status.value, { requestId: asked.value.requestId, name: 'revisor-ansi', state: 'pending', expiresAt: stored.expiresAt, sessionId: null, error: null, taskId: null, worktree: null, function: null });
   const other = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.orchestratorB });
   await other.initialize();
   const foreign = await other.call('agents_request_status', { requestId: asked.value.requestId });
@@ -477,4 +477,30 @@ test('regressão: a principal vê claim perdido, recusa com motivo e repetição
   assert.equal(tasks.get('Perdida').state, 'in_progress');
   assert.equal(tasks.get('Perdida').claimActive, false);
   assert.deepEqual(tasks.get('Recusada').lastClosedHandoff, { id: rejectedOffer.value.handoffId, toSessionId: 'manual-a', state: 'rejected', reason: 'Fora do escopo.' });
+});
+
+test('funções pela ponte: lista sem CLI nem modelo, pedido com função e função de cada sessão', async (t) => {
+  const { store, host, tokens, children } = await harness(t);
+  const revisar = store.getFunctionBySlug('revisar');
+  store.updateFunction({ id: revisar.id, expectedVersion: revisar.version, adapterId: 'opencode', model: 'prov/segredo-local' });
+  const manual = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.manualA });
+  const orchestrator = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.orchestratorA });
+  await manual.initialize();
+  await orchestrator.initialize();
+  assert(!(await manual.rpc('tools/list')).result.tools.some((tool) => tool.name === 'agent_functions_list'), 'só a principal escolhe funções');
+  const listed = await orchestrator.call('agent_functions_list', {});
+  assert.equal(listed.isError, false, listed.text);
+  assert.deepEqual(listed.value.functions.map((item) => item.slug), ['planejar', 'explorar', 'implementar', 'revisar', 'testes'], 'sem a função reservada da principal');
+  assert.equal(listed.value.functions.find((item) => item.slug === 'revisar').configured, true);
+  assert(!listed.text.includes('opencode') && !listed.text.includes('segredo-local'), 'CLI e modelo ficam com o usuário');
+  const unknown = await orchestrator.call('agents_request', { name: 'revisor', purpose: 'Revisar.', function: 'auditar' });
+  assert.equal(unknown.isError, true);
+  assert.match(unknown.text, /Função desconhecida: auditar\. Use uma de: planejar, explorar, implementar, revisar, testes\./);
+  const asked = await orchestrator.call('agents_request', { name: 'revisor', purpose: 'Revisar o diff da tarefa.', function: 'revisar', idempotencyKey: 'pedido-funcao-01' });
+  assert.equal(asked.isError, false, asked.text);
+  assert.equal((await orchestrator.call('agents_request_status', { requestId: asked.value.requestId })).value.function, 'revisar');
+  store.startSession({ id: 'revisor-1', projectId: 'project-a', name: 'revisor', adapterId: 'opencode', cli: 'OpenCode', version: '1', cwd: '/fixture/project-a', origin: 'orchestrator', createdAt: '2026-10-29T00:00:00Z', functionSlug: 'revisar', functionOverridden: false });
+  const sessions = (await orchestrator.call('sessions_list', {})).value.sessions;
+  assert.equal(sessions.find((session) => session.id === 'revisor-1').function, 'revisar');
+  assert.equal(sessions.find((session) => session.id === 'manual-a').function, null);
 });

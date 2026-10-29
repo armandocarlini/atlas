@@ -508,6 +508,7 @@ test('principal troca de CLI e modelo entre runs mantendo a identidade', async (
   assert.equal(profile.permission['atlas_*'], 'allow');
   assert.equal(profile.permission.read['*.env'], 'deny');
   assert.match(profile.prompt, /atlas_agents_request/);
+  assert.match(profile.prompt, /atlas_agent_functions_list/, 'a principal escolhe a função do agente');
   assert.doesNotMatch(profile.prompt, /mcp__atlas__/);
   const session = fixture.store.listSessions('project-a')[0];
   assert.equal(session.adapter_id, 'opencode');

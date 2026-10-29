@@ -67,10 +67,19 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     return created;
   }
 
+  // Função escolhida no cartão: a sugerida pela principal ou outra, nunca a da principal.
+  function chosenFunction(slug) {
+    if (slug === undefined || slug === null || slug === '') return null;
+    const item = typeof slug === 'string' ? store.getFunctionBySlug?.(slug) : null;
+    if (!item || item.kind === 'orchestrator') throw new Error('Função inválida para um agente.');
+    return item;
+  }
+
   ipcMain.handle('agent-request:approve', async (event, request) => {
     const project = await projectForRequest(event, request);
     const requestId = requireId(request.requestId, 'Pedido');
     const payloadHash = requireId(request.payloadHash, 'Conteúdo aprovado');
+    const fn = chosenFunction(request.functionSlug);
     // O usuário escolhe o CLI e o modelo na aprovação; a escolha é conferida antes
     // de aprovar, para que um CLI indisponível não consuma o pedido nem crie worktree.
     const launch = await agentHost.resolveLaunch(request.adapterId, request.model);
@@ -79,13 +88,18 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     const active = agentHost.countActive({ projectId: project.id, origin: 'orchestrator' }) + inFlight;
     if (active >= policy.maxActiveAgents) throw new Error(`Limite da política: ${active} agentes criados pela principal já estão em execução neste projeto. Encerre um deles antes de aprovar.`);
     const approved = store.approveAgentRequest({ projectId: project.id, requestId, payloadHash });
+    // Auditoria: a run guarda a função final e se o usuário trocou a sugestão (outra
+    // função, ou CLI e modelo diferentes dos salvos nela).
+    const functionOverridden = fn || approved.functionSlug
+      ? Boolean(fn?.slug !== approved.functionSlug || !fn || fn.adapterId !== launch.adapter.id || (fn.model || null) !== (launch.model || null))
+      : null;
     reserved.set(project.id, inFlight + 1);
     try {
       let agent;
       let created = null;
       try {
         const cwd = approved.useWorktree ? (created = await prepareWorktree(project, approved)).path : project.path;
-        agent = await agentHost.createAgent({ adapterId: launch.adapter.id, model: launch.model, name: approved.name, cwd }, { origin: 'orchestrator', launch });
+        agent = await agentHost.createAgent({ adapterId: launch.adapter.id, model: launch.model, name: approved.name, cwd, functionSlug: fn?.slug || null, functionOverridden }, { origin: 'orchestrator', launch });
       } catch (error) {
         // A worktree criada permanece: o ATLAS não remove nada automaticamente.
         if (created) error.message = `Worktree criada em ${created.path}, mas o agente não iniciou: ${error.message}`;

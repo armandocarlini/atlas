@@ -4,7 +4,7 @@ const { randomUUID, createHash } = require('node:crypto');
 const { DatabaseSync, backup } = require('node:sqlite');
 const { createTaskDelegation } = require('./task-delegation.cjs');
 const { createTaskReview } = require('./task-review.cjs');
-const { createAgentFunctions } = require('./agent-functions.cjs');
+const { createAgentFunctions, SLUG_PATTERN } = require('./agent-functions.cjs');
 
 const MIGRATIONS = [{
   version: 1,
@@ -208,12 +208,18 @@ const MIGRATIONS = [{
     ALTER TABLE agent_runs ADD COLUMN function_slug TEXT;
     ALTER TABLE agent_runs ADD COLUMN function_overridden INTEGER CHECK(function_overridden IN (0, 1));
   `,
+}, {
+  // Função indicada pela principal no pedido de agente (v0.2, fase 3).
+  version: 11,
+  sql: `
+    ALTER TABLE agent_requests ADD COLUMN function_slug TEXT;
+  `,
 }];
 
 // Política padrão da v0.1 para pedidos de agente feitos pela sessão principal.
 const AGENT_REQUEST_POLICY = Object.freeze({ maxPending: 3, ttlMs: 15 * 60 * 1000, maxActiveAgents: 2 });
 
-function agentRequestPayload({ name, purpose, idempotencyKey, taskId, worktree = false }) {
+function agentRequestPayload({ name, purpose, idempotencyKey, taskId, worktree = false, functionSlug }) {
   for (const [label, value, max] of [['Nome', name, 60], ['Propósito', purpose, 1000]]) {
     if (typeof value !== 'string' || value.length > max || !value.trim()) throw new Error(`${label}: informe texto válido com até ${max} caracteres.`);
   }
@@ -225,14 +231,16 @@ function agentRequestPayload({ name, purpose, idempotencyKey, taskId, worktree =
   if (taskId !== undefined && taskId !== null && (typeof taskId !== 'string' || !taskId)) throw new Error('Tarefa inválida.');
   if (typeof worktree !== 'boolean') throw new Error('Indique worktree como verdadeiro ou falso.');
   if (worktree && !taskId) throw new Error('Worktree exige a tarefa a que o agente vai se dedicar.');
+  if (functionSlug !== undefined && functionSlug !== null && (typeof functionSlug !== 'string' || !SLUG_PATTERN.test(functionSlug))) throw new Error('Função inválida.');
   // Campos novos entram no payload só quando usados: hashes de pedidos antigos não mudam.
-  return { name: name.trim(), purpose: purpose.trim(), ...(taskId ? { taskId, worktree } : {}) };
+  return { name: name.trim(), purpose: purpose.trim(), ...(taskId ? { taskId, worktree } : {}), ...(functionSlug ? { function: functionSlug } : {}) };
 }
 
 // O nome do solicitante vem do banco: a interface pode ainda não ter carregado a sessão.
-const AGENT_REQUEST_SELECT = `SELECT r.*, s.name AS requester_name, t.title AS task_title, w.path AS worktree_path, w.branch AS worktree_branch
+const AGENT_REQUEST_SELECT = `SELECT r.*, s.name AS requester_name, t.title AS task_title, w.path AS worktree_path, w.branch AS worktree_branch, f.name AS function_name
   FROM agent_requests r
   LEFT JOIN sessions s ON s.id = r.requested_by
+  LEFT JOIN agent_functions f ON f.slug = r.function_slug AND f.project_id IS NULL
   LEFT JOIN tasks t ON t.id = r.task_id
   LEFT JOIN worktrees w ON w.request_id = r.id`;
 
@@ -243,6 +251,8 @@ function agentRequestRow(row) {
     resolvedAt: row.resolved_at, resolvedBy: row.resolved_by, sessionId: row.session_id, error: row.error, version: row.version,
     taskId: row.task_id || null, taskTitle: row.task_title || null, useWorktree: row.use_worktree === 1,
     worktree: row.worktree_path ? { path: row.worktree_path, branch: row.worktree_branch } : null,
+    // Nome atual da função; uma função apagada depois do pedido mantém só o slug.
+    functionSlug: row.function_slug || null, functionName: row.function_name || null,
   };
 }
 
@@ -435,6 +445,11 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         const requester = db.prepare('SELECT id, role FROM sessions WHERE id = ? AND project_id = ?').get(request.requestedBy, request.projectId);
         if (!requester) throw new Error('Sessão solicitante não pertence a este projeto.');
         if (requester.role !== 'orchestrator') throw new Error('Somente a sessão principal pode pedir novos agentes.');
+        // A principal só pede funções existentes e nunca a reservada da principal.
+        if (payload.function) {
+          const known = db.prepare("SELECT slug FROM agent_functions WHERE project_id IS NULL AND kind != 'orchestrator' ORDER BY position, slug").all().map((row) => row.slug);
+          if (!known.includes(payload.function)) throw new Error(`Função desconhecida: ${payload.function}. Use uma de: ${known.join(', ')}.`);
+        }
         if (payload.taskId) {
           const task = db.prepare('SELECT state FROM tasks WHERE id = ? AND project_id = ?').get(payload.taskId, request.projectId);
           if (!task) throw new Error('Tarefa não encontrada neste projeto.');
@@ -453,8 +468,8 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         const id = randomUUID();
         const commandId = randomUUID();
         const expiresAt = new Date(Date.parse(at) + policy.ttlMs).toISOString();
-        db.prepare('INSERT INTO agent_requests (id, project_id, requested_by, name, purpose, payload_hash, state, created_at, expires_at, version, task_id, use_worktree) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)')
-          .run(id, request.projectId, requester.id, payload.name, payload.purpose, hash, 'pending', at, expiresAt, payload.taskId || null, payload.worktree ? 1 : 0);
+        db.prepare('INSERT INTO agent_requests (id, project_id, requested_by, name, purpose, payload_hash, state, created_at, expires_at, version, task_id, use_worktree, function_slug) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)')
+          .run(id, request.projectId, requester.id, payload.name, payload.purpose, hash, 'pending', at, expiresAt, payload.taskId || null, payload.worktree ? 1 : 0, payload.function || null);
         db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'agent.request', id, JSON.stringify({ ...payload, requestedBy: requester.id }), hash, request.idempotencyKey, 'completed', `agent:${requester.id}`, at, at, JSON.stringify({ id }), commandId);
         event({ projectId: request.projectId, sessionId: requester.id, type: 'approval.requested', payload: { requestId: id, kind: 'agent.create', name: payload.name }, correlationId: commandId, at });
         return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(id));
@@ -541,7 +556,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       });
     },
     getOrchestrator: (projectId) => db.prepare("SELECT * FROM sessions WHERE project_id = ? AND role = 'orchestrator'").get(projectId),
-    startSession({ id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, runStartedAt = createdAt, role = 'agent', model = null }) {
+    startSession({ id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, runStartedAt = createdAt, role = 'agent', model = null, functionSlug = null, functionOverridden = null }) {
       return transaction(db, () => {
         const runId = randomUUID();
         const attempt = db.prepare('SELECT coalesce(max(attempt), 0) + 1 AS next FROM agent_runs WHERE session_id = ?').get(id).next;
@@ -553,7 +568,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         } else {
           db.prepare('INSERT INTO sessions (id, project_id, name, adapter_id, cli, cli_version, cwd, origin, created_at, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, role);
         }
-        db.prepare(`INSERT INTO agent_runs (id, session_id, state, started_at, cli_version, cwd, attempt, adapter_id, model) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?)`).run(runId, id, runStartedAt, version, cwd, attempt, adapterId, model);
+        db.prepare(`INSERT INTO agent_runs (id, session_id, state, started_at, cli_version, cwd, attempt, adapter_id, model, function_slug, function_overridden) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`).run(runId, id, runStartedAt, version, cwd, attempt, adapterId, model, functionSlug, functionOverridden === null ? null : functionOverridden ? 1 : 0);
         event({ projectId, sessionId: id, runId, type: existing ? 'session.attached' : 'session.created', at: runStartedAt });
         event({ projectId, sessionId: id, runId, type: 'run.started', payload: { adapterId, cli, model }, at: runStartedAt });
         return { id: runId, version: 1, attempt };

@@ -512,7 +512,7 @@ try {
   try {
     liveStore.startSession({ id: 'smoke-orchestrator', projectId: extraProjectId, name: 'ORQUESTRADOR-fixture', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'user', createdAt: new Date().toISOString(), role: 'orchestrator' });
     liveStore.requestAgent({ projectId: extraProjectId, requestedBy: 'smoke-orchestrator', name: 'revisor-recusado', purpose: 'Pedido que o usuário vai recusar.', idempotencyKey: 'smoke-request-0001' });
-    liveStore.requestAgent({ projectId: extraProjectId, requestedBy: 'smoke-orchestrator', name: 'revisor-sem-cli', purpose: 'Pedido aprovado sem CLI disponível na fixture.\nSegunda linha preservada.', idempotencyKey: 'smoke-request-0002' });
+    liveStore.requestAgent({ projectId: extraProjectId, requestedBy: 'smoke-orchestrator', name: 'revisor-sem-cli', purpose: 'Pedido aprovado sem CLI disponível na fixture.\nSegunda linha preservada.', idempotencyKey: 'smoke-request-0002', functionSlug: 'revisar' });
   } finally {
     liveStore.close();
   }
@@ -527,10 +527,25 @@ try {
   await screenshot(main, 'agent-requests');
   await main.evaluate(`[...document.querySelectorAll('.agent-request')].find(item => item.innerText.includes('revisor-recusado')).querySelector('button.secondary').click()`);
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 1`), 'rejected request removed');
-  assert(await main.evaluate(`document.querySelector('.agent-request button.primary').disabled`), 'aprovar exige escolher CLI e modelo');
-  await choose(main, '.agent-request', 'cli', 'opencode');
-  await until(() => main.evaluate(`document.querySelectorAll('.agent-request select[name=model] option').length === 3`), 'modelos no pedido');
+  // v0.2: a principal pediu a função Revisar; o cartão vem com o CLI e o modelo salvos nela.
+  assert.equal(await main.evaluate(`document.querySelector('.agent-request select[name=function]').value`), 'revisar', 'função sugerida pela principal');
+  assert(await main.evaluate(`[...document.querySelectorAll('.agent-request select[name=function] option')].some(item => item.textContent === 'Revisar (escolhida pela principal)')`));
+  assert.equal(await main.evaluate(`[...document.querySelectorAll('.agent-request select[name=function] option')].some(item => item.value === 'orquestrador')`), false, 'a função da principal não vale para agentes');
+  await until(() => main.evaluate(`document.querySelector('.agent-request select[name=model]')?.value === 'fixture/modelo-forte'`), 'cartão preenchido pela função');
+  assert.equal(await main.evaluate(`document.querySelector('.agent-request select[name=cli]').value`), 'opencode');
+  assert.equal(await main.evaluate(`document.querySelector('.agent-request button.primary').disabled`), false, 'escolha completa vinda da função');
+  assert.equal(await main.evaluate(`document.querySelector('.agent-request').innerText.includes('Alterado em relação')`), false);
+  // Sem função, nada vem preenchido; voltar à função preenche de novo.
+  await choose(main, '.agent-request', 'function', '');
+  assert(await main.evaluate(`document.querySelector('.agent-request button.primary').disabled`), 'sem função, aprovar exige escolher CLI e modelo');
+  assert.equal(await main.evaluate(`document.querySelector('.agent-request select[name=cli]').value`), '');
+  assert(await main.evaluate(`document.querySelector('.agent-request').innerText.includes('Alterado em relação à função escolhida pela principal')`), 'troca de função sinalizada');
+  await choose(main, '.agent-request', 'function', 'revisar');
+  await until(() => main.evaluate(`document.querySelector('.agent-request select[name=model]')?.value === 'fixture/modelo-forte'`), 'função preenche de novo');
+  // Trocar o modelo da sugestão é permitido e fica sinalizado.
   await choose(main, '.agent-request', 'model', 'fixture/modelo-rapido');
+  await until(() => main.evaluate(`document.querySelector('.agent-request').innerText.includes('Alterado em relação ao que está salvo na função')`), 'troca de modelo sinalizada');
+  await screenshot(main, 'agent-request-function');
   await main.evaluate(`document.querySelector('.agent-request button.primary').click()`);
   await until(() => main.evaluate(`document.querySelector('.agent-request [role=alert]')?.innerText.includes('Não foi possível iniciar o OpenCode')`), 'honest spawn failure inline');
   const decided = await native('invoke', { channel: 'agent-request:list', args: [{ cwd: extraProject }] });

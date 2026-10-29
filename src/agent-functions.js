@@ -21,3 +21,8 @@ export function describeChoice(item, adapters) {
   const name = (adapters || []).find((adapter) => adapter.id === item.adapterId)?.name || item.adapterId;
   return item.model ? `${name} · ${item.model}` : `${name} · modelo da configuração do CLI`;
 }
+
+// Escolha inicial vinda de uma função salva; sem função ou sem CLI, começa vazia.
+export function choiceFromFunction(item) {
+  return item?.adapterId ? { adapterId: item.adapterId, model: item.model || '', ready: false } : { adapterId: '', model: '', ready: false };
+}

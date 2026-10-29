@@ -55,7 +55,7 @@ test('migration 10 a partir de um banco v9 preserva runs e acrescenta a auditori
   try {
     const columns = db.prepare('PRAGMA table_info(agent_runs)').all().map((column) => column.name);
     assert(columns.includes('function_slug') && columns.includes('function_overridden'));
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 10);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.length);
   } finally {
     db.close();
   }
