@@ -22,7 +22,7 @@ A ordem abaixo é uma proposta. Cada item precisa de plano aprovado antes de com
 
 ### 1. LLM por função — plano aprovado, em execução
 
-Plano: `docs/planos/PLANO_V0_2_LLM_POR_FUNCAO.md` (aprovado em 29/10/2026). Fase 1 (banco e host) entregue; seguem a tela de funções, a ponte com o cartão e a principal. Pendente com o mantenedor: a lista inicial de recomendações de modelo.
+Plano: `docs/planos/PLANO_V0_2_LLM_POR_FUNCAO.md` (aprovado em 29/10/2026). Fases 1 (banco e host) e 2 (tela de funções) entregues; seguem a ponte com o cartão (fase 3) e a principal com a sessão manual (fase 4). Pendente com o mantenedor: a lista inicial de recomendações de modelo.
 
 O objetivo é escolher CLI e modelo uma vez por *função*, em vez de a cada sessão. A ideia: modelos mais econômicos onde bastam e mais capazes onde o retrabalho custa caro.
 
