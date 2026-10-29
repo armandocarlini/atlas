@@ -504,3 +504,14 @@ test('funções pela ponte: lista sem CLI nem modelo, pedido com função e fun�
   assert.equal(sessions.find((session) => session.id === 'revisor-1').function, 'revisar');
   assert.equal(sessions.find((session) => session.id === 'manual-a').function, null);
 });
+
+test('sessions_list informa o modelo atual e de onde ele veio', async (t) => {
+  const { store, host, tokens, children } = await harness(t);
+  const run = store.startSession({ id: 'trocou', projectId: 'project-a', name: 'trocou', adapterId: 'opencode', cli: 'OpenCode', version: '1', cwd: '/fixture/project-a', origin: 'user', createdAt: '2026-10-29T00:00:00Z', model: 'prov/inicio' });
+  const orchestrator = startBridge(children, { ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: tokens.orchestratorA });
+  await orchestrator.initialize();
+  const find = async () => (await orchestrator.call('sessions_list', {})).value.sessions.find((session) => session.id === 'trocou');
+  assert.deepEqual(await find().then(({ model, modelSource }) => ({ model, modelSource })), { model: 'prov/inicio', modelSource: 'launch' });
+  store.declareRunModel({ runId: run.id, model: 'prov/novo' });
+  assert.deepEqual(await find().then(({ model, modelSource }) => ({ model, modelSource })), { model: 'prov/novo', modelSource: 'user' });
+});

@@ -124,7 +124,7 @@ const TOOLS = [
   },
   {
     name: 'sessions_list',
-    description: 'Lista as sessões de agente do projeto desta sessão no ATLAS, com papel, origem, função e estado da última run. Antes de pedir um agente novo, veja se já há um da função certa em execução para delegar a tarefa a ele.',
+    description: 'Lista as sessões de agente do projeto desta sessão no ATLAS, com papel, origem, função, modelo (o de início ou o informado pelo usuário depois de trocar no CLI) e estado da última run. Antes de pedir um agente novo, veja se já há um da função certa em execução para delegar a tarefa a ele.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -247,7 +247,10 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
         callerSessionId: grant.sessionId,
         sessions: store.listSessions(grant.projectId).map((session) => ({
           id: session.id, name: session.name, role: session.role, origin: session.origin,
-          cli: session.cli, function: latest.get(session.id)?.function_slug || null, runState: latest.get(session.id)?.state || null, self: session.id === grant.sessionId,
+          cli: session.cli, function: latest.get(session.id)?.function_slug || null,
+          // Modelo atual: o informado pelo usuário depois de trocar no CLI, ou o de início.
+          model: latest.get(session.id)?.current_model ?? latest.get(session.id)?.model ?? null,
+          modelSource: latest.get(session.id)?.current_model ? 'user' : 'launch', runState: latest.get(session.id)?.state || null, self: session.id === grant.sessionId,
         })),
       };
     },

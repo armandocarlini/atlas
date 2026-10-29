@@ -52,6 +52,7 @@ As migrations são numeradas e nunca editadas depois de integradas:
 9. CLI e modelo de cada run
 10. funções de agente (Orquestrador e as cinco padrão semeadas, sem CLI nem modelo) e a função de cada run
 11. função indicada pela principal no pedido de agente
+12. modelo atual informado pelo usuário depois de trocar no CLI (`current_model`; `model` continua sendo o de início)
 
 Comandos de escrita levam chave de idempotência e hash do payload. O banco fica no perfil do app, e nenhum transcript, prompt ou saída de PTY é gravado.
 

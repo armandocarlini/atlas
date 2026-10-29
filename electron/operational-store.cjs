@@ -214,6 +214,13 @@ const MIGRATIONS = [{
   sql: `
     ALTER TABLE agent_requests ADD COLUMN function_slug TEXT;
   `,
+}, {
+  // Modelo trocado pelo usuário dentro do CLI e informado ao ATLAS (v0.2): a run
+  // continua a mesma; `model` segue sendo o modelo de início.
+  version: 12,
+  sql: `
+    ALTER TABLE agent_runs ADD COLUMN current_model TEXT;
+  `,
 }];
 
 // Política padrão da v0.1 para pedidos de agente feitos pela sessão principal.
@@ -593,6 +600,19 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
           event({ projectId: request.project_id, sessionId: request.requested_by, type: 'approval.failed', payload: { requestId: request.id, error, reason }, correlationId: request.id, at });
         }
         return active.length;
+      });
+    },
+    // O usuário trocou o modelo no terminal do CLI e informa o novo. Sem nova run:
+    // a mesma sessão, o mesmo claim; a troca fica auditada e marca a função como alterada.
+    declareRunModel({ runId, model }) {
+      return transaction(db, () => {
+        const run = db.prepare('SELECT r.*, s.project_id FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE r.id = ?').get(runId);
+        if (!run || run.state !== 'running') throw new Error('Run em execução não encontrada.');
+        const previous = run.current_model ?? run.model;
+        const at = now();
+        db.prepare('UPDATE agent_runs SET current_model = ?, function_overridden = CASE WHEN function_slug IS NULL THEN function_overridden ELSE 1 END WHERE id = ?').run(model, runId);
+        event({ projectId: run.project_id, sessionId: run.session_id, runId, type: 'run.model_declared', payload: { from: previous, to: model, source: 'user' }, at });
+        return { runId, model, previous, declaredAt: at };
       });
     },
     listProjects: () => db.prepare('SELECT * FROM projects ORDER BY created_at, id').all(),

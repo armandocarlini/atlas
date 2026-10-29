@@ -21,6 +21,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       cli: agent.cli,
       version: agent.version,
       model: agent.model,
+      currentModel: agent.currentModel ?? null,
       functionSlug: agent.functionSlug ?? null,
       cwd: agent.cwd,
       origin: agent.origin,
@@ -51,7 +52,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
         if (!run) continue;
         history.push({
           id: session.id, name: session.name, adapterId: session.adapter_id, cli: session.cli,
-          version: session.cli_version, model: run.model ?? null, functionSlug: run.function_slug ?? null, cwd: session.cwd, origin: session.origin,
+          version: session.cli_version, model: run.model ?? null, currentModel: run.current_model ?? null, functionSlug: run.function_slug ?? null, cwd: session.cwd, origin: session.origin,
           projectId: project.id, ptyId: null, state: 'exited', archived: true,
           runId: run.id, runState: run.state, reason: run.reason,
           exit: run.exit_code === null ? null : { exitCode: run.exit_code, signal: run.signal },
@@ -222,6 +223,24 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
   ipcMain.handle('agent:create', async (event, request = {}) => {
     if (!isMainSender(event)) throw new Error('Janela não autorizada a criar sessões de agente.');
     return createAgent({ ...request, ...functionAudit(request?.functionSlug, request?.adapterId, request?.model) });
+  });
+
+  // O usuário trocou o modelo dentro do CLI (/model, /models) e informa o novo.
+  // O ATLAS não digita no terminal nem reinicia nada: só registra na mesma run.
+  ipcMain.handle('agent:declare-model', async (event, request = {}) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a alterar sessões de agente.');
+    const agent = typeof request?.sessionId === 'string' ? agents.get(request.sessionId) : null;
+    if (!agent || agent.state !== 'running' || !agent.runId) throw new Error('Sessão de agente em execução não encontrada.');
+    const model = typeof request.model === 'string' ? request.model : '';
+    if (!MODEL_PATTERN.test(model)) throw new Error('Modelo inválido.');
+    const models = await modelsFor(await requireAdapter(agent.adapterId));
+    if (!models.length) throw new Error(`O ${agent.cli} não informa modelos ao ATLAS; não há como conferir a troca.`);
+    if (!models.includes(model)) throw new Error(`O modelo ${model} não foi identificado no ${agent.cli}. Atualize a lista de modelos.`);
+    if (agent.state !== 'running') throw new Error('A sessão terminou antes de registrar a troca.');
+    store?.declareRunModel({ runId: agent.runId, model });
+    agent.currentModel = model;
+    if (agent.functionSlug) agent.functionOverridden = true;
+    return describe(agent);
   });
 
   // Troca o rótulo de função de um agente em execução (o Orquestrador usa nas próximas
