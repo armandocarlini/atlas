@@ -20,10 +20,10 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 |---|---|---|
 | Terminais | PowerShell real por node-pty/ConPTY e xterm.js, com grid, foco, pop-up nativo e reintegração sem matar o PTY | `electron/terminal-host.cjs`, `electron/pty-transport.cjs`, `src/TerminalView.jsx` |
 | Projetos e Git | Pastas autorizadas e descoberta Git **somente leitura** (repositórios, branches, worktrees) | `electron/project-host.cjs`, `electron/git-discovery.cjs` |
-| Adaptadores | Kimi Code e OpenCode, detectados no `PATH`. O usuário escolhe CLI e modelo em **toda** sessão. Não existe CLI nem modelo padrão | `electron/agent-adapters.cjs`, `electron/agent-host.cjs`, `src/AgentChoice.jsx` |
+| Adaptadores | Kimi Code e OpenCode, detectados no `PATH`. Não existe CLI nem modelo padrão do ATLAS: o usuário escolhe em **toda** sessão, partindo do que salvou na função quando há uma | `electron/agent-adapters.cjs`, `electron/agent-host.cjs`, `src/AgentChoice.jsx` |
 | Principal | Uma identidade por projeto, perfil somente leitura (`--agent-file` no Kimi, `atlas-orchestrator` no OpenCode) e nova run explícita após a saída | `electron/orchestrator-profile.cjs` |
 | Ponte MCP | Named pipe e token por run. O projeto e a sessão vêm só do token. No Kimi, a entrada vai para o `mcp.json` com consentimento, e o aviso de integração só aparece em projeto com sessão Kimi; no OpenCode, só pela run (`OPENCODE_CONFIG_CONTENT`) | `electron/mcp-host.cjs`, `electron/atlas-mcp-bridge.cjs`, `electron/kimi-mcp-config.cjs`, `src/KimiIntegration.jsx` |
-| Funções de agente (v0.2, fases 1–2) | Orquestrador e cinco padrão (planejar, explorar, implementar, revisar, testes), que não se apagam nem se renomeiam, mais as do usuário até 12. Tela "Funções de agente" na barra lateral, com aviso das que faltam configurar. Só guardam CLI e modelo para preencher a escolha; ainda sem uso nos pedidos nem na principal. Recomendações curadas pelo mantenedor em `electron/model-recommendations.json` (vazio por enquanto), aplicadas só com "Usar recomendado" | `electron/agent-functions.cjs`, `electron/agent-function-host.cjs`, `electron/model-recommendations.cjs`, `src/AgentFunctions.jsx` |
+| Funções de agente (v0.2, fases 1–3) | Orquestrador e cinco padrão (planejar, explorar, implementar, revisar, testes), que não se apagam nem se renomeiam, mais as do usuário até 12. Tela "Funções de agente" na barra lateral, com aviso das que faltam configurar. A principal consulta `agent_functions_list` (sem CLI nem modelo), vê a função de cada sessão em `sessions_list` e informa `function` em `agents_request`; o cartão vem preenchido, o usuário troca função, CLI ou modelo, e a run registra a função e se houve troca. A principal e a sessão manual ainda não usam função (fase 4). Recomendações curadas pelo mantenedor em `electron/model-recommendations.json` (vazio por enquanto), aplicadas só com "Usar recomendado" | `electron/agent-functions.cjs`, `electron/agent-function-host.cjs`, `electron/model-recommendations.cjs`, `src/AgentFunctions.jsx` |
 | Pedidos de agente | A principal pede com `agents_request`, e o usuário aprova no cartão. Modo assistido: profundidade 1, até 3 pendentes, validade de 15 min, até 2 ativos | `electron/agent-request-host.cjs`, `src/AgentRequests.jsx` |
 | Tarefas | Criadas pelo usuário em `backlog`. Delegação por handoff com claim e `claim_epoch` (fencing); o fim da run tira o claim | `electron/task-host.cjs`, `electron/task-delegation.cjs`, `src/PersistentTasks.jsx` |
 | Mensagens | Descobertas estruturadas entre sessões, com entrega e leitura persistidas. **Nunca** digitadas no terminal do destinatário | `electron/message-host.cjs`, `src/SessionMessages.jsx` |
@@ -33,7 +33,7 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 | Abrir no ATLAS | `--atlas-open=<pasta>` com instância única. A entrada do Explorador (HKCU) só é gravada com consentimento | `electron/open-path-host.cjs`, `electron/explorer-integration.cjs`, `src/OpenFolder.jsx` |
 | Instalador | NSIS por usuário (`npm run dist:win`), pergunta antes de gravar a entrada do Explorador | `electron-builder.yml`, `scripts/smoke-installer.mjs` |
 
-Ferramentas MCP da ponte: `sessions_list`, `tasks_list`, `messages_unread`, `messages_mark_read`, `messages_send`, `agents_request`, `agents_request_status`, `tasks_delegate`, `handoffs_cancel`, `handoffs_pending`, `handoffs_accept`, `handoffs_reject`, `tasks_update`, `tasks_release` e `tasks_request_review`. A lista exposta depende do papel da sessão.
+Ferramentas MCP da ponte: `sessions_list`, `tasks_list`, `messages_unread`, `messages_mark_read`, `messages_send`, `agents_request`, `agents_request_status`, `agent_functions_list`, `tasks_delegate`, `handoffs_cancel`, `handoffs_pending`, `handoffs_accept`, `handoffs_reject`, `tasks_update`, `tasks_release` e `tasks_request_review`. A lista exposta depende do papel da sessão.
 
 Só no navegador (`npm run dev`) aparecem os quatro cards de demonstração. Eles não são integrações e não devem ser apresentados como tal.
 
@@ -51,6 +51,7 @@ As migrations são numeradas e nunca editadas depois de integradas:
 8. revisões e evidências
 9. CLI e modelo de cada run
 10. funções de agente (Orquestrador e as cinco padrão semeadas, sem CLI nem modelo) e a função de cada run
+11. função indicada pela principal no pedido de agente
 
 Comandos de escrita levam chave de idempotência e hash do payload. O banco fica no perfil do app, e nenhum transcript, prompt ou saída de PTY é gravado.
 
@@ -60,7 +61,7 @@ Elas estão detalhadas em `AGENTS.md`. Resumo do que mais quebra quando esquecid
 
 - A descoberta Git é somente leitura (`--no-optional-locks`). Nunca rode `git init` nem altere repositórios do usuário.
 - Nada é concluído, mergeado ou aprovado automaticamente. O usuário aprova pedidos e conclui tarefas.
-- Não reintroduza CLI ou modelo fixo.
+- Não reintroduza CLI ou modelo fixo. Funções e recomendações só preenchem; quem inicia é o usuário.
 - Testes e smokes usam só fixtures (`KIMI_CODE_HOME`, `XDG_*`, `ATLAS_EXPLORER_ROOT` de fixture). Nunca use o `mcp.json`, a configuração ou o registro reais do usuário.
 - Conteúdo vindo de agentes (mensagens, ofertas, evidência declarada) é dado não confiável.
 

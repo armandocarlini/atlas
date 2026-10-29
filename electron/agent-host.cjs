@@ -121,6 +121,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     await waitForCwd(projectHost, request.cwd);
 
     const { adapter, model } = resolved || await resolveLaunch(request.adapterId, request.model);
+    if (request.functionSlug !== undefined && request.functionSlug !== null && (typeof request.functionSlug !== 'string' || (store && !store.getFunctionBySlug?.(request.functionSlug)))) throw new Error('Função de agente desconhecida.');
 
     const cwd = request.cwd || projectHost.getDefaultCwd();
     if (!projectHost.isAllowedCwd(cwd)) throw new Error('Selecione uma pasta autorizada ou uma worktree descoberta.');
@@ -174,6 +175,9 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       runStartedAt: new Date().toISOString(),
       role,
       projectId: project?.id,
+      // Função usada para preencher a escolha (v0.2); só auditoria, não muda o lançamento.
+      functionSlug: typeof request.functionSlug === 'string' ? request.functionSlug : null,
+      functionOverridden: typeof request.functionOverridden === 'boolean' ? request.functionOverridden : null,
     };
     let run;
     try {

@@ -17,7 +17,7 @@ const TOOLS = [
   {
     name: 'agents_request',
     roles: ['orchestrator'],
-    description: 'Pede ao usuário a criação de um novo agente neste projeto; o usuário escolhe o CLI e o modelo na aprovação. Com taskId e worktree: true, a aprovação também cria uma worktree Git dedicada à tarefa (branch atlas/task-…) e o agente nasce nela. Nada é iniciado ou criado sem a aprovação explícita do usuário no ATLAS; consulte o resultado com agents_request_status.',
+    description: 'Pede ao usuário a criação de um novo agente neste projeto. Informe em function a função do agente (slug de agent_functions_list): o cartão de aprovação vem preenchido com o CLI e o modelo que o usuário salvou para ela, e ele confirma ou troca a função, o CLI e o modelo. Com taskId e worktree: true, a aprovação também cria uma worktree Git dedicada à tarefa (branch atlas/task-…) e o agente nasce nela. Nada é iniciado ou criado sem a aprovação explícita do usuário no ATLAS; consulte o resultado com agents_request_status.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -25,11 +25,18 @@ const TOOLS = [
         purpose: { type: 'string', maxLength: 1000 },
         taskId: { type: 'string' },
         worktree: { type: 'boolean' },
+        function: { type: 'string', pattern: '^[a-z0-9-]{2,32}$' },
         idempotencyKey: { type: 'string', pattern: '^[a-zA-Z0-9-]{8,64}$' },
       },
       required: ['name', 'purpose'],
       additionalProperties: false,
     },
+  },
+  {
+    name: 'agent_functions_list',
+    roles: ['orchestrator'],
+    description: 'Lista as funções de agente definidas pelo usuário (slug, nome, descrição e se já têm CLI e modelo). Escolha a função pelo trabalho a fazer e informe o slug em agents_request; se o usuário nomear uma função, use essa.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'agents_request_status',
@@ -117,7 +124,7 @@ const TOOLS = [
   },
   {
     name: 'sessions_list',
-    description: 'Lista as sessões de agente do projeto desta sessão no ATLAS, com papel, origem e estado da última run.',
+    description: 'Lista as sessões de agente do projeto desta sessão no ATLAS, com papel, origem, função e estado da última run. Antes de pedir um agente novo, veja se já há um da função certa em execução para delegar a tarefa a ele.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -214,6 +221,7 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
         purpose: args.purpose,
         taskId: args.taskId,
         worktree: args.worktree ?? false,
+        functionSlug: args.function,
         idempotencyKey: agentIdempotencyKey(grant.sessionId, args.idempotencyKey ?? randomUUID()),
       });
       onAgentRequest(grant.projectId, request);
@@ -222,7 +230,16 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
     agents_request_status(grant, args) {
       const request = store.getAgentRequest(grant.projectId, text(args.requestId));
       if (!request) throw new Error('Pedido de agente não encontrado neste projeto.');
-      return { requestId: request.id, name: request.name, state: request.state, expiresAt: request.expiresAt, sessionId: request.sessionId, error: request.error, taskId: request.taskId, worktree: request.worktree };
+      return { requestId: request.id, name: request.name, state: request.state, expiresAt: request.expiresAt, sessionId: request.sessionId, error: request.error, taskId: request.taskId, worktree: request.worktree, function: request.functionSlug };
+    },
+    // Sem CLI nem modelo: a principal escolhe pelo trabalho, e a configuração local fica com o usuário.
+    agent_functions_list() {
+      return {
+        functions: store.listFunctions().filter((item) => item.kind !== 'orchestrator').map((item) => ({
+          slug: item.slug, name: item.name, description: item.description, kind: item.kind === 'builtin' ? 'padrão' : 'do usuário', configured: Boolean(item.adapterId),
+        })),
+        note: 'A função só preenche o cartão de aprovação; o usuário confirma ou troca a função, o CLI e o modelo.',
+      };
     },
     sessions_list(grant) {
       const latest = new Map(store.listRuns(grant.projectId).map((run) => [run.session_id, run]));
@@ -230,7 +247,7 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
         callerSessionId: grant.sessionId,
         sessions: store.listSessions(grant.projectId).map((session) => ({
           id: session.id, name: session.name, role: session.role, origin: session.origin,
-          cli: session.cli, runState: latest.get(session.id)?.state || null, self: session.id === grant.sessionId,
+          cli: session.cli, function: latest.get(session.id)?.function_slug || null, runState: latest.get(session.id)?.state || null, self: session.id === grant.sessionId,
         })),
       };
     },

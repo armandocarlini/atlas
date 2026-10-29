@@ -173,7 +173,7 @@ Cada fase tem branch e PR próprios e CI verde em Ubuntu e Windows.
      - aprovação simultânea;
      - regressão de pedido sem função;
      - smoke do OpenCode e do Kimi com fixtures.
-4. **Principal e sessão manual.** "Usar função" nos dois diálogos.
+4. **Principal e sessão manual.** "Usar função" nos dois diálogos (o da principal vem com o Orquestrador), e a troca da função de um agente já em execução no card da sessão (só o rótulo usado nas próximas delegações).
    - Testes: preencher não inicia a run, e uma nova run depois da saída continua pedindo confirmação.
 
 Fora do escopo: sobrescrita por projeto, custo e quota por função (v0.4), escolha da função pelo próprio ATLAS (ela é do Orquestrador) e aprovação automática de agentes.

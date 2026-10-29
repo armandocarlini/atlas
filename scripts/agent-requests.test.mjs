@@ -141,7 +141,7 @@ test('aprovação pela interface inicia agente com origem orchestrator e conclui
   assert.equal(listed.items[0].payloadHash, request.payloadHash);
   const result = await call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' });
   assert.equal(spawns.length, 1);
-  assert.deepEqual(spawns[0].request, { adapterId: 'kimi-code', model: null, name: 'revisor-ansi', cwd: '/fixture/a' });
+  assert.deepEqual(spawns[0].request, { adapterId: 'kimi-code', model: null, name: 'revisor-ansi', cwd: '/fixture/a', functionSlug: null, functionOverridden: null });
   // A escolha conferida na aprovação é a usada no início, sem nova consulta de modelos.
   assert.deepEqual(spawns[0].options, { origin: 'orchestrator', launch: { adapter: { id: 'kimi-code' }, model: null } });
   assert.equal(result.request.state, 'fulfilled');
@@ -276,4 +276,54 @@ test('migration 4→5 preserva dados anteriores e cria pedidos vazios', (t) => {
     assert.equal(reopened.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.at(-1).version);
     assert.equal(reopened.prepare("SELECT name FROM projects WHERE id = 'legacy'").get().name, 'Legado');
   } finally { reopened.close(); }
+});
+
+// v0.2, fase 3: a principal sugere a função; o usuário confirma ou troca no cartão.
+test('pedido com função: valida o slug, entra no hash e aparece no cartão', (t) => {
+  const { store, ask } = harness(t);
+  assert.throws(() => ask({ functionSlug: 'inventada' }), /Função desconhecida: inventada\. Use uma de: planejar, explorar, implementar, revisar, testes\./);
+  assert.throws(() => ask({ functionSlug: 'orquestrador' }), /Função desconhecida: orquestrador/, 'a função da principal não é pedida para agentes');
+  assert.throws(() => ask({ functionSlug: 'Com Espaço' }), /Função inválida/);
+  const withFunction = ask({ idempotencyKey: 'pedido-funcao-01', functionSlug: 'revisar' });
+  const without = ask({ idempotencyKey: 'pedido-funcao-02' });
+  assert.notEqual(withFunction.payloadHash, without.payloadHash, 'a função escrita pela principal entra no hash');
+  assert.throws(() => ask({ idempotencyKey: 'pedido-funcao-01', functionSlug: 'testes' }), /outro conteúdo/, 'mesma chave com outra função');
+  const listed = store.listAgentRequests('project-a').find((item) => item.id === withFunction.id);
+  assert.equal(listed.functionSlug, 'revisar');
+  assert.equal(listed.functionName, 'Revisar');
+  assert.equal(store.listAgentRequests('project-a').find((item) => item.id === without.id).functionSlug, null);
+});
+
+test('aprovação registra a função final e se o usuário trocou a sugestão', async (t) => {
+  const { store, ask, call, spawns, filename } = harness(t);
+  const revisar = store.getFunctionBySlug('revisar');
+  store.updateFunction({ id: revisar.id, expectedVersion: revisar.version, adapterId: 'opencode', model: 'prov/forte' });
+  const approve = (request, choice) => call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, ...choice });
+  // Aceita a sugestão como veio: não alterado.
+  await approve(ask({ idempotencyKey: 'aprova-funcao-01', functionSlug: 'revisar' }), { adapterId: 'opencode', model: 'prov/forte', functionSlug: 'revisar' });
+  assert.equal(spawns[0].request.functionSlug, 'revisar');
+  assert.equal(spawns[0].request.functionOverridden, false);
+  // Mesma função, outro modelo: alterado.
+  await approve(ask({ idempotencyKey: 'aprova-funcao-02', functionSlug: 'revisar' }), { adapterId: 'opencode', model: 'prov/fraco', functionSlug: 'revisar' });
+  assert.equal(spawns[1].request.functionOverridden, true);
+  // Outra função escolhida pelo usuário: alterado.
+  const done = await approve(ask({ idempotencyKey: 'aprova-funcao-03', functionSlug: 'revisar' }), { adapterId: 'kimi-code', functionSlug: 'testes' });
+  assert.equal(spawns[2].request.functionSlug, 'testes');
+  assert.equal(spawns[2].request.functionOverridden, true);
+  assert.equal(done.request.state, 'fulfilled');
+  // A função da principal e slugs inventados não valem na aprovação, e nada é consumido.
+  const kept = ask({ idempotencyKey: 'aprova-funcao-04', functionSlug: 'revisar' });
+  await assert.rejects(approve(kept, { adapterId: 'opencode', functionSlug: 'orquestrador' }), /Função inválida/);
+  await assert.rejects(approve(kept, { adapterId: 'opencode', functionSlug: 'inventada' }), /Função inválida/);
+  assert.equal(store.getAgentRequest('project-a', kept.id).state, 'pending');
+  assert.equal(spawns.length, 3);
+  // A run persiste a auditoria.
+  store.startSession({ id: 'auditada', projectId: 'project-a', name: 'auditada', adapterId: 'opencode', cli: 'OpenCode', version: '1', cwd: '/fixture/a', origin: 'orchestrator', createdAt: new Date(START).toISOString(), functionSlug: 'revisar', functionOverridden: true });
+  const db = new DatabaseSync(filename, { timeout: 1000 });
+  try {
+    const run = db.prepare("SELECT function_slug, function_overridden FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE s.id = 'auditada'").get();
+    assert.deepEqual({ ...run }, { function_slug: 'revisar', function_overridden: 1 });
+  } finally {
+    db.close();
+  }
 });

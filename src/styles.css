@@ -377,7 +377,7 @@ button.message-card strong { display: block; font-size: 11px; font-weight: 550; 
 .session-state { color: var(--muted); }
 .empty-session strong { color: var(--muted); font-size: 12px; }
 .empty-session small { font-size: 10px; }
-.empty-session:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.empty-session:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
 
 .inspector-tabs { height: 44px; }
 .inspector-tabs button { font-size: 11px; }
@@ -867,3 +867,6 @@ body { transition: background-color .18s ease, color .18s ease; }
 .function-delete-confirm > span { flex: 1; min-width: 200px; }
 .agent-choice-recommendation { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 5px; color: var(--text); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .functions-pending { color: var(--warning); font-size: 10px; white-space: nowrap; }
+.agent-request-function { display: grid; gap: 6px; }
+.agent-request-function label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.agent-request-function select { width: 100%; height: 36px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); padding: 0 10px; font: 12px var(--mono); }

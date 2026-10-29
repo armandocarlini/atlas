@@ -580,7 +580,7 @@ export default function App() {
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [functionsOpen, setFunctionsOpen] = useState(false);
   // Funções de agente: o aviso na barra lateral conta as que ainda pedem CLI e modelo.
-  const [agentFunctions, setAgentFunctions] = useState([]);
+  const [agentFunctions, setAgentFunctions] = useState({ items: [], recommendations: null });
   const desktop = window.atlasDesktop;
   const isNativePanelWindow = desktop?.windowKind === 'panels';
   const isNativeTerminalWindow = desktop?.windowKind === 'terminal';
@@ -853,7 +853,7 @@ export default function App() {
   async function approveAgentRequest(request, choice) {
     clearAgentRequestError(request.id);
     try {
-      const { agent, recordError } = await desktop.approveAgentRequest({ cwd: workingDirectory, requestId: request.id, payloadHash: request.payloadHash, adapterId: choice.adapterId, model: choice.model || null });
+      const { agent, recordError } = await desktop.approveAgentRequest({ cwd: workingDirectory, requestId: request.id, payloadHash: request.payloadHash, adapterId: choice.adapterId, model: choice.model || null, functionSlug: choice.functionSlug || null });
       setSessions((current) => mergeAgentSessions(current, [agent]));
       // O usuário pode ter trocado de projeto durante o spawn.
       if (agentRequestScope.current.projectId === request.projectId) setSelectedId(agent.id);
@@ -1024,7 +1024,7 @@ export default function App() {
     // Janelas de terminal destacadas não leem funções: só a principal tem acesso.
     if (!desktop?.isDesktop || isSecondaryWindow || !desktop.listAgentFunctions) return undefined;
     let active = true;
-    const load = () => desktop.listAgentFunctions().then((result) => { if (active) setAgentFunctions(result.items); }).catch(() => {});
+    const load = () => desktop.listAgentFunctions().then((result) => { if (active) setAgentFunctions({ items: result.items, recommendations: result.recommendations }); }).catch(() => {});
     load();
     const unsubscribe = desktop.onAgentFunctionsChanged?.(load);
     return () => { active = false; unsubscribe?.(); };
@@ -1494,7 +1494,7 @@ export default function App() {
             <div className="sidebar-bottom">
               <div className="local-card"><div><ShieldCheck size={15} /><strong>Local e privado</strong></div><p>Git + PTY local<br />Nenhuma telemetria ativa</p><span><StatusDot color="#7dbb91" />Núcleo disponível</span></div>
               <button className="workspace-settings" onClick={resetLayout}><span>Restaurar layout</span></button>
-              {desktop?.isDesktop && desktop.listAgentFunctions && <button className="workspace-settings" onClick={() => setFunctionsOpen(true)}><Workflow size={14} /><span>Funções de agente</span>{pendingConfiguration(agentFunctions) > 0 && <small className="functions-pending">{pendingConfiguration(agentFunctions)} a configurar</small>}<ChevronRight size={13} /></button>}
+              {desktop?.isDesktop && desktop.listAgentFunctions && <button className="workspace-settings" onClick={() => setFunctionsOpen(true)}><Workflow size={14} /><span>Funções de agente</span>{pendingConfiguration(agentFunctions.items) > 0 && <small className="functions-pending">{pendingConfiguration(agentFunctions.items)} a configurar</small>}<ChevronRight size={13} /></button>}
               <button className="workspace-settings" onClick={() => setAppearanceOpen(true)}><Palette size={14} /><span>Aparência e configurações</span><ChevronRight size={13} /></button>
             </div>
           </aside>
@@ -1530,7 +1530,7 @@ export default function App() {
           {/* Avisos ocupam uma única linha da grade; a grade de sessões fica com o espaço restante. */}
           <div className="workspace-notices">
           {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed && usesKimi(projectSessions) && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModalOpen(true)} onDismiss={() => setIntegrationNoticeDismissed(true)} />}
-          {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} adapters={adapters} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}
+          {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} adapters={adapters} functions={agentFunctions} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}
 
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.loading && <p className="scope-note" role="status">Abrindo sessão principal…</p>}
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.error && <div className="scope-note error-note" role="alert"><span>{orchestratorStatus.error}</span><button className="button secondary compact" onClick={() => openOrchestratorChoice()}>Tentar novamente</button></div>}

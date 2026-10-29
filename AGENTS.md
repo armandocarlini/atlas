@@ -42,7 +42,7 @@ Todo agente que trabalha no ATLAS usa o ai-memory, para que o que uma sessão ap
 
 Não quebre estas regras sem plano e decisão explícita do mantenedor.
 
-- **CLIs e modelos:** os adaptadores (Kimi Code, OpenCode) detectam o CLI pelo `PATH` e iniciam sessões interativas em pastas autorizadas, sem flags de autonomia. O usuário escolhe CLI e modelo em cada sessão (manual, principal e cada agente pedido). Não reintroduza CLI ou modelo fixo.
+- **CLIs e modelos:** os adaptadores (Kimi Code, OpenCode) detectam o CLI pelo `PATH` e iniciam sessões interativas em pastas autorizadas, sem flags de autonomia. Não existe CLI nem modelo padrão **do ATLAS**: o código não escolhe CLI ou modelo por conta própria. O usuário pode definir **funções** com CLI e modelo, que só **preenchem** a escolha. O ATLAS pode **recomendar** modelos por função, a partir da lista curada pelo mantenedor (`electron/model-recommendations.json`), mas a recomendação nunca é selecionada sem o usuário. Agentes não alteram essa lista sem instrução explícita do mantenedor. Cada sessão (manual, principal ou pedida) continua iniciando apenas com a confirmação explícita do usuário, que pode trocar a sugestão. Configuração ausente ou inválida nunca é substituída em silêncio.
 - **Sessão principal:**
   - perfil somente leitura no CLI escolhido (`--agent-file` no Kimi, agente `atlas-orchestrator` no OpenCode);
   - identidade única por projeto;
@@ -60,6 +60,7 @@ Não quebre estas regras sem plano e decisão explícita do mantenedor.
   - **Kimi:** a entrada `atlas` só vai para o `mcp.json` com consentimento explícito na interface e sai pelo mesmo diálogo.
   - **OpenCode:** a ponte e o perfil entram só pela run (`OPENCODE_CONFIG_CONTENT`), sem gravar configuração.
   - **Escopo:** a ponte fica inerte fora do ATLAS. Dentro dele, oferece só dados do projeto, com identidade vinda do token da run.
+  - **Funções:** `agent_functions_list` não expõe CLI nem modelo à principal; ela escolhe a função pelo trabalho, e o usuário confirma ou troca no cartão.
 - **Abrir no ATLAS:**
   - `--atlas-open=<pasta>` é validado e canonicalizado, nunca interpolado em shell;
   - pasta nova pede confirmação, e nunca roda `git init`;
