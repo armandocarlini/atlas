@@ -23,6 +23,7 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 | Adaptadores | Kimi Code e OpenCode, detectados no `PATH`. O usuário escolhe CLI e modelo em **toda** sessão. Não existe CLI nem modelo padrão | `electron/agent-adapters.cjs`, `electron/agent-host.cjs`, `src/AgentChoice.jsx` |
 | Principal | Uma identidade por projeto, perfil somente leitura (`--agent-file` no Kimi, `atlas-orchestrator` no OpenCode) e nova run explícita após a saída | `electron/orchestrator-profile.cjs` |
 | Ponte MCP | Named pipe e token por run. O projeto e a sessão vêm só do token. No Kimi, a entrada vai para o `mcp.json` com consentimento, e o aviso de integração só aparece em projeto com sessão Kimi; no OpenCode, só pela run (`OPENCODE_CONFIG_CONTENT`) | `electron/mcp-host.cjs`, `electron/atlas-mcp-bridge.cjs`, `electron/kimi-mcp-config.cjs`, `src/KimiIntegration.jsx` |
+| Funções de agente (v0.2, fase 1) | Banco e IPC prontos: Orquestrador e cinco padrão (planejar, explorar, implementar, revisar, testes), que não se apagam nem se renomeiam, mais as do usuário até 12. Só guardam CLI e modelo para preencher a escolha; ainda sem tela nem uso nos pedidos. Recomendações curadas pelo mantenedor em `electron/model-recommendations.json` (vazio por enquanto) | `electron/agent-functions.cjs`, `electron/agent-function-host.cjs`, `electron/model-recommendations.cjs` |
 | Pedidos de agente | A principal pede com `agents_request`, e o usuário aprova no cartão. Modo assistido: profundidade 1, até 3 pendentes, validade de 15 min, até 2 ativos | `electron/agent-request-host.cjs`, `src/AgentRequests.jsx` |
 | Tarefas | Criadas pelo usuário em `backlog`. Delegação por handoff com claim e `claim_epoch` (fencing); o fim da run tira o claim | `electron/task-host.cjs`, `electron/task-delegation.cjs`, `src/PersistentTasks.jsx` |
 | Mensagens | Descobertas estruturadas entre sessões, com entrega e leitura persistidas. **Nunca** digitadas no terminal do destinatário | `electron/message-host.cjs`, `src/SessionMessages.jsx` |
@@ -49,6 +50,7 @@ As migrations são numeradas e nunca editadas depois de integradas:
 7. worktrees
 8. revisões e evidências
 9. CLI e modelo de cada run
+10. funções de agente (Orquestrador e as cinco padrão semeadas, sem CLI nem modelo) e a função de cada run
 
 Comandos de escrita levam chave de idempotência e hash do payload. O banco fica no perfil do app, e nenhum transcript, prompt ou saída de PTY é gravado.
 

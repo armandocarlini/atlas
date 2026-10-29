@@ -11,6 +11,7 @@ const { createMessageHost } = require('./message-host.cjs');
 const { createMcpHost } = require('./mcp-host.cjs');
 const { createIntegrationHost } = require('./integration-host.cjs');
 const { createAgentRequestHost } = require('./agent-request-host.cjs');
+const { createAgentFunctionHost } = require('./agent-function-host.cjs');
 const { createOpenPathHost } = require('./open-path-host.cjs');
 const { createExplorerIntegration, createExplorerHost } = require('./explorer-integration.cjs');
 const { ensureOrchestratorProfile } = require('./orchestrator-profile.cjs');
@@ -293,6 +294,7 @@ app.whenReady().then(async () => {
   await projectHost.rootsReady;
   createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
   createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
+  createAgentFunctionHost({ ipcMain, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: () => sendToMain('agent-function:changed', {}) });
   createMainWindow();
   openPathHost = createOpenPathHost({
     ipcMain,

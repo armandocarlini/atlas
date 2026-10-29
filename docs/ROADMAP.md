@@ -20,16 +20,18 @@ São correções da v0.1, sem mudar o escopo do produto.
 
 A ordem abaixo é uma proposta. Cada item precisa de plano aprovado antes de começar.
 
-### 1. LLM por função [decidir]
+### 1. LLM por função — plano aprovado, em execução
+
+Plano: `docs/planos/PLANO_V0_2_LLM_POR_FUNCAO.md` (aprovado em 29/10/2026). Fase 1 (banco e host) entregue; seguem a tela de funções, a ponte com o cartão e a principal. Pendente com o mantenedor: a lista inicial de recomendações de modelo.
 
 O objetivo é escolher CLI e modelo uma vez por *função*, em vez de a cada sessão. A ideia: modelos mais econômicos onde bastam e mais capazes onde o retrabalho custa caro.
 
-- O usuário define funções (por exemplo *planejar*, *explorar*, *implementar*, *revisar*, *testes*), cada uma com CLI e modelo.
-- A principal informa a função em `agents_request`. O cartão de aprovação vem preenchido com a escolha da função, e o usuário aprova ou troca.
-- A escolha continua do usuário. Isso substitui a regra atual "não existe CLI nem modelo padrão" por "não existe padrão do ATLAS; existem padrões definidos pelo usuário". A mudança precisa ser registrada no `AGENTS.md` quando for aprovada.
-- Decidir: escopo das configurações (global, por projeto ou os dois) e se a principal também usa uma função.
+- Cinco funções padrão (*planejar*, *explorar*, *implementar*, *revisar*, *testes*) e o Orquestrador da principal; o usuário troca CLI e modelo delas e cria as dele.
+- O Orquestrador escolhe a função ao pedir um agente. O cartão vem preenchido, e o usuário aprova ou troca a função ou o LLM.
+- O ATLAS recomenda modelos por função, a partir de uma lista curada pelo mantenedor, sem nunca escolher pelo usuário.
+- Escopo global na v0.2. O novo texto da regra "CLIs e modelos" entra no `AGENTS.md` junto com a fase 3.
 
-### 2. Trocar o LLM de um agente sem perder a tela [decidir]
+### 2. Trocar o LLM de um agente sem perder a tela — direção aprovada, falta plano
 
 Requisito do mantenedor: trocar o modelo de um agente em execução **sem perder o que está na tela**.
 
@@ -76,8 +78,8 @@ O mantenedor pretende refazer todo o design visual mais adiante, e a direção a
 
 | Tema | Situação |
 |---|---|
-| LLM por função | Ideia aprovada em conversa; falta definir escopo e mudar a regra do `AGENTS.md` |
-| Troca de modelo sem perder a tela | Investigar a capacidade dos CLIs |
+| LLM por função | Plano aprovado; recomendações iniciais de modelo aguardam o mantenedor |
+| Troca de modelo sem perder a tela | Investigado (seção do plano da v0.2); direção aprovada: troca nativa do CLI primeiro |
 | Suíte de regressão liga/desliga | Definir o significado exato |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |
