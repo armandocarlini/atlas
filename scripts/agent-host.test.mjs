@@ -530,3 +530,38 @@ test('início com a escolha já conferida não consulta os modelos de novo', asy
   assert.equal(agent.model, 'nvidia/a');
   assert.deepEqual(spawns[0].args, ['--model', 'nvidia/a']);
 });
+
+// v0.2, fase 4: função na principal, na sessão manual e troca do rótulo de um agente em execução.
+test('funções: auditoria calculada no núcleo, principal sempre Orquestrador e troca de rótulo', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const { handlers, mainEvent, transport } = createHarness(fixture);
+  const { store } = fixture;
+  const orquestrador = store.getFunctionBySlug('orquestrador');
+  store.updateFunction({ id: orquestrador.id, expectedVersion: orquestrador.version, adapterId: 'kimi-code' });
+  const revisar = store.getFunctionBySlug('revisar');
+  store.updateFunction({ id: revisar.id, expectedVersion: revisar.version, adapterId: 'kimi-code' });
+  const runOf = (sessionId) => store.listRuns('project-a').filter((run) => run.session_id === sessionId).at(-1);
+  // Principal seguindo o que está salvo no Orquestrador: não alterada.
+  const principal = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code' });
+  assert.equal(principal.functionSlug, 'orquestrador');
+  assert.deepEqual([runOf(principal.id).function_slug, runOf(principal.id).function_overridden], ['orquestrador', 0]);
+  // Sessão manual com função: a interface não decide a auditoria.
+  const manual = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto', functionSlug: 'revisar', functionOverridden: true });
+  assert.deepEqual([runOf(manual.id).function_slug, runOf(manual.id).function_overridden], ['revisar', 0]);
+  await assert.rejects(handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto', functionSlug: 'orquestrador' }), /inválida para esta sessão/);
+  await assert.rejects(handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto', functionSlug: 'inventada' }), /inválida para esta sessão/);
+  const plain = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' });
+  assert.deepEqual([runOf(plain.id).function_slug, runOf(plain.id).function_overridden], [null, null]);
+  // Troca do rótulo de um agente em execução: só a função, sem reiniciar.
+  const relabeled = await handlers.get('agent:set-function')(mainEvent, { sessionId: plain.id, functionSlug: 'testes' });
+  assert.equal(relabeled.functionSlug, 'testes');
+  assert.equal(relabeled.ptyId, plain.ptyId, 'mesmo terminal');
+  assert.deepEqual([runOf(plain.id).function_slug, runOf(plain.id).function_overridden], ['testes', 1]);
+  assert.equal((await handlers.get('agent:set-function')(mainEvent, { sessionId: plain.id, functionSlug: null })).functionSlug, null);
+  await assert.rejects(handlers.get('agent:set-function')({ sender: 'popup' }, { sessionId: plain.id, functionSlug: 'testes' }), /não autorizada/);
+  await assert.rejects(handlers.get('agent:set-function')(mainEvent, { sessionId: principal.id, functionSlug: 'testes' }), /sempre o Orquestrador/);
+  await assert.rejects(handlers.get('agent:set-function')(mainEvent, { sessionId: plain.id, functionSlug: 'orquestrador' }), /inválida/);
+  // Agente encerrado não troca de função.
+  transport.records.find((record) => record.id === manual.ptyId).emitExit(0, null);
+  await assert.rejects(handlers.get('agent:set-function')(mainEvent, { sessionId: manual.id, functionSlug: 'testes' }), /em execução não encontrada/);
+});

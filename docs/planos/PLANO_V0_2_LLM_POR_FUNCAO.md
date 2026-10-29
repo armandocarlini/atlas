@@ -1,6 +1,6 @@
 # Plano v0.2 — LLM por função
 
-Situação: **aprovado pelo mantenedor em 29/10/2026**, com os ajustes registrados em cada decisão. A implementação segue as fases abaixo.
+Situação: **aprovado pelo mantenedor em 29/10/2026 e implementado nas fases 1 a 4** (PRs #38, #39, #40 e o da fase 4). Falta só a lista inicial de recomendações, que é do mantenedor.
 
 Cobre o item 1 do `docs/ROADMAP.md` (LLM por função) e registra a investigação do item 2 (trocar o LLM de um agente sem perder a tela). O item 3 (suíte de regressão liga/desliga) e o redesign visual ficam fora.
 

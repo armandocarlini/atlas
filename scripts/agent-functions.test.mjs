@@ -96,7 +96,7 @@ test('funções do usuário: criar, validar, limite e apagar', (t) => {
   assert.throws(() => store.createFunction({ slug: 'orquestrador', name: 'Outra' }), /Já existe/);
   assert.throws(() => store.createFunction({ slug: 'Com Espaço', name: 'X' }), /Identificador/);
   assert.throws(() => store.createFunction({ slug: 'x', name: 'X' }), /Identificador/);
-  assert.throws(() => store.createFunction({ slug: 'oculto', name: 'Nome‮oculto' }), /formatação invisível/);
+  assert.throws(() => store.createFunction({ slug: 'oculto', name: 'Nome\u202Eoculto' }), /formatação invisível/);
   assert.throws(() => store.createFunction({ slug: 'sem-cli', name: 'Sem CLI', model: 'openai/gpt-x' }), /Escolha o CLI antes do modelo/);
   assert.throws(() => store.createFunction({ slug: 'modelo-ruim', name: 'X', adapterId: 'opencode', model: 'modelo; rm -rf' }), /Modelo inválido/);
   // CLI sem modelo vale (CLI que usa a própria configuração).
