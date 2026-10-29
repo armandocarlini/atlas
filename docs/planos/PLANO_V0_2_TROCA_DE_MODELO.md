@@ -1,6 +1,6 @@
 # Plano v0.2 — trocar o LLM de um agente sem perder a tela
 
-Situação: **aprovado pelo mantenedor em 29/10/2026.** A implementação segue as fases abaixo.
+Situação: **aprovado em 29/10/2026 e implementado** (PRs #44 e o da interface). A fase 1 foi feita no OpenCode 1.19.5 pelo `smoke:opencode`; a principal no Kimi segue bloqueada até a ponte MCP voltar a funcionar no Kimi 2.4.0.
 
 Cobre o item 2 do `docs/ROADMAP.md`. A investigação dos CLIs está na seção "Investigação do item 2" de `docs/planos/PLANO_V0_2_LLM_POR_FUNCAO.md`. A direção aprovada em 29/10/2026 é **começar pela troca nativa do CLI**, com rótulo honesto, e deixar a nova run com retomada como plano B.
 

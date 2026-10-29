@@ -49,6 +49,8 @@ import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
 import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
 import { AgentRequestsPanel } from './AgentRequests.jsx';
 import { AgentFunctionsModal } from './AgentFunctions.jsx';
+import { ModelSwitchModal } from './ModelSwitch.jsx';
+import { canSwitch, modelLabel } from './model-switch.js';
 import { choiceFromFunction, pendingConfiguration, pickRecommendation } from './agent-functions.js';
 import { OpenFolderModal, ExplorerIntegrationSection } from './OpenFolder.jsx';
 
@@ -266,7 +268,7 @@ function HarnessIntro({ harness, session }) {
   );
 }
 
-function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction }) {
+function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
@@ -283,6 +285,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
 
   return (
     <article
+      data-session-id={session.id}
       className={`session-card ${selected ? 'selected' : ''} ${focused ? 'focused' : ''} ${detached ? 'terminal-detached' : ''} ${popup ? 'terminal-popup-card' : ''}`}
       style={{ '--session-color': session.color }}
       onClick={() => onSelect(session.id)}
@@ -293,7 +296,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
           <h3>{session.name}</h3>
           <span className={`origin-badge ${session.origin}`}>{session.origin}</span>
           {session.demo && <span className="origin-badge demo">ilustrativo</span>}
-          <span className="session-cli" title={session.model ? `Modelo: ${session.model}` : undefined}>{session.version ? `${session.cli} ${session.version}` : session.cli}{session.model ? ` · ${session.model}` : ''}</span>
+          <span className="session-cli" title={modelLabel(session) ? `Modelo: ${modelLabel(session)}` : undefined}>{session.version ? `${session.cli} ${session.version}` : session.cli}{modelLabel(session) ? ` · ${modelLabel(session)}` : ''}</span>
           {(() => {
             const agentFunctions = (functions?.items || []).filter((item) => item.kind !== 'orchestrator');
             const label = (functions?.items || []).find((item) => item.slug === session.functionSlug)?.name || session.functionSlug;
@@ -309,6 +312,10 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
         <div className="session-actions">
           {!session.ptyId && !session.archived && <span className="token-count">{session.tokens} <span>tokens</span></span>}
           {session.roleKind === 'orchestrator' && session.exited && onRestart && <button className="session-control" onClick={(event) => { event.stopPropagation(); onRestart(session); }}>Nova execução</button>}
+          {onSwitchModel && session.ptyId && !session.exited && (() => {
+            const check = canSwitch(session);
+            return <button className="session-control" disabled={!check.allowed} title={check.allowed ? 'Trocou o modelo no terminal? Veja como e informe aqui' : check.reason} onClick={(event) => { event.stopPropagation(); onSwitchModel(session); }}>Trocar modelo</button>;
+          })()}
           {onSendDiscovery && session.roleKind === 'agent' && !session.archived && <button className="session-control" title="Enviar descoberta estruturada à sessão principal" onClick={(event) => { event.stopPropagation(); onSendDiscovery(session); }}>Descoberta</button>}
           {!session.archived && <button className="session-control" onClick={(event) => { event.stopPropagation(); onPopup(session); }}>{detached || popup ? 'Reintegrar' : 'Pop-up'}</button>}
           {!popup && !detached && <button className="session-control" title="Alternar foco" aria-label={`Focar ${session.name}`} onClick={(event) => { event.stopPropagation(); onFocus(session.id); }}>{focused ? 'Grid' : 'Foco'}</button>}
@@ -604,6 +611,8 @@ export default function App() {
   const [theme, setTheme] = useState(getInitialTheme);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [functionsOpen, setFunctionsOpen] = useState(false);
+  // Sessão cujo modelo o usuário está trocando no CLI (painel de orientação e registro).
+  const [modelSwitch, setModelSwitch] = useState(null);
   // Funções de agente: o aviso na barra lateral conta as que ainda pedem CLI e modelo.
   const [agentFunctions, setAgentFunctions] = useState({ items: [], recommendations: null });
   const desktop = window.atlasDesktop;
@@ -1026,6 +1035,7 @@ export default function App() {
         setModal(null);
         setAppearanceOpen(false);
         setFunctionsOpen(false);
+        setModelSwitch(null);
       }
       if ((event.ctrlKey || event.metaKey) && event.key === ',') {
         event.preventDefault();
@@ -1590,6 +1600,7 @@ export default function App() {
               onSendDiscovery={desktop?.isDesktop && projectSessions.some((session) => session.roleKind === 'orchestrator') ? (session) => setMessageModal({ session }) : undefined}
               functions={agentFunctions}
               onSetFunction={desktop?.isDesktop && desktop.setAgentFunction ? setSessionFunction : undefined}
+              onSwitchModel={desktop?.isDesktop && desktop.declareAgentModel ? setModelSwitch : undefined}
               onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
             />)}
             {!focusId && <button className="empty-session" onClick={() => setModal('session')}><span><Plus size={19} /></span><strong>Nova sessão de agente</strong><small>Manual, no diretório selecionado</small></button>}
@@ -1639,6 +1650,18 @@ export default function App() {
 
       {orchestratorChoice && <OrchestratorChoiceModal adapters={adapters} functions={agentFunctions} previousCli={orchestratorChoice.previousCli} busy={orchestratorChoice.busy} error={orchestratorChoice.error} onClose={() => { if (!orchestratorChoice.busy) setOrchestratorChoice(null); }} onStart={startOrchestrator} />}
       {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} functions={desktop?.isDesktop ? agentFunctions : null} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
+      {modelSwitch && <ModelSwitchModal session={modelSwitch} desktop={desktop} onClose={() => setModelSwitch(null)}
+        onGoToTerminal={() => {
+          const id = modelSwitch.id;
+          setModelSwitch(null);
+          setSelectedId(id);
+          window.setTimeout(() => document.querySelector(`[data-session-id="${id}"] .xterm-helper-textarea`)?.focus(), 0);
+        }}
+        onDeclared={(agent) => {
+          setSessions((current) => mergeAgentSessions(current, [agent]));
+          setModelSwitch(null);
+          notify(`Modelo de ${agent.name} registrado: ${agent.currentModel}`);
+        }} />}
       {functionsOpen && <AgentFunctionsModal desktop={desktop} adapters={adapters} onClose={() => setFunctionsOpen(false)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
       {openFolderRequest && <OpenFolderModal key={openFolderRequest.id} request={openFolderRequest} onAuthorize={authorizeOpenFolder} onCancel={cancelOpenFolder} />}

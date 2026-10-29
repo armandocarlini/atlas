@@ -32,7 +32,7 @@ O objetivo é escolher CLI e modelo uma vez por *função*, em vez de a cada ses
 - O ATLAS recomenda modelos por função, a partir de uma lista curada pelo mantenedor, sem nunca escolher pelo usuário.
 - Escopo global na v0.2. O novo texto da regra "CLIs e modelos" entra no `AGENTS.md` junto com a fase 3.
 
-### 2. Trocar o LLM de um agente sem perder a tela — plano aprovado, em execução
+### 2. Trocar o LLM de um agente sem perder a tela — entregue (falta verificar a principal no Kimi)
 
 Plano: `docs/planos/PLANO_V0_2_TROCA_DE_MODELO.md`.
 
@@ -82,7 +82,7 @@ O mantenedor pretende refazer todo o design visual mais adiante, e a direção a
 | Tema | Situação |
 |---|---|
 | LLM por função | Entregue; recomendações iniciais adiadas (benchmarks do mantenedor) |
-| Troca de modelo sem perder a tela | Plano aprovado (`docs/planos/PLANO_V0_2_TROCA_DE_MODELO.md`), em execução |
+| Troca de modelo sem perder a tela | Entregue; a principal no Kimi espera a correção da ponte MCP no Kimi 2.4.0 para ser verificada |
 | Suíte de regressão liga/desliga | Definir o significado exato |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |
