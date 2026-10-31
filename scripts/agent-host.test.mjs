@@ -381,7 +381,7 @@ test('token do ATLAS é revogado quando spawn ou persistência falham', async ()
 test('sem host MCP o PTY recebe endpoint e token vazios, sem herdar os do próprio ATLAS', async () => {
   const { handlers, spawns, mainEvent } = createHarness();
   const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' });
-  assert.deepEqual(spawns[0].env, { ATLAS_MCP_ENDPOINT: '', ATLAS_MCP_TOKEN: '' });
+  assert.deepEqual(spawns[0].env, { ATLAS_MCP_ENDPOINT: '', ATLAS_MCP_TOKEN: '', KIMI_CODE_NO_AUTO_UPDATE: '1' });
   assert.equal(agent.atlasTools, false);
 });
 

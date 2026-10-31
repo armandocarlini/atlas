@@ -194,7 +194,8 @@ function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile 
   const modelArgs = model ? ['--model', model] : [];
   if (adapter.id === 'kimi-code') {
     if (role === 'orchestrator' && typeof orchestratorProfile !== 'string') throw new Error('Perfil do orquestrador não configurado.');
-    return { args: [...adapter.spawnArgs, ...modelArgs, ...(role === 'orchestrator' ? ['--agent-file', orchestratorProfile] : [])], env: {} };
+    // A versão conferida não deve mudar por autoatualização ao iniciar a run.
+    return { args: [...adapter.spawnArgs, ...modelArgs, ...(role === 'orchestrator' ? ['--agent-file', orchestratorProfile] : [])], env: { KIMI_CODE_NO_AUTO_UPDATE: '1' } };
   }
   if (adapter.id === 'opencode') {
     const config = {};

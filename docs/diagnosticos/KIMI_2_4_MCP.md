@@ -50,6 +50,8 @@ Para uma sessão **manual** já configurada no Kimi, dar um título com `/title 
 
 O botão de troca de modelo da principal Kimi continua desabilitado. Não há fallback de CLI/modelo, flags de autonomia, escrita no terminal pelo produto, downgrade ou alteração de configuração real.
 
+As runs Kimi iniciadas pelo ATLAS recebem `KIMI_CODE_NO_AUTO_UPDATE=1` somente no ambiente do processo. Isso impede que a própria inicialização troque o binário depois da verificação de compatibilidade; não grava a preferência de atualização do usuário nem afeta seus lançamentos fora do ATLAS. Uma atualização externa concorrente continua fora dessa garantia.
+
 ## Critério para resolver
 
 1. Reproduzir com versão fixa do Kimi e identificar por que o perfil explícito não chegou ao `profile.bind` nesse caminho.
