@@ -180,7 +180,16 @@ function orchestratorPermission() {
 
 // Argumentos e ambiente da run para cada CLI. `bridge` é a entrada MCP da ponte
 // (comando, argumentos e ambiente com o token da run) ou null sem ferramentas.
+function assertOrchestratorSupport(adapter) {
+  // Reproduções sem API: docs/diagnosticos/KIMI_2_4_MCP.md.
+  // Não se presume que uma versão futura tenha o mesmo defeito.
+  if (adapter.id === 'kimi-code' && /^(?:2\.4\.0|2\.4\.1)$/.test(adapter.version)) {
+    throw new Error(`Kimi Code ${adapter.version} indisponível para a principal: a integração MCP e a preservação do perfil somente leitura não estão verificadas nesta versão. Escolha outro CLI detectado. Agentes manuais continuam disponíveis.`);
+  }
+}
+
 function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, bridge = null }) {
+  if (role === 'orchestrator') assertOrchestratorSupport(adapter);
   if (model !== null && !MODEL_PATTERN.test(model)) throw new Error('Modelo inválido.');
   const modelArgs = model ? ['--model', model] : [];
   if (adapter.id === 'kimi-code') {
@@ -215,4 +224,4 @@ function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile 
   throw new Error(`${adapter.name} não tem lançamento definido no ATLAS.`);
 }
 
-module.exports = { ADAPTERS, VERSION_TIMEOUT_MS, MODEL_PATTERN, ORCHESTRATOR_AGENT, discoverAdapters, parseVersion, resolveOnPath, listModels, launchFor, runCli };
+module.exports = { ADAPTERS, VERSION_TIMEOUT_MS, MODEL_PATTERN, ORCHESTRATOR_AGENT, discoverAdapters, parseVersion, resolveOnPath, listModels, launchFor, runCli, assertOrchestratorSupport };

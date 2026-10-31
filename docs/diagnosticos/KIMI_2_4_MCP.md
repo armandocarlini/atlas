@@ -1,0 +1,60 @@
+# Kimi 2.4: MCP antes da sessão e perfil da principal
+
+Investigação em 31/10/2026, sobre a base `6b608ee`. **A integração completa ainda não está corrigida.** O ATLAS recusa novas runs da principal no Kimi 2.4.0 e 2.4.1 como contenção. Não escolhe outro CLI pelo usuário, não reinicia sessões existentes e não altera o Kimi instalado.
+
+## O que foi observado
+
+1. O smoke começou com Kimi 2.4.0. O próprio CLI se atualizou para 2.4.1 durante a execução. A principal e a sessão manual, portanto, não usaram necessariamente o mesmo binário. Não houve atualização comandada pelo teste.
+2. Antes de existir uma sessão interna do Kimi, houve conexões MCP breves, seguidas de desconexões. O log também registrou `runtime local does not exist in workspace …` e reconexões automáticas do CLI. Um `hello` isolado não prova que as ferramentas ficaram disponíveis para uma sessão.
+3. O smoke passou pelo handshake manual e falhou ao exigir o badge depois de recarregar o renderer. Essa reprodução não demonstra um defeito de restauração do renderer: uma sondagem sem React também observou as desconexões.
+4. Em uma home temporária com modelo fictício configurado, `/title atlas-profile-check` criou uma sessão local sem enviar mensagem ao modelo. Depois disso, a ponte permaneceu conectada.
+5. **A sessão criada nesse caminho no Kimi 2.4.1 não preservou o perfil de leitura.** Mesmo com `--agent-file` apontando para o arquivo gerado pelo ATLAS, `agents/main/wire.jsonl` registrou `profile.bind` com `profileName: "agent"`, incluindo `Write`, `Edit`, `Bash`, subagentes e `mcp__*`. O esperado é `atlas-orchestrator`, somente `Read`, `Grep`, `Glob`, `mcp__atlas__*` e nenhum subagente. A observação vale para a criação local por `/title`; não houve teste com prompt de LLM.
+
+Não foi executada nenhuma ferramenta de escrita pelo modelo. Os nomes acima são metadados do perfil efetivamente vinculado pelo CLI, não uma conclusão baseada em ANSI ou no texto do prompt.
+
+A primeira versão do diagnóstico enviava texto e Enter no mesmo chunk do PTY: o Kimi tratou esse envio como colagem, e o teste terminou em timeout. O diagnóstico foi corrigido para enviar texto e Enter separadamente. Com o título exato persistido, a nova execução conectou a ponte e falhou na asserção do perfil. O timeout anterior não foi convertido em sucesso. Outra sondagem usou o `cwd` inteiro em minúsculas no Windows: a sessão continuou vinculada ao perfil `agent`, portanto essa mudança de caminho não resolveu a perda do perfil.
+
+## Relação com o código oficial
+
+Na tag oficial 2.4.0, [`listWorkspaceMcpServers`](https://github.com/MoonshotAI/kimi-code/blob/%40moonshot-ai/kimi-code%402.4.0/packages/node-sdk/src/sdk-rpc-client-v2.ts) adquire um workspace, aguarda a descoberta e libera a referência em `finally`. O [`WorkspaceInstanceManager`](https://github.com/MoonshotAI/kimi-code/blob/%40moonshot-ai/kimi-code%402.4.0/packages/agent-core-v2/src/workspace/workspaceInstance/workspaceInstanceManagerService.ts) fecha a instância quando a última referência é liberada. Isso explica as conexões transitórias observadas nas consultas anteriores à criação da sessão; não prova sozinho a causa de toda ocorrência de `runtime.not_found`.
+
+O comando [`/title`](https://github.com/MoonshotAI/kimi-code/blob/%40moonshot-ai/kimi-code%402.4.0/apps/kimi-code/src/tui/commands/session.ts) usa `ensureSession` quando recebe um título e ainda não existe sessão. A [`TUI`](https://github.com/MoonshotAI/kimi-code/blob/%40moonshot-ai/kimi-code%402.4.0/apps/kimi-code/src/tui/kimi-tui.ts) pretende preservar o perfil de início na primeira criação tardia. A divergência entre essa intenção e o `profile.bind` observado ainda precisa ser resolvida no CLI ou por uma interface oficialmente suportada. A documentação de [`--agent-file`](https://moonshotai.github.io/kimi-code/en/reference/kimi-command.html) não autoriza presumir que o perfil foi aplicado só porque o arquivo foi aceito.
+
+A revisão localizou a perda entre essas camadas: `doCreateSession` no SDK não encaminha `agentProfile`/`agentFiles`, e `materializeMainAgent` vincula `DEFAULT_AGENT_PROFILE_NAME`. O caminho aparece no [SDK 2.4.1](https://github.com/MoonshotAI/kimi-code/blob/2c73f3f/packages/node-sdk/src/sdk-rpc-client-v2.ts#L1400) e no [SDK 2.4.0](https://github.com/MoonshotAI/kimi-code/blob/%40moonshot-ai/kimi-code%402.4.0/packages/node-sdk/src/sdk-rpc-client-v2.ts#L1861). A 2.4.1 tem reprodução dinâmica limpa; na 2.4.0 há confirmação estática desse caminho, além da falha MCP já registrada.
+
+Os IDs diferentes do trust e do workspace não provam defeito de casing: são derivados de normalizações distintas no Kimi. A sondagem com `cwd` em minúsculas não corrigiu o perfil; o produto não passou a alterar caminhos para tentar contornar isso.
+
+## Reprodução sem quota nem configuração real
+
+```powershell
+npm run smoke:kimi-profile
+```
+
+Exige Windows, Node 24, dependências instaladas e Kimi no `PATH`. O diagnóstico:
+
+- inicia o CLI diretamente em ConPTY, fora do bloqueio de compatibilidade do produto;
+- usa `KIMI_CODE_HOME` e perfil em uma fixture temporária;
+- desliga autoatualização com `KIMI_CODE_NO_AUTO_UPDATE=1` tanto na consulta de versão quanto no PTY; o smoke completo também desliga essa atualização;
+- configura um modelo fictício contra um servidor HTTP da própria fixture em loopback e exige **zero requisições** a ele;
+- instala a entrada MCP apenas nessa home temporária, usando a ponte e o host reais do ATLAS;
+- confirma a confiança somente da fixture, executa `/title` com Enter separado, confere o título persistido exato, exige conexão persistente e verifica o perfil em `wire.jsonl`;
+- encerra apenas o processo criado pelo diagnóstico e preserva a fixture quando falha.
+
+Esse teste deve **falhar** enquanto o perfil efetivo divergir. Ele não transforma a incompatibilidade em `PASS`, não substitui o `smoke:agent` e não libera a troca de modelo na principal. Saídas e fixtures ficam fora do Git.
+
+Para uma sessão **manual** já configurada no Kimi, dar um título com `/title <nome>` pode materializar a sessão antes da primeira mensagem e estabelecer a ponte sem consumir quota. É uma ação do usuário no terminal. **Não usar esse caminho como solução da principal**, por causa da perda de perfil observada.
+
+## Contenção no ATLAS
+
+`agent-host.cjs` rejeita a criação da principal nas versões conhecidas afetadas **antes** de emitir token, criar PTY ou gravar sessão/run. A versão 2.4.0 já estava sem verificação completa do MCP; a perda do perfil foi confirmada diretamente na 2.4.1. `launchFor` também recusa gerar o lançamento incompatível. Sessões manuais continuam disponíveis, assim como o histórico. Versões futuras não são declaradas afetadas por extrapolação; também não são declaradas verificadas por esse diagnóstico.
+
+O botão de troca de modelo da principal Kimi continua desabilitado. Não há fallback de CLI/modelo, flags de autonomia, escrita no terminal pelo produto, downgrade ou alteração de configuração real.
+
+## Critério para resolver
+
+1. Reproduzir com versão fixa do Kimi e identificar por que o perfil explícito não chegou ao `profile.bind` nesse caminho.
+2. Fazer o diagnóstico nativo passar com o perfil de leitura correto, conexão persistente e zero chamadas ao provedor fictício.
+3. Fazer o `smoke:agent` completo passar, incluindo reinício e revogação de token, sem retirar as verificações existentes.
+4. Só então verificar a troca de modelo na principal: mesma run, PTY e sessão interna, ferramentas de leitura preservadas e MCP ativo. A liberação do botão depende dessa evidência.
+
+Não publicar release, atualizar o CLI do usuário ou abrir issue externa automaticamente como parte desta investigação.

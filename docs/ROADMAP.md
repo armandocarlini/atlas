@@ -1,6 +1,6 @@
 # Roadmap do ATLAS
 
-Última revisão: 27/10/2026.
+Última revisão: 31/10/2026.
 
 Este arquivo diz **o que vem depois e em que ordem**. O estado atual está em `docs/CONTEXTO.md`. A visão completa e os requisitos de longo prazo estão em `ATLAS_PLANEJAMENTO_ARQUITETURA.md`. Quando os dois divergirem sobre ordem ou escopo, vale este arquivo.
 
@@ -14,7 +14,7 @@ O aceite dos 12 passos foi demonstrado em 27/10/2026 (`docs/historico/ACEITE_V0_
 
 São correções da v0.1, sem mudar o escopo do produto.
 
-1. **Kimi Code 2.4.0 sem a ponte MCP.** Investigar por que o Kimi 2.4.0 não registra o runtime local do workspace ao iniciar o servidor `atlas` por stdio (veja `docs/CONTEXTO.md`) e adaptar o ATLAS ou documentar o passo do usuário. Até lá, o OpenCode é o CLI com integração completa.
+1. **Compatibilidade do Kimi 2.4.0/2.4.1.** A investigação encontrou conexões transitórias antes de existir sessão e perda do perfil de leitura no caminho local por `/title`, mesmo com `--agent-file`. A criação da principal nessas versões está protegida por recusa explícita; o conserto completo depende de preservar o perfil efetivo do CLI. Fazer `smoke:kimi-profile` e o `smoke:agent` completo passarem antes de verificar/liberar a troca de modelo na principal. Evidências e limites: `docs/diagnosticos/KIMI_2_4_MCP.md`. Até lá, o OpenCode é o CLI com integração completa.
 2. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). O `CDP timeout` do `test:desktop` ganhou uma correção por hipótese (oclusão de janela). Investigar na próxima ocorrência; não reexecutar às cegas.
 
 ## Próximo — v0.2 (cada item precisa de plano aprovado)
@@ -82,7 +82,7 @@ O mantenedor pretende refazer todo o design visual mais adiante, e a direção a
 | Tema | Situação |
 |---|---|
 | LLM por função | Entregue; recomendações iniciais adiadas (benchmarks do mantenedor) |
-| Troca de modelo sem perder a tela | Entregue; a principal no Kimi espera a correção da ponte MCP no Kimi 2.4.0 para ser verificada |
+| Troca de modelo sem perder a tela | Entregue; a principal no Kimi espera a correção da ponte e a preservação efetiva do perfil de leitura nas versões 2.4 |
 | Suíte de regressão liga/desliga | Definir o significado exato |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |

@@ -29,6 +29,8 @@ if (!fs.existsSync(path.join(root, 'dist', 'index.html'))) {
 
 const require = createRequire(import.meta.url);
 const { discoverAdapters } = require('../electron/agent-adapters.cjs');
+// O CLI real é uma dependência do smoke, não um alvo de atualização.
+process.env.KIMI_CODE_NO_AUTO_UPDATE = '1';
 const [kimi] = await discoverAdapters();
 if (kimi.status !== 'available') {
   console.error(`ERRO: ${kimi.error}`);

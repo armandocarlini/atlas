@@ -1,0 +1,141 @@
+// Diagnóstico opt-in do CLI real; não passa pelo bloqueio de compatibilidade
+// do produto. Usa somente uma home descartável e um provedor HTTP de fixture.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const http = require('node:http');
+const { spawnSync, execFileSync } = require('node:child_process');
+
+if (!process.versions.electron) {
+  const result = spawnSync(require('electron'), [__filename], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: 'inherit', windowsHide: true,
+  });
+  if (result.error) console.error(result.error.message);
+  process.exit(result.status ?? 1);
+}
+
+const { resolveOnPath } = require('../electron/agent-adapters.cjs');
+const { ensureOrchestratorProfile } = require('../electron/orchestrator-profile.cjs');
+const { atlasEntry, install } = require('../electron/kimi-mcp-config.cjs');
+const { createMcpHost } = require('../electron/mcp-host.cjs');
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const plain = value => value.replace(/\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+async function until(check, label) {
+  const end = Date.now() + 60000;
+  while (Date.now() < end) {
+    const result = check();
+    if (result) return result;
+    await delay(150);
+  }
+  throw new Error(`Timeout: ${label}`);
+}
+
+function profileSnapshot(home) {
+  const sessions = path.join(home, 'sessions');
+  if (!fs.existsSync(sessions)) return null;
+  for (const file of fs.readdirSync(sessions, { recursive: true })) {
+    if (!file.endsWith(path.join('agents', 'main', 'wire.jsonl'))) continue;
+    const records = fs.readFileSync(path.join(sessions, file), 'utf8').split('\n').flatMap(line => {
+      try { return [JSON.parse(line)]; } catch { return []; }
+    });
+    const profile = records.filter(record => record.type === 'profile.bind').at(-1);
+    if (profile) {
+      const stateFile = path.resolve(path.dirname(path.join(sessions, file)), '..', '..', 'state.json');
+      let state;
+      try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return null; }
+      return { profileName: profile.profileName, activeToolNames: profile.activeToolNames, subagents: profile.subagents, title: state.title };
+    }
+  }
+  return null;
+}
+
+async function main() {
+  assert.equal(process.platform, 'win32', 'Este diagnóstico exige Windows/ConPTY.');
+  const executable = resolveOnPath('kimi');
+  assert(executable, 'Kimi precisa estar instalado no PATH.');
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-kimi-profile-'));
+  const home = path.join(fixture, 'home');
+  fs.mkdirSync(home);
+  const probeEnv = { ...process.env, KIMI_CODE_HOME: home, KIMI_CODE_NO_AUTO_UPDATE: '1' };
+  delete probeEnv.ELECTRON_RUN_AS_NODE;
+  let requests = 0;
+  const provider = http.createServer((_request, response) => {
+    requests += 1;
+    response.writeHead(500).end('Este diagnóstico não pode consultar um modelo.');
+  });
+  await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const config = `default_model = "fixture-a"\ntelemetry = false\n[providers.fixture]\ntype = "openai"\nbase_url = "http://127.0.0.1:${provider.address().port}/v1"\napi_key = "fixture-only"\n[models.fixture-a]\nprovider = "fixture"\nmodel = "fixture-a"\nmax_context_size = 32000\ncapabilities = ["tool_use"]\n`;
+  fs.writeFileSync(path.join(home, 'config.toml'), config);
+  const host = createMcpHost({ store: {} });
+  let terminal;
+  let exited = false;
+  let output = '';
+  let passed = false;
+  try {
+    const version = execFileSync(executable, ['--version'], { env: probeEnv, encoding: 'utf8', windowsHide: true, timeout: 15000 }).trim();
+    console.log(`Kimi ${version}`);
+    await host.listen();
+    const token = host.register({ projectId: 'fixture', sessionId: 'principal', role: 'orchestrator' });
+    install({ home, entry: atlasEntry({ execPath: process.execPath, bridgePath: path.resolve(__dirname, '../electron/atlas-mcp-bridge.cjs') }) });
+    const env = { ...probeEnv, ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: token };
+    terminal = require('node-pty').spawn(executable, ['--model', 'fixture-a', '--agent-file', ensureOrchestratorProfile(fixture)], { cwd: fixture, env, cols: 130, rows: 40 });
+    terminal.onExit(() => { exited = true; });
+    let trusted = false;
+    terminal.onData(chunk => {
+      output = (output + chunk).slice(-256000);
+      if (!trusted && plain(output).includes('Trust this folder?')) {
+        trusted = true;
+        terminal.write('\r'); // Confiança apenas nesta fixture.
+      }
+    });
+    await until(() => plain(output).includes('Welcome to Kimi Code!'), 'TUI inicializada');
+    // A TUI distingue colagem de texto de uma tecla Enter. Enviar o comando e
+    // CR no mesmo chunk pode inserir uma quebra no título em vez de submetê-lo.
+    terminal.write('/title atlas-profile-check');
+    await delay(200);
+    terminal.write('\r');
+    await until(() => plain(output).includes('Session title set to: atlas-profile-check'), 'sessão local criada sem prompt');
+    const profile = await until(() => profileSnapshot(home), 'perfil efetivamente vinculado');
+    assert.equal(profile.title, 'atlas-profile-check', 'O título persistido deve confirmar o comando exato, sem texto colado adicional.');
+    await until(() => host.isConnected('principal'), 'MCP da sessão materializada');
+    await delay(750);
+    assert(host.isConnected('principal'), 'A ponte precisa continuar conectada após a descoberta.');
+    console.log('PASS sessão local criada por /title e ponte MCP ativa');
+    console.log(JSON.stringify(profile));
+    assert.equal(profile.profileName, 'atlas-orchestrator', 'O CLI deve preservar o perfil escolhido com --agent-file.');
+    for (const name of ['Read', 'Grep', 'Glob']) assert(profile.activeToolNames.includes(name), name);
+    assert(profile.activeToolNames.every(name => ['Read', 'Grep', 'Glob'].includes(name) || name.startsWith('mcp__atlas__')), 'A principal não pode ganhar ferramentas de escrita, shell ou outros servidores MCP.');
+    assert.deepEqual(profile.subagents, []);
+    assert.equal(requests, 0, 'Nenhum pedido pode ter sido enviado ao provedor fictício.');
+    assert.equal(fs.readFileSync(path.join(home, 'config.toml'), 'utf8'), config);
+    console.log('PASS perfil somente leitura preservado, sem chamar modelo');
+    passed = true;
+  } finally {
+    if (terminal && !exited) {
+      terminal.write('/exit');
+      await delay(200);
+      terminal.write('\r');
+      for (let i = 0; i < 20 && !exited; i += 1) await delay(150);
+      if (!exited) {
+        // PID exclusivamente do processo de fixture criado acima, sem shell.
+        try { execFileSync('taskkill.exe', ['/PID', String(terminal.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch {}
+      }
+    }
+    await host.close();
+    await new Promise(resolve => provider.close(resolve));
+    if (!passed) {
+      fs.writeFileSync(path.join(fixture, 'terminal.txt'), plain(output));
+      console.error(`Fixture preservada: ${fixture}`);
+    } else {
+      const target = fs.realpathSync.native(fixture);
+      assert.equal(path.dirname(target).toLowerCase(), fs.realpathSync.native(os.tmpdir()).toLowerCase());
+      assert(path.basename(target).startsWith('atlas-kimi-profile-'));
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+    assert.equal(requests, 0, 'O diagnóstico chamou o provedor fictício inesperadamente.');
+  }
+}
+
+main().then(() => process.exit(0), error => { console.error(error); process.exit(1); });
