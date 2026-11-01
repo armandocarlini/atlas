@@ -1,6 +1,6 @@
 # Kimi 2.4: MCP antes da sessão e perfil da principal
 
-Investigação em 31/10/2026, sobre a base `6b608ee`. **A integração completa ainda não está corrigida.** O ATLAS recusa novas runs da principal no Kimi 2.4.0 e 2.4.1 como contenção. Não escolhe outro CLI pelo usuário, não reinicia sessões existentes e não altera o Kimi instalado.
+Investigação iniciada em 31/10/2026, atualizada em 01/11/2026, sobre a base `6b608ee`. **A integração com o Kimi distribuído oficialmente ainda não está corrigida.** O ATLAS recusa novas runs da principal no Kimi 2.4.0 e 2.4.1 como contenção. Não escolhe outro CLI pelo usuário, não reinicia sessões existentes e não altera o Kimi instalado.
 
 ## O que foi observado
 
@@ -42,6 +42,14 @@ Exige Windows, Node 24, dependências instaladas e Kimi no `PATH`. O diagnóstic
 
 Esse teste deve **falhar** enquanto o perfil efetivo divergir. Ele não transforma a incompatibilidade em `PASS`, não substitui o `smoke:agent` e não libera a troca de modelo na principal. Saídas e fixtures ficam fora do Git.
 
+Há também uma etapa opcional para verificar a troca pelo seletor nativo:
+
+```powershell
+npm run smoke:kimi-profile -- --switch-model
+```
+
+Ela só começa se o perfil inicial estiver correto. Seleciona um segundo modelo fictício com `/model` e Alt+S, confere a identidade da sessão e do PTY, a manutenção do perfil e da ponte, a configuração intacta e zero chamadas ao provedor. A leitura do journal incorpora `config.update` e mudanças na lista de ferramentas, em vez de considerar apenas o último `profile.bind`. Isso é automação de teste numa fixture; o produto continua sem digitar no terminal.
+
 Para uma sessão **manual** já configurada no Kimi, dar um título com `/title <nome>` pode materializar a sessão antes da primeira mensagem e estabelecer a ponte sem consumir quota. É uma ação do usuário no terminal. **Não usar esse caminho como solução da principal**, por causa da perda de perfil observada.
 
 ## Contenção no ATLAS
@@ -54,9 +62,39 @@ As runs Kimi iniciadas pelo ATLAS recebem `KIMI_CODE_NO_AUTO_UPDATE=1` somente n
 
 ## Critério para resolver
 
-1. Reproduzir com versão fixa do Kimi e identificar por que o perfil explícito não chegou ao `profile.bind` nesse caminho.
-2. Fazer o diagnóstico nativo passar com o perfil de leitura correto, conexão persistente e zero chamadas ao provedor fictício.
+1. Reproduzir com versão fixa do Kimi e identificar por que o perfil explícito não chegou ao `profile.bind` nesse caminho — identificado no SDK; patch experimental abaixo.
+2. Fazer o diagnóstico nativo passar com o perfil de leitura correto, conexão persistente e zero chamadas ao provedor fictício — demonstrado no candidato local, ainda não numa distribuição oficial corrigida.
 3. Fazer o `smoke:agent` completo passar, incluindo reinício e revogação de token, sem retirar as verificações existentes.
 4. Só então verificar a troca de modelo na principal: mesma run, PTY e sessão interna, ferramentas de leitura preservadas e MCP ativo. A liberação do botão depende dessa evidência.
 
 Não publicar release, atualizar o CLI do usuário ou abrir issue externa automaticamente como parte desta investigação.
+
+## Patch experimental no código oficial
+
+O [patch reproduzível](patches/kimi-code-2.4.1-profile.patch) foi preparado numa cópia temporária da tag `@moonshot-ai/kimi-code@2.4.1`, commit completo `2c73f3f50af4fa7f2540ca0d2e33b07a1408e3a7`. O arquivo de origem obtido do codeload oficial tem SHA-256 `040c503ca03f4852f827cb8d0ea50c49a535a6bda0177d47e56d34ea37d16c92`. Não há binário ou dependência vendorizados no ATLAS.
+
+A correção altera três arquivos de produção do Kimi:
+
+1. `KimiHarnessOptions` e `SDKRpcClientV2Options` recebem arquivos explícitos de perfil no escopo do processo; o cliente encaminha a lista ao bootstrap que já tem o loader correspondente.
+2. O lançamento interativo encaminha `opts.agentFiles` para esse harness.
+3. A criação de sessão encaminha `agentProfile` ao bind, inclusive sem override de modelo. Um novo bind usa o perfil solicitado ou o já vinculado, antes de considerar o perfil padrão. Um perfil inexistente deixa de ser substituído silenciosamente.
+
+O patch inclui regressão sem prompt: perfil escolhido, arquivo fora da descoberta, independência entre sessões, troca de modelo e reabertura, nome inexistente, modelo vindo só da configuração e arquivo explícito ausente. O provedor é um servidor HTTP local que conta tentativas de chamada; o catálogo remoto é substituído por uma fixture pelo seam de teste do SDK. O teste não precisa de credenciais.
+
+**Limite de escopo:** os arquivos explícitos são entradas do harness/processo, como os flags do lançamento interativo. O patch não implementa a semântica geral de arquivos diferentes por chamada de `CreateSessionOptions.agentFiles` em clientes SDK arbitrários. Também não tenta alterar a política de confiança, antecipar a criação da sessão pela interface ou manter vivo um workspace sem sessão.
+
+Para reproduzir, aplique o patch em um checkout descartável desse commit, com Node 24.15 ou superior e pnpm 10.33.0. Depois de instalar as dependências fixadas pelo lockfile, execute a partir de `packages/node-sdk`:
+
+```text
+pnpm exec vitest run --config vitest.config.ts test/atlas-profile-regression.test.ts --reporter verbose
+```
+
+Não execute essa suíte pelo projeto Vitest da raiz: ele carrega também configurações de outros aplicativos do monorepo. A execução original confirmou a perda dos dois perfis e a aceitação indevida do nome inexistente; a primeira execução corrigida passou nesses três casos. Resultados ampliados e limitações de plataforma ficam no PR, sem converter timeout ou testes vermelhos em sucesso.
+
+O candidato local usa as fontes corrigidas e um bundle gerado pelos scripts oficiais, executado com Node em TEMP. Ele não é uma distribuição oficial do Kimi e não foi instalado nem colocado no PATH permanente. A versão instalada, sua autenticação e sua configuração permanecem fora dessa experiência. Um resultado positivo desse candidato não libera a versão oficial 2.4.1 nem o botão da principal no ATLAS.
+
+Nesse candidato, o diagnóstico nativo com `--switch-model` passou: `profileName: atlas-orchestrator`, ferramentas `Read`, `Grep`, `Glob`, `mcp__atlas__*`, nenhum subagente, ponte persistente e troca de `fixture-a` para `fixture-b` na mesma sessão/PTY com Alt+S. A configuração ficou idêntica e o servidor do provedor recebeu zero chamadas. Não foi enviado prompt ao modelo.
+
+O lançamento direto das fontes via TSX excedeu o limite de versão do diagnóstico; foi substituído por um bundle compilado, sem aumentar o timeout. Uma execução ampliada do teste de regressão também excedeu 15 segundos num caso; a fixture foi isolada do catálogo externo e ganhou trace opcional de fases. A execução instrumentada passou nos cinco casos, mas isso não estabelece sozinho a causa exata daquele timeout. Esses resultados anteriores continuam registrados no PR.
+
+A ampliação para o arquivo existente `sdk-rpc-client-v2.test.ts` encontrou cinco falhas no Windows: duas expectativas de formato de caminho e três criações de symlink recusadas com `EPERM`. A execução desse mesmo arquivo nas fontes originais reproduziu as cinco falhas com os mesmos nomes. Elas não foram corrigidas, suprimidas ou contadas como testes aprovados; a suíte ampliada do fornecedor continua vermelha neste ambiente.

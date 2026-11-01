@@ -1,6 +1,6 @@
 # Roadmap do ATLAS
 
-Última revisão: 31/10/2026.
+Última revisão: 01/11/2026.
 
 Este arquivo diz **o que vem depois e em que ordem**. O estado atual está em `docs/CONTEXTO.md`. A visão completa e os requisitos de longo prazo estão em `ATLAS_PLANEJAMENTO_ARQUITETURA.md`. Quando os dois divergirem sobre ordem ou escopo, vale este arquivo.
 
@@ -14,7 +14,7 @@ O aceite dos 12 passos foi demonstrado em 27/10/2026 (`docs/historico/ACEITE_V0_
 
 São correções da v0.1, sem mudar o escopo do produto.
 
-1. **Compatibilidade do Kimi 2.4.0/2.4.1.** A investigação encontrou conexões transitórias antes de existir sessão e perda do perfil de leitura no caminho local por `/title`, mesmo com `--agent-file`. A criação da principal nessas versões está protegida por recusa explícita; o conserto completo depende de preservar o perfil efetivo do CLI. Fazer `smoke:kimi-profile` e o `smoke:agent` completo passarem antes de verificar/liberar a troca de modelo na principal. Evidências e limites: `docs/diagnosticos/KIMI_2_4_MCP.md`. Até lá, o OpenCode é o CLI com integração completa.
+1. **Compatibilidade do Kimi 2.4.0/2.4.1.** A perda do perfil foi localizada no encaminhamento de arquivos e no bind do SDK. O patch experimental passou no diagnóstico nativo com troca de modelo, perfil de leitura e MCP preservados, sem API, usando um bundle local em TEMP. As versões oficiais afetadas continuam protegidas por recusa explícita. Próximo passo: validar uma distribuição corrigida com `smoke:kimi-profile -- --switch-model` e o `smoke:agent` completo antes de liberar a principal e seu botão de troca. Não instalar o candidato nem publicar uma correção externa automaticamente. Patch, reprodução e limites: `docs/diagnosticos/KIMI_2_4_MCP.md`. Até lá, o OpenCode é o CLI com integração completa.
 2. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). O `CDP timeout` do `test:desktop` ganhou uma correção por hipótese (oclusão de janela). Investigar na próxima ocorrência; não reexecutar às cegas.
 
 ## Próximo — v0.2 (cada item precisa de plano aprovado)

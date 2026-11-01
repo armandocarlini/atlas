@@ -8,7 +8,7 @@ const http = require('node:http');
 const { spawnSync, execFileSync } = require('node:child_process');
 
 if (!process.versions.electron) {
-  const result = spawnSync(require('electron'), [__filename], {
+  const result = spawnSync(require('electron'), [__filename, ...process.argv.slice(2)], {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: 'inherit', windowsHide: true,
   });
   if (result.error) console.error(result.error.message);
@@ -40,12 +40,24 @@ function profileSnapshot(home) {
     const records = fs.readFileSync(path.join(sessions, file), 'utf8').split('\n').flatMap(line => {
       try { return [JSON.parse(line)]; } catch { return []; }
     });
-    const profile = records.filter(record => record.type === 'profile.bind').at(-1);
+    let profile;
+    for (const record of records) {
+      if (!record || typeof record !== 'object' || record.agentId !== 'main') continue;
+      if (record.type === 'profile.bind') profile = { ...record };
+      if (!profile) continue;
+      if (record.type === 'config.update') {
+        for (const key of ['profileName', 'modelAlias', 'subagents']) {
+          if (record[key] !== undefined) profile[key] = record[key];
+        }
+      }
+      if (record.type === 'tools.set_active_tools') profile.activeToolNames = record.names;
+      if (record.type === 'tools.reset_active_tools') profile.activeToolNames = undefined;
+    }
     if (profile) {
       const stateFile = path.resolve(path.dirname(path.join(sessions, file)), '..', '..', 'state.json');
       let state;
       try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return null; }
-      return { profileName: profile.profileName, activeToolNames: profile.activeToolNames, subagents: profile.subagents, title: state.title };
+      return { profileName: profile.profileName, activeToolNames: profile.activeToolNames, subagents: profile.subagents, model: profile.modelAlias, title: state.title, sessionKey: path.relative(sessions, path.dirname(stateFile)) };
     }
   }
   return null;
@@ -66,7 +78,7 @@ async function main() {
     response.writeHead(500).end('Este diagnóstico não pode consultar um modelo.');
   });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  const config = `default_model = "fixture-a"\ntelemetry = false\n[providers.fixture]\ntype = "openai"\nbase_url = "http://127.0.0.1:${provider.address().port}/v1"\napi_key = "fixture-only"\n[models.fixture-a]\nprovider = "fixture"\nmodel = "fixture-a"\nmax_context_size = 32000\ncapabilities = ["tool_use"]\n`;
+  const config = `default_model = "fixture-a"\ntelemetry = false\n[providers.fixture]\ntype = "openai"\nbase_url = "http://127.0.0.1:${provider.address().port}/v1"\napi_key = "fixture-only"\n[models.fixture-a]\nprovider = "fixture"\nmodel = "fixture-a"\nmax_context_size = 32000\ncapabilities = ["tool_use"]\n[models.fixture-b]\nprovider = "fixture"\nmodel = "fixture-b"\nmax_context_size = 32000\ncapabilities = ["tool_use"]\n`;
   fs.writeFileSync(path.join(home, 'config.toml'), config);
   const host = createMcpHost({ store: {} });
   let terminal;
@@ -108,6 +120,30 @@ async function main() {
     for (const name of ['Read', 'Grep', 'Glob']) assert(profile.activeToolNames.includes(name), name);
     assert(profile.activeToolNames.every(name => ['Read', 'Grep', 'Glob'].includes(name) || name.startsWith('mcp__atlas__')), 'A principal não pode ganhar ferramentas de escrita, shell ou outros servidores MCP.');
     assert.deepEqual(profile.subagents, []);
+    assert.equal(profile.model, 'fixture-a');
+    if (process.argv.includes('--switch-model')) {
+      const pid = terminal.pid;
+      terminal.write('/model');
+      await delay(200);
+      terminal.write('\r');
+      await until(() => plain(output).includes('Alt+S session-only'), 'seletor nativo de modelo');
+      terminal.write('fixture-b');
+      await delay(200);
+      terminal.write('\x1bs'); // Alt+S: só a sessão, sem alterar default_model.
+      const changed = await until(() => {
+        const current = profileSnapshot(home);
+        return current?.model === 'fixture-b' && current;
+      }, 'modelo alterado pela TUI');
+      assert.equal(terminal.pid, pid);
+      assert.equal(exited, false);
+      assert.equal(changed.sessionKey, profile.sessionKey);
+      assert.equal(changed.title, profile.title);
+      assert.equal(changed.profileName, profile.profileName);
+      assert.deepEqual(changed.activeToolNames, profile.activeToolNames);
+      assert.deepEqual(changed.subagents, []);
+      assert(host.isConnected('principal'), 'A ponte deve continuar conectada após trocar o modelo.');
+      console.log('PASS troca nativa com Alt+S: mesmo PTY e sessão, perfil de leitura e MCP preservados');
+    }
     assert.equal(requests, 0, 'Nenhum pedido pode ter sido enviado ao provedor fictício.');
     assert.equal(fs.readFileSync(path.join(home, 'config.toml'), 'utf8'), config);
     console.log('PASS perfil somente leitura preservado, sem chamar modelo');
