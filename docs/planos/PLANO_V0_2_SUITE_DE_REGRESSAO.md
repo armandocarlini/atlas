@@ -18,7 +18,7 @@ Hoje a revisão de uma tarefa traz duas evidências:
 - `agent_report`: o que o agente **declara**, ou seja, o resumo e os comandos com exit code, sem verificação;
 - `git_snapshot`: o retrato Git que o ATLAS coleta.
 
-O plano acrescenta uma terceira evidência, **verificada pelo sistema**: o ATLAS roda a suíte do projeto na worktree da tarefa e anexa à revisão o resultado, a duração e o fim do log. Assim, o usuário não depende só do "rodei os testes e passou" do agente.
+O plano acrescenta uma terceira evidência, **verificada pelo sistema**: o ATLAS roda a suíte do projeto na worktree da tarefa e anexa à revisão o resultado, a duração e o log. Assim, o usuário não depende só do "rodei os testes e passou" do agente.
 
 ## Decisões técnicas propostas
 
@@ -47,7 +47,12 @@ O comando é do usuário e é tratado como se ele o digitasse num terminal:
 
 - Roda no shell do sistema (`cmd.exe /d /s /c` no Windows e `/bin/sh -c` nos demais), com `cwd` igual à worktree.
 - **Ambiente limpo de credenciais do ATLAS:** sem o token da run, sem a variável da ponte MCP e sem `OPENCODE_CONFIG_CONTENT`. O restante do ambiente do usuário é herdado, como num terminal comum.
-- Sem stdin. A saída combinada fica limitada a 64 KB, com o fim do log preservado. O total de bytes vai registrado.
+- Sem stdin.
+- **Log completo em arquivo**, gravado em streaming em `<userData>/regression-logs/<projeto>/<execução>.log`, fora do banco e fora do Git. Projetos grandes geram logs grandes, e o ATLAS não corta a saída em situação normal.
+- O banco guarda só o caminho, o total de bytes, o SHA-256 do arquivo e um trecho final de até 64 KB para a revisão abrir rápido. A evidência é carregada a cada atualização da lista de tarefas e enviada por IPC, então ela não carrega o log inteiro.
+- **Teto de segurança** de 1 GB por execução, contra loop que imprime sem parar. Se ele for atingido, a gravação para, o log ganha a marca "log cortado em 1 GB" e o processo continua até terminar ou estourar o prazo. O resultado mostra o corte; não é silencioso.
+- Se o arquivo não puder ser gravado (disco cheio, permissão), a execução termina como `error` com o motivo, nunca como `passed`.
+- O ATLAS não apaga logs automaticamente.
 - **Timeout:** ao fim do prazo, a árvore de processos é encerrada (`taskkill /T /F` no Windows, grupo de processos nos demais). O resultado fica `timeout`, nunca `passed`.
 - Não há nova tentativa automática.
 
@@ -55,7 +60,7 @@ O comando é do usuário e é tratado como se ele o digitasse num terminal:
 
 - A evidência nova tem `kind = 'regression_run'` e `source = 'system'`. A migration 13 reconstrói a tabela `evidence` para ampliar o `CHECK` e preserva os dados, com teste de migração.
 - Estados possíveis: `queued`, `running`, `passed` (exit 0), `failed` (exit diferente de 0), `timeout`, `error` (o shell não iniciou), `interrupted` (o ATLAS fechou durante a execução, marcado pela reconciliação no início seguinte) e `skipped` (sem worktree).
-- O payload traz o comando efetivo, o exit code, a duração, o fim do log, o total de bytes e o `HEAD` em que rodou.
+- O payload traz o comando efetivo, o exit code, a duração, o trecho final do log, o caminho e o SHA-256 do log completo, o total de bytes, se houve corte e o `HEAD` em que rodou.
 - **A suíte alterou a worktree?** O ATLAS coleta o retrato Git de novo depois da execução. Se ele diferir do retrato da revisão, a evidência mostra "a suíte alterou a worktree". Nesse caso, o aceite já recusa por causa da regra atual, e a mensagem passa a explicar o motivo.
 - **Arquivos de teste alterados pelo agente:** o agente pode, por exemplo, mudar o script `test` do `package.json`, configs de Vitest, Jest ou Playwright, ou arquivos `*.test.*`. Quando o diff da revisão toca arquivos assim, a evidência mostra um aviso com a lista. Um verde nessas condições não deve ser lido como garantia.
 
@@ -78,7 +83,8 @@ As skills ui-ux-pro-max e apple-design e o `MASTER.md` serão aplicados na fase 
 - Na revisão (`ReviewEvidence`), um bloco "Suíte de regressão (verificada pelo ATLAS)" com:
   - o estado, por texto e ícone, não só por cor;
   - a duração;
-  - o log recolhido por padrão;
+  - o trecho final do log, recolhido por padrão;
+  - "Abrir log completo", que abre o arquivo no editor padrão do sistema, e "Mostrar na pasta". Antes de abrir, o ATLAS confere que o caminho está na pasta de logs;
   - os avisos de worktree alterada e de arquivos de teste alterados.
 
 ### 7. Segurança
@@ -93,7 +99,7 @@ As skills ui-ux-pro-max e apple-design e o `MASTER.md` serão aplicados na fase 
    - migration 13 (`regression_suites` e `evidence` ampliada);
    - `electron/regression-suite.cjs` (configuração, fila, execução, limite de saída, timeout e reconciliação);
    - IPC e preload.
-   - Testes: unitários e de integração com fixtures temporárias (comando que passa, que falha, que estoura o prazo, que cria arquivo na worktree, que imprime mais de 64 KB), migração com dados existentes e reinício durante a execução.
+   - Testes: unitários e de integração com fixtures temporárias (comando que passa, que falha, que estoura o prazo, que cria arquivo na worktree, que imprime mais de 64 KB e que atinge o teto reduzido de teste, falha de gravação do log), migração com dados existentes e reinício durante a execução.
 2. **Ponte:** disparo a partir de `tasks_request_review`, evidência `skipped` sem worktree e estado da suíte em `tasks_list`. Inclui `test:agent` cobrindo o fluxo completo com worktree de fixture.
 3. **Interface:**
    - diálogo de configuração;
@@ -115,4 +121,4 @@ Cada fase é um PR com CI verde em Ubuntu, Windows e Package.
 
 1. Aprovar o plano.
 2. Confirmar que `tasks_list` informa aos agentes só o **estado** da suíte, sem log (seção 5). A alternativa é não informar nada aos agentes.
-3. Confirmar o prazo padrão de 10 minutos e o limite de 64 KB de log.
+3. Confirmar o prazo padrão de 10 minutos e o teto de segurança de 1 GB por log. O log completo não tem outro limite.
