@@ -1,0 +1,203 @@
+--- a/apps/kimi-code/src/cli/run-shell.ts
++++ b/apps/kimi-code/src/cli/run-shell.ts
+@@ -66,6 +66,7 @@
+     homeDir: telemetryBootstrap.homeDir,
+     identity: createKimiCodeHostIdentity(version),
+     skillDirs: opts.skillsDirs,
++    agentFiles: opts.agentFiles,
+     // The TUI renders the mid-turn update panel; declaring it here is what
+     // makes the engine offer NotifyUser to this process and to no other host.
+     uiCapabilities: TUI_HOST_UI_CAPABILITIES,
+--- a/packages/node-sdk/src/types.ts
++++ b/packages/node-sdk/src/types.ts
+@@ -222,6 +222,8 @@
+   readonly autoLoadConfig?: boolean | undefined;
+   readonly uiMode?: string;
+   readonly skillDirs?: readonly string[];
++  /** Explicit agentfiles available to sessions hosted by this process. */
++  readonly agentFiles?: readonly string[];
+   /**
+    * UI surfaces this host can render, declared once per process and passed
+    * into the engine through `BootstrapInput.args.uiCapabilities`. Engine
+--- a/packages/node-sdk/src/sdk-rpc-client-v2.ts
++++ b/packages/node-sdk/src/sdk-rpc-client-v2.ts
+@@ -363,6 +363,8 @@
+    * source. Passed into the engine through `BootstrapInput.args.skillDirs`.
+    */
+   readonly skillDirs?: readonly string[];
++  /** Explicit agentfiles forwarded to the process bootstrap. */
++  readonly agentFiles?: readonly string[];
+   readonly telemetry?: TelemetryClient;
+   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
+   readonly uiMode?: string;
+@@ -467,6 +469,7 @@
+           // `--skills-dir` (v1 parity): explicit skill dirs replace default
+           // user / project discovery for every session this client hosts.
+           skillDirs: options.skillDirs,
++          agentFiles: options.agentFiles,
+           uiCapabilities: options.uiCapabilities,
+         },
+       },
+@@ -1421,9 +1424,11 @@
+     if (
+       input.model !== undefined ||
+       input.thinking !== undefined ||
+-      input.permission !== undefined
++      input.permission !== undefined ||
++      input.agentProfile !== undefined
+     ) {
+       const agent = await this.materializeMainAgent(handle, {
++        profile: input.agentProfile,
+         model: input.model,
+         thinking: input.thinking,
+       });
+@@ -1860,7 +1865,7 @@
+    */
+   private async materializeMainAgent(
+     session: ISessionScopeHandle,
+-    binding?: { readonly model?: string; readonly thinking?: string },
++    binding?: { readonly profile?: string; readonly model?: string; readonly thinking?: string },
+   ): Promise<IAgentScopeHandle> {
+     await this.modelReady;
+     const context = await ensureMainAgent(session);
+@@ -1872,7 +1877,7 @@
+     if (binding !== undefined || profile.data().profileName === undefined) {
+       try {
+         await profile.bind({
+-          profile: DEFAULT_AGENT_PROFILE_NAME,
++          profile: binding?.profile ?? profile.data().profileName ?? DEFAULT_AGENT_PROFILE_NAME,
+           model: binding?.model,
+           thinking: binding?.thinking,
+         });
+--- /dev/null
++++ b/packages/node-sdk/test/atlas-profile-regression.test.ts
+@@ -0,0 +1,129 @@
++import { createServer } from 'node:http';
++import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { dirname, join } from 'node:path';
++import { afterEach, beforeEach, expect, it } from 'vitest';
++import { createKimiHarness, type KimiHarness, type SDKRpcClientV2 } from '#/index';
++import { drainQueryStoreDisposals, drainSessionIndexMirror, getLiveSessionById, IAgentLifecycleService, IAgentProfileService } from '@moonshot-ai/agent-core-v2';
++import { TEST_IDENTITY } from './test-identity';
++import { resetModelsDevUpstreamForTest, setModelsDevUpstreamForTest } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevUpstream';
++
++const roots: string[] = [];
++const allowed = ['Read', 'Grep', 'Glob', 'mcp__atlas__*'];
++const profileText = (name: string) => `---\nname: ${name}\ndescription: Read only compatibility fixture\ntools:\n  - Read\n  - Grep\n  - Glob\n  - mcp__atlas__*\nsubagents: []\n---\nATLAS_READ_ONLY_FIXTURE\n`;
++
++beforeEach(() => {
++  setModelsDevUpstreamForTest({ fetchImpl: async () => Response.json({}) });
++});
++
++afterEach(async () => {
++  resetModelsDevUpstreamForTest();
++  await drainSessionIndexMirror();
++  await drainQueryStoreDisposals();
++  for (const root of roots.splice(0)) {
++    const target = await realpath(root);
++    expect(dirname(target).toLowerCase()).toBe((await realpath(tmpdir())).toLowerCase());
++    expect(target.split(/[\\/]/).at(-1)).toMatch(/^atlas-kimi-sdk-regression-/);
++    await rm(target, { recursive: true, force: true });
++  }
++});
++
++async function fixture() {
++  const root = await mkdtemp(join(tmpdir(), 'atlas-kimi-sdk-regression-'));
++  roots.push(root);
++  const homeDir = join(root, 'home');
++  const workDir = join(root, 'work');
++  await mkdir(join(homeDir, 'agents'), { recursive: true });
++  await mkdir(workDir);
++  let requests = 0;
++  const server = createServer((_request, response) => { requests += 1; response.writeHead(500).end('No model requests allowed'); });
++  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
++  const port = (server.address() as { port: number }).port;
++  await writeFile(join(homeDir, 'config.toml'), `default_model = "fixture-a"\ntelemetry = false\n[providers.fixture]\ntype = "openai"\nbase_url = "http://127.0.0.1:${port}/v1"\napi_key = "fixture-only"\n[models.fixture-a]\nprovider = "fixture"\nmodel = "fixture-a"\nmax_context_size = 32000\ncapabilities = ["tool_use"]\n[models.fixture-b]\nprovider = "fixture"\nmodel = "fixture-b"\nmax_context_size = 32000\ncapabilities = ["tool_use"]\n`);
++  await writeFile(join(homeDir, 'agents', 'atlas-readonly.md'), profileText('atlas-readonly'));
++  return { root, homeDir, workDir, close: async () => { await new Promise<void>(resolve => server.close(() => resolve())); expect(requests).toBe(0); } };
++}
++
++function mainProfile(harness: KimiHarness, id: string) {
++  const client = (harness as unknown as { rpc: SDKRpcClientV2 }).rpc;
++  const session = getLiveSessionById(client.engineAccessor, id);
++  expect(session).toBeDefined();
++  const main = session!.accessor.get(IAgentLifecycleService).handleOf('main');
++  expect(main).toBeDefined();
++  return main!.accessor.get(IAgentProfileService).data();
++}
++
++function expectReadonly(harness: KimiHarness, id: string, name: string) {
++  const profile = mainProfile(harness, id);
++  expect(profile.profileName).toBe(name);
++  expect(profile.activeToolNames).toEqual(allowed);
++  expect(profile.subagents).toEqual([]);
++  expect(profile.systemPrompt).toContain('ATLAS_READ_ONLY_FIXTURE');
++}
++
++it('preserves a selected read-only profile across model change and resume without any model request', async () => {
++  const f = await fixture();
++  const harness = createKimiHarness({ homeDir: f.homeDir, identity: TEST_IDENTITY });
++  try {
++    const session = await harness.createSession({ workDir: f.workDir, model: 'fixture-a', agentProfile: 'atlas-readonly' });
++    expectReadonly(harness, session.id, 'atlas-readonly');
++    const id = session.id;
++    await session.setModel('fixture-b');
++    expect(session.id).toBe(id);
++    expect((await session.getStatus()).model).toBe('fixture-b');
++    expectReadonly(harness, id, 'atlas-readonly');
++    await session.close();
++    const resumed = await harness.resumeSession({ id });
++    expectReadonly(harness, resumed.id, 'atlas-readonly');
++    expect((await resumed.getStatus()).model).toBe('fixture-b');
++  } finally { await harness.close(); await f.close(); }
++});
++
++it('loads an explicit launch file outside discovery and does not select it for another session', async () => {
++  const started = Date.now();
++  const trace = (phase: string) => { if (process.env.ATLAS_PROFILE_TRACE === '1') console.info('explicit-profile', phase, Date.now() - started); };
++  trace('fixture:start');
++  const f = await fixture();
++  trace('fixture:ready');
++  const explicit = join(f.root, 'explicit-profile.md');
++  await writeFile(explicit, profileText('atlas-explicit'));
++  const harness = createKimiHarness({ homeDir: f.homeDir, identity: TEST_IDENTITY, agentFiles: [explicit] });
++  try {
++    trace('selected:start');
++    const selected = await harness.createSession({ workDir: f.workDir, model: 'fixture-a', agentProfile: 'atlas-explicit' });
++    trace('selected:ready');
++    expectReadonly(harness, selected.id, 'atlas-explicit');
++    const ordinary = await harness.createSession({ workDir: f.workDir, model: 'fixture-a' });
++    trace('ordinary:ready');
++    expect(mainProfile(harness, ordinary.id).profileName).toBe('agent');
++    expect(mainProfile(harness, ordinary.id).activeToolNames).toContain('Write');
++    expectReadonly(harness, selected.id, 'atlas-explicit');
++  } finally { trace('close:start'); await harness.close(); trace('harness:closed'); await f.close(); trace('fixture:closed'); }
++});
++
++it('rejects an unknown selected profile rather than falling back to agent', async () => {
++  const f = await fixture();
++  const harness = createKimiHarness({ homeDir: f.homeDir, identity: TEST_IDENTITY });
++  try {
++    await expect(harness.createSession({ workDir: f.workDir, model: 'fixture-a', agentProfile: 'atlas-missing' })).rejects.toThrow(/atlas-missing/);
++  } finally { await harness.close(); await f.close(); }
++});
++
++it('binds the selected profile even when the model comes only from configuration', async () => {
++  const f = await fixture();
++  const harness = createKimiHarness({ homeDir: f.homeDir, identity: TEST_IDENTITY });
++  try {
++    const session = await harness.createSession({ workDir: f.workDir, agentProfile: 'atlas-readonly' });
++    expectReadonly(harness, session.id, 'atlas-readonly');
++    expect((await session.getStatus()).model).toBe('fixture-a');
++  } finally { await harness.close(); await f.close(); }
++});
++
++it('rejects a missing explicit launch file instead of silently using the default profile', async () => {
++  const f = await fixture();
++  const missing = join(f.root, 'missing-profile.md');
++  const harness = createKimiHarness({ homeDir: f.homeDir, identity: TEST_IDENTITY, agentFiles: [missing] });
++  try {
++    await expect(harness.createSession({ workDir: f.workDir, model: 'fixture-a', agentProfile: 'agent' })).rejects.toThrow('read failed: path does not exist');
++  } finally { await harness.close(); await f.close(); }
++});

@@ -171,6 +171,12 @@ async function command(cdp, selector, input) {
   await key(cdp, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
 }
 async function screenshot(cdp, name) {
+  const params = new URL(cdp.page.url).searchParams;
+  const target = params.get('session') ? { session: params.get('session') } : params.get('window') === 'panels' ? { kind: 'panels' } : {};
+  await native('focus', target);
+  await cdp.call('Page.bringToFront');
+  await until(() => cdp.evaluate(`document.visibilityState === 'visible'`), `janela visível para captura ${name}`);
+  await cdp.evaluate(`new Promise(resolve => requestAnimationFrame(() => resolve(true)))`);
   const { data } = await cdp.call('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(path.join(resultsDir, `${name}.png`), Buffer.from(data, 'base64'));
 }
@@ -321,6 +327,12 @@ try {
   const firstPid = Number((await raw(first.id)).match(/PID:(\d+)/)?.[1]);
   pids.push(firstPid);
   assert(firstPid > 0);
+  // A saída PID pode chegar antes de o PSReadLine redesenhar o próximo prompt.
+  // Não injete o comando de dimensões durante essa transição de edição de linha.
+  await until(async () => {
+    const text = (await raw(first.id)).replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trimEnd();
+    return text.endsWith('>') && text.slice(-300).includes('PS ');
+  }, 'PowerShell pronto após o primeiro comando');
   await command(main, input, `Write-Output ('SIZE:' + $Host.UI.RawUI.WindowSize.Width + 'x' + $Host.UI.RawUI.WindowSize.Height)`);
   await until(async () => /SIZE:\d+x\d+/.test(await raw(first.id)), 'initial PTY dimensions');
   const before = (await raw(first.id)).match(/SIZE:(\d+x\d+)/g).at(-1);

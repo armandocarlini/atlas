@@ -145,11 +145,12 @@ test('modelos do Kimi são os aliases do config.toml da home configurada, sem ex
 });
 
 test('lançamento por CLI: modelo, perfil da principal e ponte só por run no OpenCode', () => {
-  assert.deepEqual(launchFor({ adapter: kimi, model: 'kimi-code/k3' }), { args: ['--model', 'kimi-code/k3'], env: {} });
+  assert.deepEqual(launchFor({ adapter: kimi, model: 'kimi-code/k3' }), { args: ['--model', 'kimi-code/k3'], env: { KIMI_CODE_NO_AUTO_UPDATE: '1' } });
   assert.deepEqual(launchFor({ adapter: kimi, role: 'orchestrator', orchestratorProfile: 'C:\\perfil.md' }).args, ['--agent-file', 'C:\\perfil.md']);
   assert.throws(() => launchFor({ adapter: kimi, role: 'orchestrator' }), /Perfil do orquestrador/);
   assert.throws(() => launchFor({ adapter: opencode, model: '--auto' }), /Modelo inválido/);
   const plain = launchFor({ adapter: opencode, model: 'nvidia/a' });
+  assert.equal(plain.env.KIMI_CODE_NO_AUTO_UPDATE, undefined, 'a proteção de atualização é específica do Kimi');
   assert.deepEqual(plain.args, ['--model', 'nvidia/a']);
   assert.deepEqual(JSON.parse(plain.env.OPENCODE_CONFIG_CONTENT), {});
   const bridge = { command: 'C:\\ATLAS.exe', args: ['C:\\ponte.cjs'], env: { ELECTRON_RUN_AS_NODE: '1', ATLAS_MCP_TOKEN: 't' } };

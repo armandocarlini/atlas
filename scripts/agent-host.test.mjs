@@ -381,7 +381,7 @@ test('token do ATLAS é revogado quando spawn ou persistência falham', async ()
 test('sem host MCP o PTY recebe endpoint e token vazios, sem herdar os do próprio ATLAS', async () => {
   const { handlers, spawns, mainEvent } = createHarness();
   const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' });
-  assert.deepEqual(spawns[0].env, { ATLAS_MCP_ENDPOINT: '', ATLAS_MCP_TOKEN: '' });
+  assert.deepEqual(spawns[0].env, { ATLAS_MCP_ENDPOINT: '', ATLAS_MCP_TOKEN: '', KIMI_CODE_NO_AUTO_UPDATE: '1' });
   assert.equal(agent.atlasTools, false);
 });
 
@@ -611,4 +611,26 @@ test('CLI que não informa modelos não aceita troca informada', async (t) => {
   const { handlers, mainEvent } = createHarness({ ...fixture, listModelsImpl: async () => [] });
   const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' });
   await assert.rejects(handlers.get('agent:declare-model')(mainEvent, { sessionId: agent.id, model: 'prov/a' }), /não informa modelos/);
+});
+
+test('regressão Kimi 2.4: principal recusa versões com perda do perfil antes de criar PTY, token ou run', async (t) => {
+  for (const version of ['2.4.0', '2.4.1']) {
+    const fixture = orchestratorFixture(t);
+    let grants = 0;
+    const mcpHost = fakeMcpHost();
+    const register = mcpHost.register;
+    mcpHost.register = (grant) => { grants += 1; return register(grant); };
+    const { host, handlers, mainEvent, spawns } = createHarness({ ...fixture, adapters: [{ ...KIMI, version }], mcpHost });
+    await assert.rejects(handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code' }), /perfil somente leitura/);
+    // A recusa também vale para a entrada interna, com escolha previamente conferida.
+    await assert.rejects(host.createAgent({ cwd: 'C:\\projeto' }, { role: 'orchestrator', launch: { adapter: { ...KIMI, version }, model: null } }), /perfil somente leitura/);
+    assert.equal(spawns.length, 0);
+    assert.equal(grants, 0);
+    assert.equal(fixture.store.listSessions('project-a').length, 0);
+    assert.equal(fixture.store.listRuns('project-a').length, 0);
+    const manual = await handlers.get('agent:create')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code' });
+    assert.equal(manual.role, 'agent', 'a proteção da principal não escolhe outro CLI nem bloqueia agentes manuais');
+    assert.equal(spawns.length, 1);
+    assert.equal(grants, 1);
+  }
 });

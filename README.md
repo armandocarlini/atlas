@@ -115,6 +115,8 @@ Projetos, sessões, runs e eventos são registrados em `atlas.sqlite`, no diret�
 
 Ao abrir um projeto autorizado sem principal anterior, o desktop não inicia nada sozinho: **Escolher agente** pede o CLI e o modelo da principal. A principal abre com um perfil de planejamento do ATLAS que permite apenas leitura e as ferramentas do ATLAS: `--agent-file` no Kimi e o agente `atlas-orchestrator` no OpenCode. Esse perfil é injetado só nesta run, sem gravar configuração. Não há flags de autonomia nem prompt inicial. A principal aparece antes das sessões manuais do projeto e não substitui seu terminal.
 
+**Compatibilidade do Kimi:** novas runs da principal são recusadas nas versões oficiais 2.4.0 e 2.4.1, que perdem o perfil de leitura no SDK. Sessões manuais e histórico continuam disponíveis. O OpenCode mantém a integração completa. Há um patch experimental e uma reprodução sem quota em [Kimi 2.4: diagnóstico e limites](docs/diagnosticos/KIMI_2_4_MCP.md); isso não instala nem libera o candidato automaticamente.
+
 Há uma identidade principal por projeto. Depois de saída ou interrupção, **Nova execução** pede de novo o CLI e o modelo, que podem mudar, e cria outra tentativa com essa identidade, sem prometer retomada da conversa nativa. Se estiver em pop-up, o ATLAS reintegra a janela antes de conectar o novo PTY. Abrir novamente um projeto com histórico não ressuscita processos automaticamente. A delegação de tarefas acontece por handoff e exige o aceite do agente de destino.
 
 ## Tarefas do projeto

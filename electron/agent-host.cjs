@@ -1,5 +1,5 @@
 const { randomUUID } = require('node:crypto');
-const { discoverAdapters, listModels, launchFor, MODEL_PATTERN } = require('./agent-adapters.cjs');
+const { discoverAdapters, listModels, launchFor, MODEL_PATTERN, assertOrchestratorSupport } = require('./agent-adapters.cjs');
 const { waitForCwd } = require('./project-host.cjs');
 
 const MODELS_CACHE_MS = 60 * 1000;
@@ -123,6 +123,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     await waitForCwd(projectHost, request.cwd);
 
     const { adapter, model } = resolved || await resolveLaunch(request.adapterId, request.model);
+    if (role === 'orchestrator') assertOrchestratorSupport(adapter);
     if (request.functionSlug !== undefined && request.functionSlug !== null && (typeof request.functionSlug !== 'string' || (store && !store.getFunctionBySlug?.(request.functionSlug)))) throw new Error('Função de agente desconhecida.');
 
     const cwd = request.cwd || projectHost.getDefaultCwd();

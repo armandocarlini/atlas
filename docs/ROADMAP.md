@@ -1,6 +1,6 @@
 # Roadmap do ATLAS
 
-Última revisão: 27/10/2026.
+Última revisão: 03/11/2026.
 
 Este arquivo diz **o que vem depois e em que ordem**. O estado atual está em `docs/CONTEXTO.md`. A visão completa e os requisitos de longo prazo estão em `ATLAS_PLANEJAMENTO_ARQUITETURA.md`. Quando os dois divergirem sobre ordem ou escopo, vale este arquivo.
 
@@ -14,8 +14,8 @@ O aceite dos 12 passos foi demonstrado em 27/10/2026 (`docs/historico/ACEITE_V0_
 
 São correções da v0.1, sem mudar o escopo do produto.
 
-1. **Kimi Code 2.4.0 sem a ponte MCP.** Investigar por que o Kimi 2.4.0 não registra o runtime local do workspace ao iniciar o servidor `atlas` por stdio (veja `docs/CONTEXTO.md`) e adaptar o ATLAS ou documentar o passo do usuário. Até lá, o OpenCode é o CLI com integração completa.
-2. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). O `CDP timeout` do `test:desktop` ganhou uma correção por hipótese (oclusão de janela). Investigar na próxima ocorrência; não reexecutar às cegas.
+1. **Distribuição oficial corrigida do Kimi.** A contenção das versões 2.4.0/2.4.1 está implementada. O candidato temporário `2.4.1+atlas-profile-fix.1` passou em `smoke:kimi-profile -- --switch-model` e no `smoke:agent` completo, sem API, incluindo modelos, perfil, pedidos, worktree e reinício. Próximo passo: validar uma distribuição oficial corrigida com esses mesmos smokes antes de liberar a principal Kimi e seu botão de troca. A correção local não equivale a suporte oficial; não instalar o candidato nem publicar uma correção externa automaticamente. Patch, reprodução e limites: `docs/diagnosticos/KIMI_2_4_MCP.md`. Até lá, o OpenCode é o CLI com integração completa.
+2. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). O timeout de captura voltou com renderer oculto, mesmo após a hipótese de oclusão; o smoke agora exige janela visível e um frame antes de capturar. A digitação do comando de dimensões também aguarda o prompt do PowerShell. Investigar novas ocorrências; não reexecutar às cegas.
 
 ## Próximo — v0.2 (cada item precisa de plano aprovado)
 
@@ -82,7 +82,7 @@ O mantenedor pretende refazer todo o design visual mais adiante, e a direção a
 | Tema | Situação |
 |---|---|
 | LLM por função | Entregue; recomendações iniciais adiadas (benchmarks do mantenedor) |
-| Troca de modelo sem perder a tela | Entregue; a principal no Kimi espera a correção da ponte MCP no Kimi 2.4.0 para ser verificada |
+| Troca de modelo sem perder a tela | Entregue; a principal no Kimi espera a correção da ponte e a preservação efetiva do perfil de leitura nas versões 2.4 |
 | Suíte de regressão liga/desliga | Definir o significado exato |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |
