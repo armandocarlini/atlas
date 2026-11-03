@@ -1,6 +1,6 @@
 # Plano v0.2: suíte de regressão liga/desliga
 
-Situação: **rascunho, aguardando aprovação do mantenedor.** Nada deste plano começa antes da aprovação.
+Situação: **aprovado pelo mantenedor em 03/11/2026**, com o log completo em arquivo e o prazo escolhido pelo usuário. A implementação segue as fases abaixo.
 
 Cobre o item 3 do `docs/ROADMAP.md`. As quatro escolhas de escopo foram feitas pelo mantenedor em 03/11/2026:
 
@@ -28,7 +28,7 @@ O plano acrescenta uma terceira evidência, **verificada pelo sistema**: o ATLAS
   - `project_id` como chave primária;
   - `enabled` (0 ou 1);
   - `command`, até 300 caracteres, sem caracteres de controle;
-  - `timeout_seconds`, de 30 a 3600, padrão 600;
+  - `timeout_seconds`, escolhido pelo usuário: de 1 minuto a 24 horas, ou `NULL` para "sem prazo". **Não há prazo padrão.** Para ligar a suíte, o usuário informa o comando e escolhe o prazo, inclusive "sem prazo". Pode alterar os dois quando quiser;
   - `updated_at` e `version`.
 - Sem linha na tabela, a suíte fica desligada. **Configuração ausente nunca é preenchida em silêncio.**
 - **Sugestão:** se a raiz do projeto tiver `package.json` com `scripts.test`, o diálogo mostra `npm test` como sugestão. O campo só é preenchido quando o usuário clica em "Usar sugestão", no mesmo padrão de "Usar recomendado" das funções. O ATLAS não sugere outros ecossistemas na v0.2.
@@ -53,13 +53,14 @@ O comando é do usuário e é tratado como se ele o digitasse num terminal:
 - **Teto de segurança** de 1 GB por execução, contra loop que imprime sem parar. Se ele for atingido, a gravação para, o log ganha a marca "log cortado em 1 GB" e o processo continua até terminar ou estourar o prazo. O resultado mostra o corte; não é silencioso.
 - Se o arquivo não puder ser gravado (disco cheio, permissão), a execução termina como `error` com o motivo, nunca como `passed`.
 - O ATLAS não apaga logs automaticamente.
-- **Timeout:** ao fim do prazo, a árvore de processos é encerrada (`taskkill /T /F` no Windows, grupo de processos nos demais). O resultado fica `timeout`, nunca `passed`.
+- **Prazo:** o prazo é opcional, para um teste travado não segurar a fila para sempre. Ao fim dele, a árvore de processos é encerrada (`taskkill /T /F` no Windows, grupo de processos nos demais). O resultado fica `timeout`, nunca `passed`.
+- **Parar a suíte:** na revisão, o botão "Parar suíte" encerra a execução em andamento ou tira da fila uma execução que ainda não começou. Ele é necessário principalmente com "sem prazo". O resultado fica `cancelled`, nunca `passed`. Só o usuário para a suíte; agentes não têm essa ação.
 - Não há nova tentativa automática.
 
 ### 4. Evidência e honestidade do resultado
 
 - A evidência nova tem `kind = 'regression_run'` e `source = 'system'`. A migration 13 reconstrói a tabela `evidence` para ampliar o `CHECK` e preserva os dados, com teste de migração.
-- Estados possíveis: `queued`, `running`, `passed` (exit 0), `failed` (exit diferente de 0), `timeout`, `error` (o shell não iniciou), `interrupted` (o ATLAS fechou durante a execução, marcado pela reconciliação no início seguinte) e `skipped` (sem worktree).
+- Estados possíveis: `queued`, `running`, `passed` (exit 0), `failed` (exit diferente de 0), `timeout`, `cancelled` (parada pelo usuário), `error` (o shell não iniciou), `interrupted` (o ATLAS fechou durante a execução, marcado pela reconciliação no início seguinte) e `skipped` (sem worktree).
 - O payload traz o comando efetivo, o exit code, a duração, o trecho final do log, o caminho e o SHA-256 do log completo, o total de bytes, se houve corte e o `HEAD` em que rodou.
 - **A suíte alterou a worktree?** O ATLAS coleta o retrato Git de novo depois da execução. Se ele diferir do retrato da revisão, a evidência mostra "a suíte alterou a worktree". Nesse caso, o aceite já recusa por causa da regra atual, e a mensagem passa a explicar o motivo.
 - **Arquivos de teste alterados pelo agente:** o agente pode, por exemplo, mudar o script `test` do `package.json`, configs de Vitest, Jest ou Playwright, ou arquivos `*.test.*`. Quando o diff da revisão toca arquivos assim, a evidência mostra um aviso com a lista. Um verde nessas condições não deve ser lido como garantia.
@@ -78,7 +79,7 @@ As skills ui-ux-pro-max e apple-design e o `MASTER.md` serão aplicados na fase 
 - Na barra do projeto, uma entrada **"Suíte de regressão"** abre um diálogo modal com:
   - a chave liga/desliga;
   - o campo do comando, com "Usar sugestão" quando houver;
-  - o prazo;
+  - o prazo, com valor livre (minutos ou horas) ou a opção "sem prazo";
   - o aviso de que o comando roda com as permissões do usuário, na worktree da tarefa, com código escrito pelo agente.
 - Na revisão (`ReviewEvidence`), um bloco "Suíte de regressão (verificada pelo ATLAS)" com:
   - o estado, por texto e ícone, não só por cor;
@@ -117,8 +118,8 @@ Cada fase é um PR com CI verde em Ubuntu, Windows e Package.
 - Bloquear a conclusão ou devolver a tarefa ao agente automaticamente.
 - Sandbox ou isolamento de rede para a suíte.
 
-## Decisões que dependem do mantenedor
+## Decisões do mantenedor
 
-1. Aprovar o plano.
-2. Confirmar que `tasks_list` informa aos agentes só o **estado** da suíte, sem log (seção 5). A alternativa é não informar nada aos agentes.
-3. Confirmar o prazo padrão de 10 minutos e o teto de segurança de 1 GB por log. O log completo não tem outro limite.
+1. ~~Aprovar o plano~~: aprovado em 03/11/2026.
+2. ~~Aprovado~~: `tasks_list` informa aos agentes só o **estado** da suíte, sem log (seção 5). A alternativa é não informar nada aos agentes.
+3. ~~Prazo padrão de 10 minutos~~: substituído pelo prazo escolhido pelo usuário, sem padrão e com a opção "sem prazo". O teto de segurança de 1 GB por log foi aprovado.
