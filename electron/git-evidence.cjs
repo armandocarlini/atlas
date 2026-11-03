@@ -83,10 +83,37 @@ async function collectGitEvidence({ repositoryPath, path: worktreePath, branch, 
   };
 }
 
+// Caminhos alterados desde o commit-base: commits da tarefa, mudanças sem commit e
+// arquivos novos. Mesma proteção do retrato; `-z` evita aspas e escapes nos nomes.
+async function collectChangedPaths({ repositoryPath, path: worktreePath, baseCommit }) {
+  if (!/^[0-9a-f]{7,64}$/i.test(baseCommit || '')) throw new Error('Commit-base inválido para a evidência.');
+  const gitDir = resolveWorktreeGitDir(repositoryPath, worktreePath);
+  const [committed, status] = await Promise.all([
+    git(gitDir, worktreePath, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '-z', baseCommit, 'HEAD', '--']),
+    git(gitDir, worktreePath, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=all']),
+  ]);
+  const paths = new Set(committed.split('\0').filter(Boolean));
+  const entries = status.split('\0');
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!entry) continue;
+    paths.add(entry.slice(3));
+    // Renomeação e cópia trazem a origem na entrada seguinte.
+    if (entry[0] === 'R' || entry[0] === 'C') index += 1;
+  }
+  return [...paths].map((item) => safeText(item, 500));
+}
+
+// A worktree mudou entre dois retratos?
+function snapshotChanged(before, after) {
+  return after.headCommit !== before.headCommit || after.uncommittedFiles !== before.uncommittedFiles
+    || JSON.stringify(after.diff) !== JSON.stringify(before.diff);
+}
+
 // Motivo fixo do sistema e trecho técnico separado: a saída do Git pode conter texto
 // vindo da worktree e não pode aparecer como verificação do ATLAS.
 function unavailableEvidence(error, worktreePath) {
   return { unavailable: 'O ATLAS não conseguiu ler a worktree registrada da tarefa.', worktreePath, detail: safeText(String(error?.message || error).split('\n').find((line) => line.trim()) || '') };
 }
 
-module.exports = { collectGitEvidence, parseShortstat, resolveWorktreeGitDir, unavailableEvidence, SAFE_CONFIG };
+module.exports = { collectGitEvidence, collectChangedPaths, snapshotChanged, parseShortstat, resolveWorktreeGitDir, unavailableEvidence, SAFE_CONFIG };

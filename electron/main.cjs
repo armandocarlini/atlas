@@ -266,6 +266,11 @@ app.whenReady().then(async () => {
     onConnectionChange: (sessionId, connected) => sendToMain('agent:atlas-tools', { sessionId, connected }),
     onAgentRequest: (projectId) => sendToMain('agent-request:changed', { projectId }),
     onTaskChange: (projectId) => sendToMain('task:changed', { projectId }),
+    onReviewRequested: (request) => {
+      const run = operationalStore.enqueueRegressionRun(request);
+      if (run?.state === 'queued') regressionRunner?.notify();
+      return run;
+    },
   });
   try {
     await toolsHost.listen();
