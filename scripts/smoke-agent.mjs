@@ -1,5 +1,5 @@
 // Smoke real e opt-in do adaptador Kimi Code: inicia o CLI de verdade em um
-// PTY do ATLAS, envia apenas comandos de barra (/status e /exit) e verifica o
+// PTY do ATLAS, envia apenas comandos locais (/title, /model, /status, /exit) e verifica o
 // encerramento limpo. Nenhum prompt é enviado ao modelo e nenhum token é
 // consumido. O KIMI_CODE_HOME é isolado na fixture temporária.
 //
@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
+import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -29,8 +30,16 @@ if (!fs.existsSync(path.join(root, 'dist', 'index.html'))) {
 
 const require = createRequire(import.meta.url);
 const { discoverAdapters } = require('../electron/agent-adapters.cjs');
+const { profileSnapshot, assertPrincipalProfile } = require('./kimi-profile-state.cjs');
+const { publishSmokeResult } = require('./smoke-completion.cjs');
+const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-agent-smoke-'));
+const profile = path.join(fixture, 'profile');
+const kimiHome = path.join(fixture, 'kimi-home');
+fs.mkdirSync(profile);
+fs.mkdirSync(kimiHome);
 // O CLI real é uma dependência do smoke, não um alvo de atualização.
 process.env.KIMI_CODE_NO_AUTO_UPDATE = '1';
+if (!configuredModel) process.env.KIMI_CODE_HOME = kimiHome;
 const [kimi] = await discoverAdapters();
 if (kimi.status !== 'available') {
   console.error(`ERRO: ${kimi.error}`);
@@ -38,11 +47,20 @@ if (kimi.status !== 'available') {
 }
 console.log(`Adaptador detectado: ${kimi.name} ${kimi.version} (${kimi.executable})`);
 
-const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-agent-smoke-'));
-const profile = path.join(fixture, 'profile');
-const kimiHome = path.join(fixture, 'kimi-home');
-fs.mkdirSync(profile);
-fs.mkdirSync(kimiHome);
+// O provedor da fixture nunca atende uma conversa. Qualquer tentativa de
+// consultar o modelo torna o teste vermelho, mesmo que o CLI se recupere.
+let modelRequests = 0;
+let provider = null;
+let fixtureConfig = null;
+if (!configuredModel) {
+  provider = createServer((_request, response) => {
+    modelRequests += 1;
+    response.writeHead(500).end('Nenhum prompt pode ser enviado neste smoke.');
+  });
+  await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
+  fixtureConfig = `default_model = "fixture-a"\ntelemetry = false\n[providers.fixture]\ntype = "openai"\nbase_url = "http://127.0.0.1:${provider.address().port}/v1"\napi_key = "fixture-only"\n[models.fixture-a]\nprovider = "fixture"\nmodel = "fixture-a"\nmax_context_size = 32000\ncapabilities = ["tool_use"]\n[models.fixture-b]\nprovider = "fixture"\nmodel = "fixture-b"\nmax_context_size = 32000\ncapabilities = ["tool_use"]\n`;
+  fs.writeFileSync(path.join(kimiHome, 'config.toml'), fixtureConfig);
+}
 // A fixture é um repositório Git com commit para o pedido com worktree por tarefa.
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=ATLAS Smoke', '-c', 'user.email=smoke@atlas.invalid', '-c', 'commit.gpgsign=false', '-C', cwd, ...args], { encoding: 'utf8', windowsHide: true }).trim();
 git(fixture, 'init', '--quiet', '--initial-branch=main');
@@ -92,6 +110,7 @@ async function until(check, label, timeout = 60000) {
   const start = Date.now();
   let last;
   while (Date.now() - start < timeout) {
+    assert.equal(modelRequests, 0, 'O CLI tentou consultar o provedor fictício.');
     try { const result = await check(); if (result) return result; } catch (error) { last = error; }
     await delay(150);
   }
@@ -151,10 +170,87 @@ async function typeInPrincipal(prompt) {
 }
 
 let exitCode = 1;
+let failureMessage = null;
 let modelDiagnostic = '';
 let kimiModel = null;
 const principalCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'ORQUESTRADOR')`;
 const plainOutput = (value) => value.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+
+async function sendCommand(session, command) {
+  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: session.ptyId, data: command }] });
+  await delay(200);
+  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: session.ptyId, data: '\r' }] });
+}
+
+
+async function materializeSession(session, title) {
+  // O modo com provedor real é outro opt-in; não lê seus journals nesta etapa.
+  if (configuredModel) return null;
+  let trusted = false;
+  await until(async () => {
+    const output = (await native('invoke', { channel: 'terminal:attach', args: [session.ptyId] })).scrollback;
+    if (!trusted && output.includes('Trust this folder?')) {
+      trusted = true;
+      await native('invoke', { channel: 'terminal:write', args: [{ terminalId: session.ptyId, data: '\r' }] });
+      return false;
+    }
+    return output.includes('Welcome to Kimi Code!');
+  }, `TUI antes de criar ${title}`, 90000);
+  await sendCommand(session, `/title ${title}`);
+  const snapshot = await until(() => profileSnapshot(kimiHome, title), `sessão interna ${title}`);
+  assert.equal(snapshot.title, title);
+  assert.equal(snapshot.model, kimiModel);
+  if (session.role === 'orchestrator') assertPrincipalProfile(snapshot);
+  else assert.equal(snapshot.profileName, 'agent');
+  return snapshot;
+}
+
+async function switchTuiModel(session, previous, { declareInUi = false } = {}) {
+  await sendCommand(session, '/model');
+  await until(async () => {
+    const screen = plainOutput((await native('invoke', { channel: 'terminal:attach', args: [session.ptyId] })).scrollback);
+    // O rodapé de atalhos é truncado em cards estreitos. A presença do diálogo
+    // e da opção confirma o seletor; a troca por Alt+S é verificada no journal.
+    return screen.includes('Select a model') && screen.includes('fixture-b');
+  }, 'seletor de modelos do Kimi');
+  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: session.ptyId, data: 'fixture-b' }] });
+  await delay(200);
+  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: session.ptyId, data: '\x1bs' }] });
+  const changed = await until(() => {
+    const current = profileSnapshot(kimiHome, previous.title);
+    return current?.model === 'fixture-b' && current;
+  }, 'modelo escolhido na TUI persistido no journal');
+  assert.equal(changed.sessionKey, previous.sessionKey);
+  assert.equal(changed.profileName, previous.profileName);
+  assert.deepEqual(changed.activeToolNames, previous.activeToolNames);
+  assert.deepEqual(changed.subagents, previous.subagents);
+  if (session.role === 'orchestrator') assertPrincipalProfile(changed);
+  const after = (await native('invoke', { channel: 'agent:list' })).find(item => item.id === session.id);
+  assert.equal(after.state, 'running');
+  assert.equal(after.ptyId, session.ptyId);
+  assert.equal(after.runId, session.runId);
+  await until(async () => (await native('invoke', { channel: 'agent:list' })).find(item => item.id === session.id)?.atlasTools === true, 'MCP permanece após trocar modelo', 30000);
+  if (declareInUi) {
+    // O seletor abaixo usa o nome para não depender de atributos de implementação.
+    const named = `[...document.querySelectorAll('.session-card')].find(item => item.querySelector('h3')?.textContent === ${JSON.stringify(session.name)})`;
+    await evaluateMain(`[...${named}.querySelectorAll('button')].find(button => button.textContent === 'Trocar modelo').click()`);
+    await until(() => evaluateMain(`Boolean(document.querySelector('.model-switch-modal select[name="declared-model"]'))`), 'painel de troca de modelo carregado');
+    assert(await evaluateMain(`document.querySelector('.model-switch-modal').innerText.includes('Alt+S')`));
+    assert(await evaluateMain(`document.querySelector('.model-switch-modal button[type=submit]').disabled`), 'modelo vazio não pode ser informado');
+    await chooseInUi('.model-switch-modal', 'declared-model', 'fixture-b');
+    await evaluateMain(`document.querySelector('.model-switch-modal form').requestSubmit()`);
+    await until(() => evaluateMain(`!document.querySelector('.model-switch-modal')`), 'modelo informado pelo painel');
+    await until(() => evaluateMain(`${named}.innerText.includes('informado por você; iniciou com fixture-a')`), 'card identifica modelo como informado pelo usuário');
+  } else {
+    await native('invoke', { channel: 'agent:declare-model', args: [{ sessionId: session.id, model: 'fixture-b' }] });
+  }
+  const declared = (await native('invoke', { channel: 'agent:list' })).find(item => item.id === session.id);
+  assert.equal(declared.model, 'fixture-a');
+  assert.equal(declared.currentModel, 'fixture-b');
+  assert.equal(declared.runId, session.runId);
+  assert.equal(declared.ptyId, session.ptyId);
+  console.log(`PASS troca nativa no Kimi (${session.role}): sessão, run, PTY, perfil e MCP preservados; modelo informado${declareInUi ? ' pelo painel' : ''}`);
+}
 try {
   await until(async () => {
     try { return (await native('windows')).some((item) => !item.url.includes('window=')); } catch { return false; }
@@ -181,7 +277,7 @@ try {
   // Sem CLI padrão: a principal nasce só com o CLI e o modelo escolhidos.
   assert.equal((await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] })).needsChoice, true);
   kimiModel = (await native('invoke', { channel: 'agent:list-models', args: [{ adapterId: 'kimi-code' }] })).models[0] ?? null;
-  if (!configuredModel) assert.equal(kimiModel, null, 'home isolada sem modelos: o Kimi usa a própria configuração');
+  if (!configuredModel) assert.equal(kimiModel, 'fixture-a', 'modelo escolhido explicitamente entre aliases da home de fixture');
   const principal = await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture, adapterId: 'kimi-code', model: kimiModel }] });
   assert.equal(principal.role, 'orchestrator');
   const principalAttach = () => native('invoke', { channel: 'terminal:attach', args: [principal.ptyId] });
@@ -196,11 +292,12 @@ try {
     return output.includes('Welcome to Kimi Code!');
   }, 'perfil principal aceito pelo Kimi Code', 90000);
   assert.equal((await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] })).id, principal.id);
+  const principalNative = await materializeSession(principal, 'atlas-principal-1');
   console.log('PASS principal real com perfil de leitura, identidade única e TUI interativa');
 
   if (configuredModel) {
     const start = (await principalAttach()).scrollback.length;
-    await native('invoke', { channel: 'terminal:write', args: [{ terminalId: principal.ptyId, data: '/status\r' }] });
+    await sendCommand(principal, '/status');
     await until(async () => (await principalAttach()).scrollback.slice(start).includes('Permissions'), 'status da principal configurada');
     if (/Model\s+not set/i.test(plainOutput((await principalAttach()).scrollback.slice(start)))) throw new Error('Modelo não configurado no Kimi para a validação de conversa.');
     const beforeReply = (await principalAttach()).scrollback.length;
@@ -237,24 +334,31 @@ try {
     }
     return scrollback.includes('Welcome to Kimi Code!');
   }, 'confiança da pasta e TUI do Kimi Code inicializada', 90000);
+  const manualNative = await materializeSession(agent, 'atlas-manual');
   console.log('PASS TUI nativa do harness renderizada no PTY (confiança da fixture confirmada)');
   if (integrationActive) {
     await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === agent.id)?.atlasTools === true, 'handshake da ponte MCP do ATLAS na sessão manual', 30000);
     console.log('PASS Kimi real inicia a ponte MCP do ATLAS e o handshake chega ao host com o token da run');
   }
 
+  // O painel nativo trunca diretórios que não cabem. Dê espaço ao caminho longo
+  // da fixture e mantenha a asserção do diretório completo, sem aceitar reticências.
+  const statusSize = await attach();
+  await native('invoke', { channel: 'terminal:resize', args: [{ terminalId: agent.ptyId, cols: Math.max(statusSize.cols || 80, fixture.length + 40), rows: statusSize.rows || 40 }] });
   const before = (await attach()).scrollback.length;
-  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: agent.ptyId, data: '/status\r' }] });
+  await sendCommand(agent, '/status');
   await until(async () => {
     const delta = (await attach()).scrollback.slice(before);
     return delta.includes('Directory') && delta.includes(fixture) && delta.includes('Permissions');
   }, 'status exibe diretório e permissões');
+  await native('invoke', { channel: 'terminal:resize', args: [{ terminalId: agent.ptyId, cols: statusSize.cols || 80, rows: statusSize.rows || 40 }] });
   console.log('PASS /status respondido pelo harness sem prompt ao modelo');
 
   await callMain('Page.reload', {});
   const manualCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'smoke-kimi')`;
   await until(() => evaluateMain(`Boolean(${principalCard}) && Boolean(${manualCard})`), 'cards principal e manual após reload');
   if (integrationActive) await until(() => evaluateMain(`${manualCard}.querySelector('.atlas-tools')?.textContent === 'ATLAS conectado'`), 'indicação textual ATLAS conectado na sessão manual');
+  if (!configuredModel) await switchTuiModel(agent, manualNative, { declareInUi: true });
   assert(await evaluateMain(`[...${manualCard}.querySelectorAll('button')].some(button => button.textContent === 'Descoberta')`), 'sessão manual deve oferecer envio de descoberta');
   assert(await evaluateMain(`[...${principalCard}.querySelectorAll('button')].every(button => button.textContent !== 'Descoberta')`), 'principal não envia descoberta para si mesma');
   await evaluateMain(`[...${manualCard}.querySelectorAll('button')].find(button => button.textContent === 'Descoberta').click()`);
@@ -276,7 +380,7 @@ try {
   await until(() => evaluateMain(`document.querySelector('.messages-panel')?.innerText.includes('0 não lidas')`), 'descoberta marcada como lida');
   console.log('PASS descoberta real entre sessões: modal, persistência, painel e leitura');
 
-  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: agent.ptyId, data: '/exit\r' }] });
+  await sendCommand(agent, '/exit');
   await until(async () => {
     const agents = await native('invoke', { channel: 'agent:list' });
     return agents.find((item) => item.id === agent.id)?.state === 'exited';
@@ -297,7 +401,7 @@ try {
   await until(() => evaluateMain(`Boolean(${principalCard})`), 'card principal no projeto');
   await evaluateMain(`${principalCard}.querySelectorAll('button').forEach(button => { if (button.textContent === 'Pop-up') button.click(); })`);
   await until(async () => (await native('windows')).some((item) => item.url.includes('window=terminal')), 'pop-up da principal');
-  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: principal.ptyId, data: '/exit\r' }] });
+  await sendCommand(principal, '/exit');
   await until(() => evaluateMain(`[...${principalCard}.querySelectorAll('button')].some(button => button.textContent === 'Nova execução')`), 'principal encerrada no pop-up');
   await callMain('Page.reload', {});
   await until(() => evaluateMain(`[...${principalCard}.querySelectorAll('button')].some(button => button.textContent === 'Nova execução')`), 'principal encerrada após reload com pop-up nativo aberto');
@@ -312,11 +416,14 @@ try {
   assert.equal(await evaluateMain(`Boolean(${principalCard}.querySelector('.terminal-error'))`), false);
   assert.equal(rerun.id, principal.id);
   assert.equal(rerun.runAttempt, 2);
+  const rerunNative = await materializeSession(rerun, 'atlas-principal-2');
+  if (!configuredModel) assert.notEqual(rerunNative.sessionKey, principalNative.sessionKey, 'nova run cria outra sessão interna do CLI');
   console.log('PASS nova execução após saída em pop-up reintegra e conecta PTY novo sem perder identidade');
   if (integrationActive) {
     await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === principal.id)?.atlasTools === true, 'ponte MCP na nova run da principal', 30000);
     await until(() => evaluateMain(`${principalCard}.querySelector('.atlas-tools')?.textContent === 'ATLAS conectado'`), 'indicação ATLAS conectado na principal');
     console.log('PASS nova run da principal carrega a ponte MCP do ATLAS com perfil mcp__atlas__*');
+    if (!configuredModel) await switchTuiModel(rerun, rerunNative);
   }
 
   // Pedido da principal real semeado no banco do perfil isolado (sem prompt ao
@@ -343,7 +450,7 @@ try {
   assert.equal(fulfilled.sessionId, delegated.id);
   const delegatedCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'agente-da-principal')`;
   await until(() => evaluateMain(`${delegatedCard}?.querySelector('.origin-badge')?.textContent === 'orquestrador'`), 'card do agente aprovado com origem orquestrador');
-  if (integrationActive) await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === delegated.id)?.atlasTools === true, 'ponte MCP no agente aprovado', 30000);
+
   await until(() => evaluateMain(`document.querySelectorAll('.agent-request').length === 0`), 'pedido resolvido sai da fila');
   const delegatedAttach = () => native('invoke', { channel: 'terminal:attach', args: [delegated.ptyId] });
   let delegatedTrusted = false;
@@ -356,7 +463,9 @@ try {
     }
     return output.includes('Welcome to Kimi Code!');
   }, 'TUI do agente aprovado', 90000);
-  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: delegated.ptyId, data: '/exit\r' }] });
+  await materializeSession(delegated, 'atlas-approved');
+  if (integrationActive) await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === delegated.id)?.atlasTools === true, 'ponte MCP no agente aprovado', 30000);
+  await sendCommand(delegated, '/exit');
   await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === delegated.id)?.state === 'exited', 'agente aprovado encerrado');
   console.log('PASS pedido da principal aprovado pela interface inicia o Kimi real com origem orchestrator e ponte conectada');
 
@@ -395,7 +504,9 @@ try {
     }
     return output.includes('Welcome to Kimi Code!');
   }, 'TUI do agente na worktree', 90000);
-  await native('invoke', { channel: 'terminal:write', args: [{ terminalId: isolated.ptyId, data: '/exit\r' }] });
+  await materializeSession(isolated, 'atlas-worktree');
+  if (integrationActive) await until(async () => (await native('invoke', { channel: 'agent:list' })).find(item => item.id === isolated.id)?.atlasTools === true, 'ponte MCP no agente da worktree', 30000);
+  await sendCommand(isolated, '/exit');
   await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === isolated.id)?.state === 'exited', 'agente da worktree encerrado');
   console.log('PASS pedido com worktree aprovado cria a worktree Git real da tarefa e inicia o Kimi nela');
 
@@ -412,11 +523,13 @@ try {
   assert.equal(restored.exit.exitCode, 0);
   assert.equal(restored.ptyId, null);
   assert.equal(restored.cwd, fixture);
+  if (!configuredModel) assert.equal(restored.currentModel, 'fixture-b', 'modelo informado da sessão manual preservado após reinício');
   const restoredPrincipal = (await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] }));
   assert.equal(restoredPrincipal.id, principal.id);
   assert.equal(restoredPrincipal.archived, true);
   assert.equal(restoredPrincipal.ptyId, null);
   assert.equal(restoredPrincipal.runState, 'lost');
+  if (!configuredModel) assert.equal(restoredPrincipal.currentModel, 'fixture-b', 'modelo informado preservado após reinício');
   const persistedMessages = await native('invoke', { channel: 'message:list', args: [{ cwd: fixture }] });
   assert.equal(persistedMessages.items.length, 1);
   assert.equal(persistedMessages.items[0].subject, 'Descoberta real do smoke');
@@ -433,9 +546,14 @@ try {
   assert.equal(restoredRequest.state, 'fulfilled');
   console.log('PASS pedido atendido e origem do agente preservados após reinício');
 
-  fs.writeFileSync(path.join(resultsDir, 'agent-result.json'), JSON.stringify({ passed: true, version: kimi.version, conversation: configuredModel, fixture: null }, null, 2));
+  assert.equal(modelRequests, 0, 'Nenhum pedido ao provedor fictício.');
+  if (!configuredModel) {
+    assert.equal(fs.readFileSync(path.join(kimiHome, 'config.toml'), 'utf8'), fixtureConfig);
+    console.log('PASS provedor de fixture sem chamadas e configuração de modelos intacta');
+  }
   exitCode = 0;
 } catch (error) {
+  failureMessage = error.message;
   console.error(`FAIL: ${error.message}`);
   if (configuredModel && modelDiagnostic) console.error(JSON.stringify({ promptEcho: modelDiagnostic.includes('Reply only'), permissionQuestion: /Allow this|Approve this|Do you want to allow/i.test(modelDiagnostic), setupQuestion: /login|select.*model|configure/i.test(modelDiagnostic), providerError: /quota|rate limit|APIError|authentication|Error:/i.test(modelDiagnostic), pasteMode: /paste|pasted/i.test(modelDiagnostic), renderedCharacters: modelDiagnostic.length }));
   try {
@@ -458,6 +576,8 @@ try {
   await delay(500);
   child.kill();
   await delay(500);
+  if (provider) await new Promise(resolve => provider.close(resolve));
+  if (modelRequests !== 0) exitCode = 1;
   if (exitCode === 0) {
     const resolved = fs.realpathSync(fixture);
     assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
@@ -473,4 +593,5 @@ try {
   }
   else console.error(`Fixture preservada para diagnóstico: ${fixture}`);
 }
+publishSmokeResult(path.join(resultsDir, 'agent-result.json'), { passed: exitCode === 0, version: kimi.version, conversation: configuredModel, fixture: exitCode === 0 ? null : fixture, ...(failureMessage ? { error: failureMessage } : {}) }, modelRequests);
 process.exit(exitCode);

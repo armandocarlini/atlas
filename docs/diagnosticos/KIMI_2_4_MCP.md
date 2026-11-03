@@ -1,6 +1,6 @@
 # Kimi 2.4: MCP antes da sessão e perfil da principal
 
-Investigação iniciada em 31/10/2026, atualizada em 01/11/2026, sobre a base `6b608ee`. **A integração com o Kimi distribuído oficialmente ainda não está corrigida.** O ATLAS recusa novas runs da principal no Kimi 2.4.0 e 2.4.1 como contenção. Não escolhe outro CLI pelo usuário, não reinicia sessões existentes e não altera o Kimi instalado.
+Investigação iniciada em 31/10/2026, atualizada em 03/11/2026. **Este incremento entrega contenção e diagnóstico; a integração com o Kimi distribuído oficialmente ainda não está corrigida.** O ATLAS recusa novas runs da principal no Kimi 2.4.0 e 2.4.1. Não escolhe outro CLI pelo usuário, não reinicia sessões existentes e não altera o Kimi instalado.
 
 ## O que foi observado
 
@@ -64,8 +64,8 @@ As runs Kimi iniciadas pelo ATLAS recebem `KIMI_CODE_NO_AUTO_UPDATE=1` somente n
 
 1. Reproduzir com versão fixa do Kimi e identificar por que o perfil explícito não chegou ao `profile.bind` nesse caminho — identificado no SDK; patch experimental abaixo.
 2. Fazer o diagnóstico nativo passar com o perfil de leitura correto, conexão persistente e zero chamadas ao provedor fictício — demonstrado no candidato local, ainda não numa distribuição oficial corrigida.
-3. Fazer o `smoke:agent` completo passar, incluindo reinício e revogação de token, sem retirar as verificações existentes.
-4. Só então verificar a troca de modelo na principal: mesma run, PTY e sessão interna, ferramentas de leitura preservadas e MCP ativo. A liberação do botão depende dessa evidência.
+3. Fazer o `smoke:agent` completo passar, incluindo reinício e revogação de token, sem retirar as verificações existentes — demonstrado no candidato experimental, não na distribuição oficial.
+4. Verificar a troca de modelo na principal: mesma run, PTY e sessão interna, ferramentas de leitura e ATLAS preservadas e MCP ativo — demonstrado no candidato experimental. A liberação do botão para uma distribuição oficial ainda depende de validá-la.
 
 Não publicar release, atualizar o CLI do usuário ou abrir issue externa automaticamente como parte desta investigação.
 
@@ -98,3 +98,13 @@ Nesse candidato, o diagnóstico nativo com `--switch-model` passou: `profileName
 O lançamento direto das fontes via TSX excedeu o limite de versão do diagnóstico; foi substituído por um bundle compilado, sem aumentar o timeout. Uma execução ampliada do teste de regressão também excedeu 15 segundos num caso; a fixture foi isolada do catálogo externo e ganhou trace opcional de fases. A execução instrumentada passou nos cinco casos, mas isso não estabelece sozinho a causa exata daquele timeout. Esses resultados anteriores continuam registrados no PR.
 
 A ampliação para o arquivo existente `sdk-rpc-client-v2.test.ts` encontrou cinco falhas no Windows: duas expectativas de formato de caminho e três criações de symlink recusadas com `EPERM`. A execução desse mesmo arquivo nas fontes originais reproduziu as cinco falhas com os mesmos nomes. Elas não foram corrigidas, suprimidas ou contadas como testes aprovados; a suíte ampliada do fornecedor continua vermelha neste ambiente.
+
+## Validação integrada do candidato
+
+O bundle corrigido foi identificado como `2.4.1+atlas-profile-fix.1`, apenas em TEMP e no PATH dos subprocessos de teste. O identificador descreve uma compilação modificada, não uma versão publicada. O bloqueio de 2.4.0/2.4.1 no produto não recebeu exceções.
+
+O smoke completo semeia dois modelos fictícios e um provedor HTTP em uma home isolada antes de consultar o CLI. Cada sessão é materializada por `/title`, como uma ação local do usuário de teste. O journal precisa mostrar o perfil esperado; na principal, exige também `mcp__atlas__*`, não apenas ausência de escrita. A mesma execução confere troca nativa e declaração de modelo, o painel da sessão manual, pedidos aprovados, worktree, saída, revogação, persistência e reabertura sem PTY. O contador do provedor precisa continuar zerado e a configuração permanece idêntica.
+
+O diagnóstico isolado também exige saída espontânea com código zero; encerramento forçado apenas limpa uma falha e nunca a transforma em aprovação. O resultado JSON do smoke completo só é publicado depois das verificações e do encerramento do provedor. Uma chamada tardia ao provedor grava falha, preservando eventual erro anterior.
+
+As primeiras execuções integradas encontraram truncamento de apresentação: o diretório não cabia em `/status`, e o rodapé de atalhos não cabia no card. O teste amplia o PTY para conferir o caminho completo e identifica o seletor por seu título e opções; a troca continua comprovada no journal. O diagnóstico isolado também passou a aguardar o eco do comando antes do Enter, evitando que a inicialização agrupe as entradas como uma colagem. Os timeouts anteriores permanecem registrados no PR; não houve aumento dos limites nem retirada de asserções de perfil, modelo ou conexão.

@@ -22,8 +22,8 @@ const { createMcpHost } = require('../electron/mcp-host.cjs');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const plain = value => value.replace(/\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
-async function until(check, label) {
-  const end = Date.now() + 60000;
+async function until(check, label, timeout = 60000) {
+  const end = Date.now() + timeout;
   while (Date.now() < end) {
     const result = check();
     if (result) return result;
@@ -32,36 +32,8 @@ async function until(check, label) {
   throw new Error(`Timeout: ${label}`);
 }
 
-function profileSnapshot(home) {
-  const sessions = path.join(home, 'sessions');
-  if (!fs.existsSync(sessions)) return null;
-  for (const file of fs.readdirSync(sessions, { recursive: true })) {
-    if (!file.endsWith(path.join('agents', 'main', 'wire.jsonl'))) continue;
-    const records = fs.readFileSync(path.join(sessions, file), 'utf8').split('\n').flatMap(line => {
-      try { return [JSON.parse(line)]; } catch { return []; }
-    });
-    let profile;
-    for (const record of records) {
-      if (!record || typeof record !== 'object' || record.agentId !== 'main') continue;
-      if (record.type === 'profile.bind') profile = { ...record };
-      if (!profile) continue;
-      if (record.type === 'config.update') {
-        for (const key of ['profileName', 'modelAlias', 'subagents']) {
-          if (record[key] !== undefined) profile[key] = record[key];
-        }
-      }
-      if (record.type === 'tools.set_active_tools') profile.activeToolNames = record.names;
-      if (record.type === 'tools.reset_active_tools') profile.activeToolNames = undefined;
-    }
-    if (profile) {
-      const stateFile = path.resolve(path.dirname(path.join(sessions, file)), '..', '..', 'state.json');
-      let state;
-      try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return null; }
-      return { profileName: profile.profileName, activeToolNames: profile.activeToolNames, subagents: profile.subagents, model: profile.modelAlias, title: state.title, sessionKey: path.relative(sessions, path.dirname(stateFile)) };
-    }
-  }
-  return null;
-}
+const { profileSnapshot, assertPrincipalProfile } = require('./kimi-profile-state.cjs');
+const { assertCleanExit } = require('./smoke-completion.cjs');
 
 async function main() {
   assert.equal(process.platform, 'win32', 'Este diagnóstico exige Windows/ConPTY.');
@@ -83,6 +55,8 @@ async function main() {
   const host = createMcpHost({ store: {} });
   let terminal;
   let exited = false;
+  let code = null;
+  let forced = false;
   let output = '';
   let passed = false;
   try {
@@ -93,7 +67,7 @@ async function main() {
     install({ home, entry: atlasEntry({ execPath: process.execPath, bridgePath: path.resolve(__dirname, '../electron/atlas-mcp-bridge.cjs') }) });
     const env = { ...probeEnv, ATLAS_MCP_ENDPOINT: host.endpoint, ATLAS_MCP_TOKEN: token };
     terminal = require('node-pty').spawn(executable, ['--model', 'fixture-a', '--agent-file', ensureOrchestratorProfile(fixture)], { cwd: fixture, env, cols: 130, rows: 40 });
-    terminal.onExit(() => { exited = true; });
+    terminal.onExit(event => { exited = true; code = event.exitCode; });
     let trusted = false;
     terminal.onData(chunk => {
       output = (output + chunk).slice(-256000);
@@ -102,12 +76,19 @@ async function main() {
         terminal.write('\r'); // Confiança apenas nesta fixture.
       }
     });
+    async function sendCommand(command) {
+      const start = output.length;
+      terminal.write(command);
+      // Antes de a TUI consumir a entrada, o PTY pode agrupar texto e Enter
+      // apesar do atraso entre writes. O eco confirma que o texto foi processado.
+      await until(() => plain(output.slice(start)).includes(command), 'eco do comando na TUI');
+      await delay(200);
+      terminal.write('\r');
+    }
     await until(() => plain(output).includes('Welcome to Kimi Code!'), 'TUI inicializada');
     // A TUI distingue colagem de texto de uma tecla Enter. Enviar o comando e
     // CR no mesmo chunk pode inserir uma quebra no título em vez de submetê-lo.
-    terminal.write('/title atlas-profile-check');
-    await delay(200);
-    terminal.write('\r');
+    await sendCommand('/title atlas-profile-check');
     await until(() => plain(output).includes('Session title set to: atlas-profile-check'), 'sessão local criada sem prompt');
     const profile = await until(() => profileSnapshot(home), 'perfil efetivamente vinculado');
     assert.equal(profile.title, 'atlas-profile-check', 'O título persistido deve confirmar o comando exato, sem texto colado adicional.');
@@ -116,16 +97,11 @@ async function main() {
     assert(host.isConnected('principal'), 'A ponte precisa continuar conectada após a descoberta.');
     console.log('PASS sessão local criada por /title e ponte MCP ativa');
     console.log(JSON.stringify(profile));
-    assert.equal(profile.profileName, 'atlas-orchestrator', 'O CLI deve preservar o perfil escolhido com --agent-file.');
-    for (const name of ['Read', 'Grep', 'Glob']) assert(profile.activeToolNames.includes(name), name);
-    assert(profile.activeToolNames.every(name => ['Read', 'Grep', 'Glob'].includes(name) || name.startsWith('mcp__atlas__')), 'A principal não pode ganhar ferramentas de escrita, shell ou outros servidores MCP.');
-    assert.deepEqual(profile.subagents, []);
+    assertPrincipalProfile(profile);
     assert.equal(profile.model, 'fixture-a');
     if (process.argv.includes('--switch-model')) {
       const pid = terminal.pid;
-      terminal.write('/model');
-      await delay(200);
-      terminal.write('\r');
+      await sendCommand('/model');
       await until(() => plain(output).includes('Alt+S session-only'), 'seletor nativo de modelo');
       terminal.write('fixture-b');
       await delay(200);
@@ -147,6 +123,10 @@ async function main() {
     assert.equal(requests, 0, 'Nenhum pedido pode ter sido enviado ao provedor fictício.');
     assert.equal(fs.readFileSync(path.join(home, 'config.toml'), 'utf8'), config);
     console.log('PASS perfil somente leitura preservado, sem chamar modelo');
+    await sendCommand('/exit');
+    await until(() => exited, '/exit limpo do CLI', 15000);
+    assertCleanExit({ exited, code, forced });
+    console.log('PASS /exit encerra o diagnóstico com código zero');
     passed = true;
   } finally {
     if (terminal && !exited) {
@@ -155,12 +135,14 @@ async function main() {
       terminal.write('\r');
       for (let i = 0; i < 20 && !exited; i += 1) await delay(150);
       if (!exited) {
+        forced = true;
         // PID exclusivamente do processo de fixture criado acima, sem shell.
         try { execFileSync('taskkill.exe', ['/PID', String(terminal.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch {}
       }
     }
     await host.close();
     await new Promise(resolve => provider.close(resolve));
+    if (requests !== 0) passed = false;
     if (!passed) {
       fs.writeFileSync(path.join(fixture, 'terminal.txt'), plain(output));
       console.error(`Fixture preservada: ${fixture}`);

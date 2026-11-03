@@ -1,6 +1,6 @@
 # Contexto atual do ATLAS
 
-Última revisão: 01/11/2026, sobre a base `6b608ee` e a investigação de compatibilidade do Kimi 2.4.
+Última revisão: 03/11/2026, com contenção e diagnóstico de compatibilidade do Kimi 2.4.
 
 Este arquivo descreve **o que existe hoje**. Ele é reescrito a cada marco: não acrescente diário aqui. A história de como chegamos até este ponto fica em `docs/historico/`. O que vem depois fica em `docs/ROADMAP.md`.
 
@@ -91,9 +91,9 @@ A CI (`.github/workflows/ci.yml`) roda Verify em Ubuntu e Windows, mais o job Pa
   - Uma pasta fora das raízes autorizadas, como a worktree de uma tarefa ao lado do repositório, ainda espera a varredura inicial completa.
 - **Intermitências abertas:**
   - O NSIS silencioso deu access violation (`0xC0000005`) uma vez no runner.
-  - O `test:desktop` deu `CDP timeout` em `Page.captureScreenshot` duas vezes, sempre logo após o pop-up "sempre no topo". Na segunda, a tela estava correta e a captura de falha funcionou um segundo depois. Hipótese: a janela principal encoberta deixa de produzir quadros pela detecção de oclusão do Windows. O `scripts/smoke-app.cjs` desliga `CalculateNativeWinOcclusion` só no smoke; se voltar a ocorrer, a hipótese está errada.
+  - O `test:desktop` voltou a ter `CDP timeout` em `Page.captureScreenshot` mesmo com `CalculateNativeWinOcclusion` desligado no smoke. O diagnóstico mostrou o renderer oculto; a hipótese de oclusão sozinha era insuficiente. Cada captura agora restaura/foca a janela correta e exige visibilidade e um frame antes de capturar, sem retry ou timeout maior. Também houve digitação corrompida no PowerShell entre comandos; o smoke aguarda o próximo prompt antes de consultar dimensões. Acompanhar novas ocorrências sem declarar ausência de intermitência.
   - Se repetirem, investigue em vez de reexecutar.
-- **Kimi Code 2.4.0/2.4.1: integração oficial pendente.** O SDK perde o perfil explícito e vincula o padrão com ferramentas de escrita; conexões MCP anteriores à criação da sessão também são transitórias. Um patch experimental do SDK e do lançamento interativo preservou o perfil de leitura, a ponte e a troca de modelo em TUI real, sem API, numa cópia compilada em TEMP. O patch e sua regressão estão em `docs/diagnosticos/patches/`; não foram instalados no CLI do usuário. As versões oficiais afetadas continuam recusadas para novas runs da principal antes de token/PTY/persistência; histórico e agentes manuais permanecem disponíveis. O `smoke:agent` completo com uma distribuição corrigida continua pendente, e a troca de modelo da principal Kimi segue desabilitada. Reprodução e limites: `docs/diagnosticos/KIMI_2_4_MCP.md`. O OpenCode não é afetado.
+- **Kimi Code 2.4.0/2.4.1: integração oficial pendente, contenção implementada.** O SDK perde o perfil explícito e vincula o padrão com ferramentas de escrita; conexões MCP anteriores à criação da sessão também são transitórias. O candidato temporário `2.4.1+atlas-profile-fix.1`, com patch do SDK, passou no diagnóstico nativo e no smoke completo: perfil de leitura e ferramentas ATLAS, troca de modelo na mesma sessão/run/PTY, pedidos, worktree, revogação e reinício, sem API. O painel de informar modelo também foi exercitado numa sessão manual em execução. O patch e sua regressão estão em `docs/diagnosticos/patches/`; o candidato não foi instalado no CLI do usuário. As versões oficiais afetadas continuam recusadas para novas runs da principal antes de token/PTY/persistência; histórico e agentes manuais permanecem disponíveis. Uma distribuição oficial corrigida ainda precisa ser validada antes de liberar a principal Kimi e seu botão de troca. Reprodução e limites: `docs/diagnosticos/KIMI_2_4_MCP.md`. O OpenCode não é afetado.
 - O token MCP fica no ambiente do processo do agente: a fronteira de confiança é o usuário local.
 - O agente não é avisado de ofertas fora das ferramentas e precisa consultar `handoffs_pending`.
 - O modo Foco não desconta a altura dos avisos do workspace.
