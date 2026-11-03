@@ -61,7 +61,7 @@ O comando é do usuário e é tratado como se ele o digitasse num terminal:
 
 - A evidência nova tem `kind = 'regression_run'` e `source = 'system'`. A migration 13 reconstrói a tabela `evidence` para ampliar o `CHECK` e preserva os dados, com teste de migração.
 - Estados possíveis: `queued`, `running`, `passed` (exit 0), `failed` (exit diferente de 0), `timeout`, `cancelled` (parada pelo usuário), `error` (o shell não iniciou), `interrupted` (o ATLAS fechou durante a execução, marcado pela reconciliação no início seguinte) e `skipped` (sem worktree).
-- O payload traz o comando efetivo, o exit code, a duração, o trecho final do log, o caminho e o SHA-256 do log completo, o total de bytes, se houve corte e o `HEAD` em que rodou.
+- O trecho final do log fica só em `regression_runs` e é lido sob demanda (`regression-run:get`). A evidência é carregada a cada atualização da lista de tarefas, por isso não leva o trecho (ajuste da fase 1). O payload traz o comando efetivo, o exit code, a duração, o caminho e o SHA-256 do log completo, o total de bytes, se houve corte e o `HEAD` em que rodou.
 - **A suíte alterou a worktree?** O ATLAS coleta o retrato Git de novo depois da execução. Se ele diferir do retrato da revisão, a evidência mostra "a suíte alterou a worktree". Nesse caso, o aceite já recusa por causa da regra atual, e a mensagem passa a explicar o motivo.
 - **Arquivos de teste alterados pelo agente:** o agente pode, por exemplo, mudar o script `test` do `package.json`, configs de Vitest, Jest ou Playwright, ou arquivos `*.test.*`. Quando o diff da revisão toca arquivos assim, a evidência mostra um aviso com a lista. Um verde nessas condições não deve ser lido como garantia.
 

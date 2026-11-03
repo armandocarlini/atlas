@@ -44,6 +44,7 @@ function createTaskReview({ db, now, event, transaction, requireClaim, getTask }
   }
 
   return {
+    recordEvidence,
     getReview,
     listReviews: (projectId) => db.prepare(`${REVIEW_SELECT} WHERE r.project_id = ? ORDER BY r.created_at, r.id`).all(projectId).map((row) => ({ ...row })),
     listEvidence: (projectId) => db.prepare('SELECT * FROM evidence WHERE project_id = ? ORDER BY created_at, rowid').all(projectId).map(evidenceRow),
