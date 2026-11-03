@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { createProjectHost } = require('./project-host.cjs');
@@ -15,6 +15,8 @@ const { createAgentFunctionHost } = require('./agent-function-host.cjs');
 const { createOpenPathHost } = require('./open-path-host.cjs');
 const { createExplorerIntegration, createExplorerHost } = require('./explorer-integration.cjs');
 const { ensureOrchestratorProfile } = require('./orchestrator-profile.cjs');
+const { createRegressionRunner } = require('./regression-runner.cjs');
+const { createRegressionSuiteHost } = require('./regression-suite-host.cjs');
 
 let mainWindow = null;
 let panelWindow = null;
@@ -23,6 +25,7 @@ let ptyTransport = null;
 let boundsSaveTimer = null;
 let operationalStore = null;
 let mcpHost = null;
+let regressionRunner = null;
 const terminalWindows = new Map();
 
 const stateFile = () => path.join(app.getPath('userData'), 'atlas-window-state.json');
@@ -235,6 +238,7 @@ app.on('second-instance', (_event, argv) => {
 app.whenReady().then(async () => {
   operationalStore = createOperationalStore({ filename: path.join(app.getPath('userData'), 'atlas.sqlite') });
   operationalStore.reconcileRuns();
+  operationalStore.reconcileRegressionRuns();
   // Cada projeto avisa a interface quando a varredura dele termina.
   projectHost = createProjectHost({
     app, dialog, ipcMain, getMainWindow, store: operationalStore,
@@ -295,6 +299,10 @@ app.whenReady().then(async () => {
   createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
   createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
   createAgentFunctionHost({ ipcMain, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: () => sendToMain('agent-function:changed', {}) });
+  // Logs da suíte fora do banco e do Git; só o usuário configura e para.
+  const regressionLogs = path.join(app.getPath('userData'), 'regression-logs');
+  regressionRunner = createRegressionRunner({ store: operationalStore, logsDir: regressionLogs, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
+  createRegressionSuiteHost({ ipcMain, projectHost, store: operationalStore, runner: regressionRunner, logsDir: regressionLogs, shell, isMainSender: terminalHost.isMainSender, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
   createMainWindow();
   openPathHost = createOpenPathHost({
     ipcMain,
@@ -327,6 +335,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   ptyTransport?.killAll();
+  regressionRunner?.shutdown();
   mcpHost?.close();
   closeOperationalStore(operationalStore, (error) => console.error('Não foi possível registrar a interrupção das runs do ATLAS:', error));
 });

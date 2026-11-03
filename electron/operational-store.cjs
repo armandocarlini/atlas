@@ -5,6 +5,7 @@ const { DatabaseSync, backup } = require('node:sqlite');
 const { createTaskDelegation } = require('./task-delegation.cjs');
 const { createTaskReview } = require('./task-review.cjs');
 const { createAgentFunctions, SLUG_PATTERN } = require('./agent-functions.cjs');
+const { createRegressionSuites } = require('./regression-suite.cjs');
 
 const MIGRATIONS = [{
   version: 1,
@@ -221,6 +222,45 @@ const MIGRATIONS = [{
   sql: `
     ALTER TABLE agent_runs ADD COLUMN current_model TEXT;
   `,
+}, {
+  // Suíte de regressão (v0.2): configuração por projeto, só do usuário, e uma
+  // execução por revisão. A evidência ganha o tipo `regression_run`: o SQLite não
+  // altera CHECK, então a tabela é reconstruída preservando linhas e ordem.
+  version: 13,
+  sql: `
+    CREATE TABLE regression_suites (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id),
+      enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+      command TEXT NOT NULL CHECK(length(command) BETWEEN 1 AND 300),
+      timeout_seconds INTEGER CHECK(timeout_seconds IS NULL OR timeout_seconds BETWEEN 60 AND 86400),
+      version INTEGER NOT NULL, updated_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE regression_runs (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      task_id TEXT NOT NULL REFERENCES tasks(id), review_id TEXT NOT NULL REFERENCES reviews(id),
+      state TEXT NOT NULL CHECK(state IN ('queued', 'running', 'passed', 'failed', 'timeout', 'cancelled', 'error', 'interrupted', 'skipped')),
+      command TEXT NOT NULL, timeout_seconds INTEGER, worktree_path TEXT,
+      cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
+      exit_code INTEGER, log_path TEXT, log_bytes INTEGER, log_sha256 TEXT,
+      log_truncated INTEGER CHECK(log_truncated IS NULL OR log_truncated IN (0, 1)), log_tail TEXT, error TEXT,
+      created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, version INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX regression_runs_by_project ON regression_runs(project_id, created_at);
+    CREATE UNIQUE INDEX one_regression_run_per_review ON regression_runs(review_id);
+    CREATE TABLE evidence_v13 (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      task_id TEXT NOT NULL REFERENCES tasks(id), review_id TEXT REFERENCES reviews(id),
+      kind TEXT NOT NULL CHECK(kind IN ('agent_report', 'git_snapshot', 'regression_run')),
+      source TEXT NOT NULL CHECK(source IN ('agent', 'system')),
+      session_id TEXT REFERENCES sessions(id), run_id TEXT REFERENCES agent_runs(id),
+      payload TEXT NOT NULL CHECK(json_valid(payload)), created_at TEXT NOT NULL
+    ) STRICT;
+    INSERT INTO evidence_v13 (id, project_id, task_id, review_id, kind, source, session_id, run_id, payload, created_at)
+      SELECT id, project_id, task_id, review_id, kind, source, session_id, run_id, payload, created_at FROM evidence ORDER BY rowid;
+    DROP TABLE evidence;
+    ALTER TABLE evidence_v13 RENAME TO evidence;
+    CREATE INDEX evidence_by_project ON evidence(project_id, created_at);
+  `,
 }];
 
 // Política padrão da v0.1 para pedidos de agente feitos pela sessão principal.
@@ -343,6 +383,8 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   const { loseClaims, requireClaim, ...delegationApi } = delegation;
   const review = createTaskReview({ db, now, event, transaction, requireClaim, getTask: delegation.getTask });
   const agentFunctions = createAgentFunctions({ db, now, transaction });
+  const { recordEvidence, ...reviewApi } = review;
+  const regression = createRegressionSuites({ db, now, event, transaction, recordEvidence });
 
   function finishRun({ runId, expectedVersion, exitCode, signal = null }) {
     if (!Number.isInteger(exitCode) || (signal !== null && !Number.isInteger(signal))) throw new Error('Saída de processo inválida.');
@@ -386,7 +428,8 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     },
     ...delegationApi,
     ...agentFunctions,
-    ...review,
+    ...reviewApi,
+    ...regression,
     sendMessage(request) {
       const payload = messagePayload(request);
       // Ator auditado do comando: o usuário pela interface ou a sessão de agente pela ponte MCP.
@@ -646,6 +689,7 @@ function closeOperationalStore(store, onError = console.error) {
   if (!store || store.closed) return;
   try {
     store.reconcileRuns('application_closed');
+    store.reconcileRegressionRuns('application_closed');
   } catch (error) {
     // Leave active rows for reconciliation on next startup if this write fails.
     onError(error);

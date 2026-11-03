@@ -19,7 +19,7 @@ function createTaskHost({ ipcMain, projectHost, store, isMainSender, onChange = 
 
   ipcMain.handle('task:list', async (event, request) => {
     const project = await projectForRequest(event, request);
-    return { projectId: project.id, projectName: project.name, items: store.listTasks(project.id), handoffs: store.listHandoffs(project.id), reviews: store.listReviews(project.id), evidence: store.listEvidence(project.id) };
+    return { projectId: project.id, projectName: project.name, items: store.listTasks(project.id), handoffs: store.listHandoffs(project.id), reviews: store.listReviews(project.id), evidence: store.listEvidence(project.id), regressionRuns: store.listRegressionRuns(project.id) };
   });
   ipcMain.handle('task:create', async (event, request) => {
     const project = await projectForRequest(event, request);

@@ -1,6 +1,6 @@
 # Contexto atual do ATLAS
 
-Última revisão: 03/11/2026, com contenção e diagnóstico de compatibilidade do Kimi 2.4.
+Última revisão: 03/11/2026, com a fase 1 da suíte de regressão (banco, executor e IPC).
 
 Este arquivo descreve **o que existe hoje**. Ele é reescrito a cada marco: não acrescente diário aqui. A história de como chegamos até este ponto fica em `docs/historico/`. O que vem depois fica em `docs/ROADMAP.md`.
 
@@ -25,6 +25,7 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 | Ponte MCP | Named pipe e token por run. O projeto e a sessão vêm só do token. No Kimi, a entrada vai para o `mcp.json` com consentimento, e o aviso de integração só aparece em projeto com sessão Kimi; no OpenCode, só pela run (`OPENCODE_CONFIG_CONTENT`) | `electron/mcp-host.cjs`, `electron/atlas-mcp-bridge.cjs`, `electron/kimi-mcp-config.cjs`, `src/KimiIntegration.jsx` |
 | Funções de agente (v0.2) | Orquestrador e cinco padrão (planejar, explorar, implementar, revisar, testes), que não se apagam nem se renomeiam, mais as do usuário até 12. Tela "Funções de agente" na barra lateral, com aviso das que faltam configurar. A principal consulta `agent_functions_list` (sem CLI nem modelo), vê a função de cada sessão em `sessions_list` e informa `function` em `agents_request`; o cartão vem preenchido, o usuário troca função, CLI ou modelo, e a run registra a função e se houve troca. A principal é sempre o Orquestrador, preenchida com o que está salvo nele; a sessão manual tem "Usar função"; o card de um agente em execução troca a função (só o rótulo). A auditoria de cada run é calculada no processo principal Recomendações curadas pelo mantenedor em `electron/model-recommendations.json` (vazio por enquanto), aplicadas só com "Usar recomendado" | `electron/agent-functions.cjs`, `electron/agent-function-host.cjs`, `electron/model-recommendations.cjs`, `src/AgentFunctions.jsx` |
 | Troca de modelo (v0.2) | O usuário troca o modelo no terminal do CLI (`/model` + Alt+S no Kimi, `/models` no OpenCode) e informa ao ATLAS em "Trocar modelo" no card. A mesma run guarda o modelo de início e o informado; o card mostra "informado por você". O ATLAS não digita no terminal. Na principal, liberado só no OpenCode, verificado pelo `smoke:opencode` (mesma run, ponte conectada, somente leitura) | `src/ModelSwitch.jsx`, `src/model-switch.js`, `electron/agent-host.cjs` |
+| Suíte de regressão (v0.2, fase 1 de 4) | Banco, executor e IPC prontos; ainda **não é disparada** pelo pedido de revisão nem tem tela (fases 2 e 3). O usuário configura por projeto o comando e o prazo (1 min a 24 h, ou sem prazo; sem padrão). Uma execução por vez, no shell do sistema, na worktree, sem credenciais do ATLAS no ambiente. Log completo em arquivo, com teto de segurança de 1 GB marcado no próprio log. Prazo, parada pelo usuário, erro e fechamento do ATLAS nunca viram `passed`; o que estava rodando vira `interrupted` no início seguinte, sem repetir | `electron/regression-suite.cjs`, `electron/regression-runner.cjs`, `electron/regression-suite-host.cjs` |
 | Pedidos de agente | A principal pede com `agents_request`, e o usuário aprova no cartão. Modo assistido: profundidade 1, até 3 pendentes, validade de 15 min, até 2 ativos | `electron/agent-request-host.cjs`, `src/AgentRequests.jsx` |
 | Tarefas | Criadas pelo usuário em `backlog`. Delegação por handoff com claim e `claim_epoch` (fencing); o fim da run tira o claim | `electron/task-host.cjs`, `electron/task-delegation.cjs`, `src/PersistentTasks.jsx` |
 | Mensagens | Descobertas estruturadas entre sessões, com entrega e leitura persistidas. **Nunca** digitadas no terminal do destinatário | `electron/message-host.cjs`, `src/SessionMessages.jsx` |
@@ -54,8 +55,9 @@ As migrations são numeradas e nunca editadas depois de integradas:
 10. funções de agente (Orquestrador e as cinco padrão semeadas, sem CLI nem modelo) e a função de cada run
 11. função indicada pela principal no pedido de agente
 12. modelo atual informado pelo usuário depois de trocar no CLI (`current_model`; `model` continua sendo o de início)
+13. suíte de regressão: configuração por projeto (`regression_suites`), uma execução por revisão (`regression_runs`) e a evidência `regression_run` (a tabela `evidence` foi reconstruída para ampliar o `CHECK`, preservando linhas e ordem)
 
-Comandos de escrita levam chave de idempotência e hash do payload. O banco fica no perfil do app, e nenhum transcript, prompt ou saída de PTY é gravado.
+Comandos de escrita levam chave de idempotência e hash do payload. O banco fica no perfil do app, e nenhum transcript, prompt ou saída de PTY é gravado. A saída da suíte de regressão vai para arquivos em `<userData>/regression-logs/<projeto>/`; o banco guarda só o caminho, o tamanho, o SHA-256 e o trecho final (até 64 KB), lido sob demanda.
 
 ## Regras que não podem ser quebradas
 
