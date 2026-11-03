@@ -41,14 +41,14 @@ function createRegressionSuites({ db, now, event, transaction, recordEvidence })
   // Fecha a execução e grava a evidência imutável com o resultado final. O trecho
   // do log fica só em `regression_runs`: a evidência vai inteira em cada
   // atualização da lista de tarefas, e o trecho é lido sob demanda.
-  function finish(run, { state, exitCode = null, logBytes = null, logSha256 = null, logTruncated = null, logTail = null, error = null }, at) {
+  function finish(run, { state, exitCode = null, logBytes = null, logSha256 = null, logTruncated = null, logTail = null, error = null, worktreeChanged = null, testFiles = null }, at) {
     db.prepare(`UPDATE regression_runs SET state = ?, exit_code = ?, log_bytes = ?, log_sha256 = ?, log_truncated = ?, log_tail = ?, error = ?,
       finished_at = ?, version = version + 1 WHERE id = ?`)
       .run(state, exitCode, logBytes, logSha256, logTruncated === null ? null : Number(logTruncated), logTail, error, at, run.id);
     const durationMs = run.startedAt ? Date.parse(at) - Date.parse(run.startedAt) : null;
     recordEvidence({
       projectId: run.projectId, taskId: run.taskId, reviewId: run.reviewId, kind: 'regression_run', source: 'system',
-      payload: { regressionRunId: run.id, state, command: run.command, timeoutSeconds: run.timeoutSeconds, exitCode, durationMs, logPath: run.logPath, logBytes, logSha256, logTruncated, error },
+      payload: { regressionRunId: run.id, state, command: run.command, timeoutSeconds: run.timeoutSeconds, exitCode, durationMs, logPath: run.logPath, logBytes, logSha256, logTruncated, error, worktreeChanged, testFiles },
       at,
     });
     event({ projectId: run.projectId, type: 'regression.finished', payload: { regressionRunId: run.id, reviewId: run.reviewId, state, exitCode }, correlationId: run.reviewId, at });

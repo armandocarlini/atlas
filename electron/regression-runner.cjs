@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { spawn, execFile } = require('node:child_process');
+const gitEvidence = require('./git-evidence.cjs');
 
 // Executor da suíte de regressão: uma execução por vez, na worktree da tarefa,
 // com o comando que o usuário configurou. O log completo vai para um arquivo;
@@ -46,10 +47,57 @@ function readableTail(buffer) {
     .replace(/\p{Cf}|[^\P{Cc}\n\t]/gu, '');
 }
 
+// Arquivos que definem ou contêm os testes. Se o diff da tarefa toca algum, um
+// verde não é garantia: o agente pode ter mudado o que a suíte verifica.
+const TEST_PATTERNS = [
+  /(^|\/)package\.json$/i,
+  /(^|\/)(__tests__|__mocks__|tests?|specs?|e2e)\//i,
+  /\.(test|spec)\.[^/]+$/i,
+  /(^|\/)test_[^/]+\.py$/i,
+  /_test\.(go|py)$/i,
+  /(^|\/)(vitest|vite|jest|playwright|karma|cypress|ava|babel)\.config\.[^/]+$/i,
+  /(^|\/)\.mocharc(\.[^/]+)?$/i,
+  /(^|\/)(conftest\.py|pytest\.ini|tox\.ini|setup\.cfg|pyproject\.toml|Cargo\.toml|go\.mod)$/i,
+];
+const MAX_LISTED_FILES = 50;
+
+function testRelatedFiles(paths) {
+  return paths.filter((item) => TEST_PATTERNS.some((pattern) => pattern.test(item.replace(/\\/g, '/'))));
+}
+
+// Verificações em volta da execução, com o Git do próprio ATLAS. Falha de leitura
+// vira `null` (não verificado), nunca "sem alteração".
+function gitChecks({ store, collectGitEvidence = gitEvidence.collectGitEvidence, collectChangedPaths = gitEvidence.collectChangedPaths }) {
+  const worktreeOf = (run) => store.listWorktrees(run.projectId).find((item) => item.taskId === run.taskId);
+  return {
+    async before(run) {
+      const worktree = worktreeOf(run);
+      if (!worktree) return { testFiles: null };
+      try {
+        const files = testRelatedFiles(await collectChangedPaths(worktree));
+        return { testFiles: { total: files.length, files: files.slice(0, MAX_LISTED_FILES) } };
+      } catch {
+        return { testFiles: null };
+      }
+    },
+    async after(run) {
+      const worktree = worktreeOf(run);
+      const reviewed = store.listEvidence(run.projectId).find((item) => item.reviewId === run.reviewId && item.kind === 'git_snapshot')?.payload;
+      if (!worktree || !reviewed || reviewed.unavailable) return { worktreeChanged: null };
+      try {
+        return { worktreeChanged: gitEvidence.snapshotChanged(reviewed, await collectGitEvidence(worktree)) };
+      } catch {
+        return { worktreeChanged: null };
+      }
+    },
+  };
+}
+
 function createRegressionRunner({
   store, logsDir, onChange = () => {}, env = process.env, platform = process.platform,
   spawnImpl = spawn, killTree = defaultKillTree, maxLogBytes = MAX_LOG_BYTES, tailBytes = TAIL_BYTES, onError = console.error,
   secondMs = 1000, // testes encurtam o prazo sem mudar a regra de 1 minuto a 24 horas
+  checks = gitChecks({ store }),
 }) {
   let current = null;
   let stopped = false;
@@ -71,10 +119,10 @@ function createRegressionRunner({
     notify(projectId);
   }
 
-  function execute(queued) {
+  async function execute(queued) {
     const logPath = logPathFor(queued);
     const run = store.startRegressionRun({ id: queued.id, logPath });
-    if (!run) return Promise.resolve();
+    if (!run) return;
     notify(run.projectId);
     let fd;
     try {
@@ -82,10 +130,12 @@ function createRegressionRunner({
       fd = fs.openSync(logPath, 'wx');
     } catch (error) {
       finish(run.id, run.projectId, { state: 'error', error: `Não foi possível criar o arquivo de log: ${error.code || error.message}.` });
-      return Promise.resolve();
+      return;
     }
+    // O diff que a revisão mostra, antes de a suíte poder mexer na worktree.
+    const before = await checks.before(run).catch(() => ({ testFiles: null }));
 
-    return new Promise((resolve) => {
+    const result = await new Promise((resolve) => {
       const hash = createHash('sha256');
       let tail = Buffer.alloc(0);
       let total = 0;
@@ -134,7 +184,7 @@ function createRegressionRunner({
         clearTimeout(drain);
         try { fs.closeSync(fd); } catch (error) { writeError ||= error; }
         if (stopped) {
-          resolve();
+          resolve(null);
           return;
         }
         const cancelled = store.getRegressionRun(run.id)?.cancelRequested;
@@ -145,8 +195,7 @@ function createRegressionRunner({
         else if (cancelled) result = { state: 'cancelled', exitCode, error: 'Parada pelo usuário.' };
         else if (timedOut) result = { state: 'timeout', exitCode, error: `Prazo de ${run.timeoutSeconds} s esgotado.` };
         else result = { state: exitCode === 0 ? 'passed' : 'failed', exitCode };
-        finish(run.id, run.projectId, { ...logs, ...result });
-        resolve();
+        resolve({ ...logs, ...result });
       }
 
       const shell = shellInvocation(run.command, platform, env);
@@ -179,6 +228,9 @@ function createRegressionRunner({
         }, run.timeoutSeconds * secondMs);
       }
     });
+    if (!result || stopped) return;
+    const after = await checks.after(run).catch(() => ({ worktreeChanged: null }));
+    finish(run.id, run.projectId, { ...result, ...before, ...after });
   }
 
   // Processa a fila até esvaziar; chamadas concorrentes reaproveitam o mesmo ciclo.
@@ -216,4 +268,4 @@ function createRegressionRunner({
   };
 }
 
-module.exports = { createRegressionRunner, suiteEnv, shellInvocation, readableTail, TAIL_BYTES, MAX_LOG_BYTES };
+module.exports = { createRegressionRunner, gitChecks, testRelatedFiles, suiteEnv, shellInvocation, readableTail, TAIL_BYTES, MAX_LOG_BYTES };

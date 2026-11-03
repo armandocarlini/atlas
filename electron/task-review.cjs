@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const { snapshotChanged } = require('./git-evidence.cjs');
 
 // Revisão e conclusão de tarefas (marco 5a). O responsável pede revisão com uma
 // declaração (resumo e comandos com exit code); o ATLAS anexa o retrato Git que
@@ -88,9 +89,13 @@ function createTaskReview({ db, now, event, transaction, requireClaim, getTask }
           let acceptedHeadCommit = null;
           if (reviewed && !reviewed.unavailable) {
             if (!currentGit || currentGit.unavailable) throw new Error('Não foi possível conferir a worktree agora. Tente de novo ou peça ajustes.');
-            const changed = currentGit.headCommit !== reviewed.headCommit || currentGit.uncommittedFiles !== reviewed.uncommittedFiles
-              || JSON.stringify(currentGit.diff) !== JSON.stringify(reviewed.diff);
-            if (changed) throw new Error(`A worktree mudou desde o pedido de revisão (HEAD ${String(reviewed.headCommit).slice(0, 8)} → ${String(currentGit.headCommit).slice(0, 8)}). Peça ajustes para o agente pedir nova revisão.`);
+            if (snapshotChanged(reviewed, currentGit)) {
+              // Se a própria suíte alterou a worktree (arquivos gerados pelos testes), diga isso.
+              const suite = db.prepare("SELECT payload FROM evidence WHERE review_id = ? AND kind = 'regression_run'").get(review.id);
+              const bySuite = suite && JSON.parse(suite.payload).worktreeChanged === true
+                ? ' A suíte de regressão alterou a worktree ao rodar (por exemplo, arquivos gerados pelos testes); confira o log.' : '';
+              throw new Error(`A worktree mudou desde o pedido de revisão (HEAD ${String(reviewed.headCommit).slice(0, 8)} → ${String(currentGit.headCommit).slice(0, 8)}).${bySuite} Peça ajustes para o agente pedir nova revisão.`);
+            }
             acceptedHeadCommit = currentGit.headCommit;
           }
           db.prepare("UPDATE reviews SET state = 'accepted', decided_at = ?, decided_by = 'user', note = ?, version = version + 1 WHERE id = ?").run(at, text || null, review.id);

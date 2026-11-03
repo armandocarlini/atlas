@@ -181,7 +181,7 @@ test('ponte real: agente pede revisão de forma assíncrona com retrato coletado
   assert.equal(snapshot.payload.headCommit, 'ccccccc');
   const listed = (await principal.call('tasks_list', {})).value.tasks[0];
   assert.equal(listed.state, 'in_review');
-  assert.deepEqual(listed.lastReview, { id: asked.value.reviewId, state: 'pending', note: null });
+  assert.deepEqual(listed.lastReview, { id: asked.value.reviewId, state: 'pending', note: null, regression: null });
 });
 
 test('falha na leitura Git vira evidência honesta de indisponibilidade', async (t) => {

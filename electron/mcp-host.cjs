@@ -174,7 +174,7 @@ function agentIdempotencyKey(sessionId, key) {
   return `s${createHash('sha256').update(sessionId).digest('hex').slice(0, 12)}-${key}`;
 }
 
-function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange = () => {}, onAgentRequest = () => {}, onTaskChange = () => {}, helloTimeoutMs = HELLO_TIMEOUT_MS, collectGitEvidence = gitEvidence.collectGitEvidence }) {
+function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange = () => {}, onAgentRequest = () => {}, onTaskChange = () => {}, onReviewRequested = () => null, helloTimeoutMs = HELLO_TIMEOUT_MS, collectGitEvidence = gitEvidence.collectGitEvidence }) {
   const grants = new Map();
   const sockets = new Set();
   let server = null;
@@ -257,6 +257,8 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
     tasks_list(grant) {
       const handoffs = store.listHandoffs(grant.projectId);
       const reviews = new Map(store.listReviews(grant.projectId).map((review) => [review.taskId, review]));
+      // Só o estado da suíte: o comando e o log ficam na interface do usuário.
+      const regression = new Map(store.listRegressionRuns(grant.projectId).map((run) => [run.reviewId, run.state]));
       const open = new Map(handoffs.filter((handoff) => handoff.state === 'offered').map((handoff) => [handoff.taskId, handoff]));
       const closed = new Map(handoffs.filter((handoff) => handoff.state !== 'offered').map((handoff) => [handoff.taskId, handoff]));
       return {
@@ -268,7 +270,7 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
           openHandoff: open.has(id) ? { id: open.get(id).id, toSessionId: open.get(id).toSessionId } : null,
           lastClosedHandoff: closed.has(id) ? { id: closed.get(id).id, toSessionId: closed.get(id).toSessionId, state: closed.get(id).state, reason: closed.get(id).reason } : null,
           mine: assignedSessionId === grant.sessionId,
-          lastReview: reviews.has(id) ? { id: reviews.get(id).id, state: reviews.get(id).state, note: reviews.get(id).note } : null,
+          lastReview: reviews.has(id) ? { id: reviews.get(id).id, state: reviews.get(id).state, note: reviews.get(id).note, regression: regression.get(reviews.get(id).id) ?? null } : null,
         })),
       };
     },
@@ -333,8 +335,19 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
         }
       }
       const review = store.requestReview({ projectId: grant.projectId, taskId, sessionId: grant.sessionId, runId: grant.runId, summary: args.summary, commands: args.commands ?? [], git });
+      // A suíte de regressão do projeto, se o usuário a ligou. Uma falha aqui não
+      // desfaz a revisão já gravada.
+      let regression = null;
+      try {
+        regression = onReviewRequested({ projectId: grant.projectId, taskId, reviewId: review.id, worktreePath: worktree?.path || null }) || null;
+      } catch (error) {
+        console.error('Não foi possível enfileirar a suíte de regressão:', error);
+      }
       onTaskChange(grant.projectId);
-      return { reviewId: review.id, taskId, state: 'in_review', note: 'Revisão pedida. Só o usuário conclui a tarefa ou pede ajustes; acompanhe por tasks_list.' };
+      return {
+        reviewId: review.id, taskId, state: 'in_review', regression: regression?.state ?? null,
+        note: regression ? 'Revisão pedida. O ATLAS roda a suíte de regressão do projeto e anexa o resultado; só o usuário conclui a tarefa ou pede ajustes. Acompanhe por tasks_list.' : 'Revisão pedida. Só o usuário conclui a tarefa ou pede ajustes; acompanhe por tasks_list.',
+      };
     },
     tasks_release(grant, args) {
       const task = store.releaseTask({ projectId: grant.projectId, taskId: text(args.taskId), actor: `agent:${grant.sessionId}`, sessionId: grant.sessionId, runId: grant.runId, reason: args.reason });
