@@ -637,6 +637,35 @@ try {
   await click(main, '.agent-request button', 'Recusar');
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'worktree request rejected');
   console.log('PASS pedido com worktree mostra tarefa e recusa honesta sem repositório Git');
+  // Suíte de regressão configurada pelo usuário na subbarra do projeto. A sugestão
+  // vem do package.json da fixture e só entra no campo pelo botão.
+  fs.writeFileSync(path.join(extraProject, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+  const setField = (selector, value) => main.evaluate(`(() => { const field = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, ${JSON.stringify(value)}); field.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await until(() => main.evaluate(`document.querySelector('.regression-status')?.innerText.includes('desligada')`), 'regression suite status in subbar');
+  await click(main, '.regression-status button', 'Configurar');
+  await until(() => main.evaluate(`Boolean(document.querySelector('.regression-modal [name=command]'))`), 'regression dialog loaded');
+  const suiteDialog = await main.evaluate(`(() => { const dialog = document.querySelector('.regression-modal'); return { modal: dialog.getAttribute('aria-modal'), inDialog: dialog.contains(document.activeElement), command: dialog.querySelector('[name=command]').value, save: dialog.querySelector('button[type=submit]').disabled, checked: [...dialog.querySelectorAll('[name=timeout-mode]')].some(item => item.checked), text: dialog.innerText }; })()`);
+  assert.equal(suiteDialog.modal, 'true');
+  assert(suiteDialog.inDialog, 'Focus moves into the regression dialog');
+  assert.equal(suiteDialog.command, '', 'Suggestion is never filled without the user');
+  assert(suiteDialog.save && !suiteDialog.checked, 'No default timeout: save waits for a choice');
+  assert(suiteDialog.text.includes('com as suas permissões') && suiteDialog.text.includes('Usar sugestão: npm test'), `Dialog warns and offers the suggestion: ${suiteDialog.text}`);
+  await click(main, '.regression-help button', 'Usar sugestão: npm test');
+  await main.evaluate(`document.querySelector('.regression-modal [name=enabled]').click()`);
+  await main.evaluate(`document.querySelector('.regression-modal [name=timeout-mode][value=limit]').click()`);
+  await setField('.regression-modal [name=timeout-amount]', '0');
+  await until(() => main.evaluate(`document.querySelector('.regression-modal .field-error')?.innerText.includes('1 minuto a 24 horas')`), 'invalid timeout explained');
+  assert(await main.evaluate(`document.querySelector('.regression-modal button[type=submit]').disabled`), 'Invalid timeout must not save');
+  await setField('.regression-modal [name=timeout-amount]', '10');
+  await until(() => main.evaluate(`!document.querySelector('.regression-modal button[type=submit]').disabled`), 'valid suite can be saved');
+  const suiteAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(suiteAudit.filter((item) => item.ratio < 4.5).length, 0, `Low contrast in regression dialog: ${JSON.stringify(suiteAudit.filter((item) => item.ratio < 4.5))}`);
+  await screenshot(main, 'regression-suite-dialog');
+  await main.evaluate(`document.querySelector('.regression-modal form').requestSubmit()`);
+  await until(() => main.evaluate(`!document.querySelector('.regression-modal') && document.querySelector('.regression-status')?.innerText.includes('ligada · 10 min')`), 'regression suite saved');
+  const savedSuite = await main.evaluate(`window.atlasDesktop.getRegressionSuite({ cwd: ${JSON.stringify(extraProject)} })`);
+  assert.deepEqual([savedSuite.suite.enabled, savedSuite.suite.command, savedSuite.suite.timeoutSeconds], [true, 'npm test', 600]);
+  console.log('PASS suíte de regressão: diálogo modal, sugestão só por escolha, sem prazo padrão e validação');
   // Revisão semeada como o agente e o host fariam pela ponte MCP; o usuário pede
   // ajustes, recebe nova revisão e conclui. Só a decisão dele leva a done.
   const reviewStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
@@ -645,7 +674,9 @@ try {
   try {
     const offerForReview = reviewStore.offerHandoff({ projectId: extraProjectId, fromSessionId: 'smoke-orchestrator', toSessionId: 'smoke-agente', taskId: offeredTaskId, objective: 'Concluir com revisão.', idempotencyKey: 'smoke-review-offer-01' });
     reviewStore.acceptHandoff({ projectId: extraProjectId, handoffId: offerForReview.id, sessionId: 'smoke-agente', runId: reviewRunId() });
-    reviewStore.requestReview({ projectId: extraProjectId, taskId: offeredTaskId, sessionId: 'smoke-agente', runId: reviewRunId(), summary: 'Regressão escrita e correção aplicada.', commands: [{ command: 'npm test', exitCode: 0 }, { command: 'npm run lint', exitCode: 1 }], git: snapshot });
+    const firstReview = reviewStore.requestReview({ projectId: extraProjectId, taskId: offeredTaskId, sessionId: 'smoke-agente', runId: reviewRunId(), summary: 'Regressão escrita e correção aplicada.', commands: [{ command: 'npm test', exitCode: 0 }, { command: 'npm run lint', exitCode: 1 }], git: snapshot });
+    // Na fila, sem executor notificado: o usuário vai parar antes de começar.
+    reviewStore.enqueueRegressionRun({ projectId: extraProjectId, taskId: offeredTaskId, reviewId: firstReview.id, worktreePath: snapshot.worktreePath });
   } finally {
     reviewStore.close();
   }
@@ -659,6 +690,10 @@ try {
   const reviewAudit = await main.evaluate(`(${auditInterface.toString()})()`);
   assert.equal(reviewAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in task review');
   await screenshot(main, 'task-review');
+  const queuedSuite = await main.evaluate(`document.querySelector('.task-assignment').innerText`);
+  assert(queuedSuite.includes('Suíte de regressão (verificada pelo ATLAS)') && queuedSuite.includes('Na fila') && queuedSuite.includes('Suíte: na fila'), `Queued suite shown in review: ${queuedSuite}`);
+  await click(main, '.regression-evidence button', 'Parar suíte');
+  await until(() => main.evaluate(`document.querySelector('.regression-evidence')?.innerText.includes('Parada por você') && document.querySelector('.review-suite-state')?.innerText === 'Suíte: parada'`), 'queued suite stopped by the user');
   await click(main, '.review-actions button', 'Pedir ajustes');
   await main.evaluate(`(() => { const field = document.querySelector('.review-decision textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, 'Corrigir o lint antes de concluir.'); field.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await click(main, '.review-actions button', 'Enviar pedido de ajustes');
@@ -666,12 +701,26 @@ try {
   const secondReviewStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
   try {
     const runId = secondReviewStore.listRuns(extraProjectId).find((run) => run.session_id === 'smoke-agente' && run.state === 'running').id;
-    secondReviewStore.requestReview({ projectId: extraProjectId, taskId: offeredTaskId, sessionId: 'smoke-agente', runId, summary: 'Lint corrigido.', commands: [{ command: 'npm run lint', exitCode: 0 }], git: { unavailable: 'Tarefa sem worktree registrada pelo ATLAS.' } });
+    const secondReview = secondReviewStore.requestReview({ projectId: extraProjectId, taskId: offeredTaskId, sessionId: 'smoke-agente', runId, summary: 'Lint corrigido.', commands: [{ command: 'npm run lint', exitCode: 0 }], git: { unavailable: 'Tarefa sem worktree registrada pelo ATLAS.' } });
+    // Resultado final como o executor gravaria: vermelho, com arquivos de teste no diff.
+    const suiteRun = secondReviewStore.enqueueRegressionRun({ projectId: extraProjectId, taskId: offeredTaskId, reviewId: secondReview.id, worktreePath: snapshot.worktreePath });
+    secondReviewStore.startRegressionRun({ id: suiteRun.id, logPath: path.join(profile, 'regression-logs', 'fixture.log') });
+    secondReviewStore.finishRegressionRun({ id: suiteRun.id, state: 'failed', exitCode: 1, logBytes: 2048, logSha256: 'ab'.repeat(32), logTruncated: false, logTail: 'not ok 1 - soma\n  expected 2, got 3', worktreeChanged: false, testFiles: { total: 2, files: ['package.json', 'src/soma.test.js'] } });
   } finally {
     secondReviewStore.close();
   }
   await native('send', { channel: 'task:changed', payload: { projectId: extraProjectId } });
   await until(() => main.evaluate(`document.querySelector('.task-assignment')?.innerText.includes('Lint corrigido.')`), 'second review shown');
+  await until(() => main.evaluate(`document.querySelector('.review-suite-state')?.innerText === 'Suíte: falhou (exit 1)'`), 'failed suite next to accept');
+  const failedSuite = await main.evaluate(`document.querySelector('.regression-evidence').innerText`);
+  assert(failedSuite.includes('Falhou (exit 1)') && failedSuite.includes('2 arquivos ligados aos testes') && failedSuite.includes('src/soma.test.js') && failedSuite.includes('2.0 KB'), `Failed suite details: ${failedSuite}`);
+  assert.deepEqual(await main.evaluate(`[...document.querySelectorAll('.regression-evidence button')].map(item => item.textContent)`), ['Mostrar na pasta', 'Abrir log completo']);
+  await main.evaluate(`document.querySelector('.regression-log summary').click()`);
+  await until(() => main.evaluate(`document.querySelector('.regression-log pre')?.textContent.includes('expected 2, got 3')`), 'log tail loaded on demand');
+  const suiteReviewAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(suiteReviewAudit.filter((item) => item.ratio < 4.5).length, 0, `Low contrast in regression evidence: ${JSON.stringify(suiteReviewAudit.filter((item) => item.ratio < 4.5))}`);
+  await screenshot(main, 'task-review-regression');
+  // Só informa: a suíte vermelha não bloqueia o aceite.
   await click(main, '.review-actions button', 'Aceitar e concluir');
   await until(() => main.evaluate(`${queueItem('Delegada aberta')}?.innerText.includes('Concluída') && document.querySelector('.task-assignment')?.innerText.includes('Concluída por você')`), 'task done after user review');
   await click(main, '.inspector-tabs button', 'Evidências');
@@ -680,6 +729,7 @@ try {
   await screenshot(main, 'task-evidence');
   await click(main, '.inspector-tabs button', 'Tarefas');
   console.log('PASS revisão de tarefa: declaração do agente, retrato Git do sistema, ajustes e conclusão só pelo usuário');
+  console.log('PASS suíte na revisão: parar na fila, falha com exit, aviso de arquivos de teste, log sob demanda e aceite livre');
   // "Abrir no ATLAS" por uma segunda instância real, como o Explorador faria.
   const openWith = async (target) => {
     const second = spawn(electron, [path.join(root, 'scripts/smoke-app.cjs'), `--atlas-open=${target}`], { cwd: fixture, env: { ...env, ATLAS_SMOKE_SECOND_INSTANCE: '1' }, stdio: 'ignore', windowsHide: true });
@@ -807,7 +857,9 @@ try {
   assert.deepEqual(delegated.map((item) => [item.state, item.assigned_session_id, item.claim_epoch]), [['done', 'smoke-agente', 1], ['ready', null, 2]]);
   assert.deepEqual(persisted.prepare('SELECT state, resolved_by FROM handoffs ORDER BY created_at, rowid').all().map((item) => [item.state, item.resolved_by]), [['canceled', 'user'], ['accepted', 'agent:smoke-agente'], ['accepted', 'agent:smoke-agente']]);
   assert.deepEqual(persisted.prepare('SELECT state FROM reviews ORDER BY created_at, rowid').all().map((item) => item.state), ['changes_requested', 'accepted']);
-  assert.equal(persisted.prepare("SELECT count(*) AS total FROM evidence WHERE source = 'system'").get().total, 2);
+  assert.deepEqual(persisted.prepare("SELECT kind, count(*) AS total FROM evidence WHERE source = 'system' GROUP BY kind ORDER BY kind").all().map((item) => [item.kind, item.total]), [['git_snapshot', 2], ['regression_run', 2]]);
+  assert.deepEqual(persisted.prepare('SELECT state, exit_code AS exitCode FROM regression_runs ORDER BY created_at, rowid').all().map((item) => [item.state, item.exitCode]), [['cancelled', null], ['failed', 1]]);
+  assert.deepEqual({ ...persisted.prepare('SELECT enabled, command, timeout_seconds AS timeoutSeconds FROM regression_suites').get() }, { enabled: 1, command: 'npm test', timeoutSeconds: 600 });
 } finally {
   persisted.close();
 }

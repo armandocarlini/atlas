@@ -48,6 +48,7 @@ import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './Persiste
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
 import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
 import { AgentRequestsPanel } from './AgentRequests.jsx';
+import { RegressionSuiteModal, RegressionSuiteStatus } from './RegressionSuite.jsx';
 import { AgentFunctionsModal } from './AgentFunctions.jsx';
 import { ModelSwitchModal } from './ModelSwitch.jsx';
 import { canSwitch, modelLabel } from './model-switch.js';
@@ -589,6 +590,8 @@ export default function App() {
   // Escolha do CLI e do modelo da principal: aberta pelo usuário, nunca preenchida.
   const [orchestratorChoice, setOrchestratorChoice] = useState(null);
   const [kimiIntegration, setKimiIntegration] = useState(null);
+  const [regressionSuite, setRegressionSuite] = useState(null);
+  const [regressionModalOpen, setRegressionModalOpen] = useState(false);
   const [integrationModalOpen, setIntegrationModalOpen] = useState(false);
   const [integrationNoticeDismissed, setIntegrationNoticeDismissed] = useState(false);
   const [toolConnections, setToolConnections] = useState({});
@@ -1008,8 +1011,48 @@ export default function App() {
     }
   }
 
-  const persistentTaskPanel = desktop?.isDesktop ? <PersistentTaskPanel state={taskState} onNew={isSecondaryWindow ? undefined : () => setTaskModalOpen(true)} onCancelHandoff={isSecondaryWindow ? undefined : cancelHandoff} onRelease={isSecondaryWindow ? undefined : releaseTask} onDecideReview={isSecondaryWindow ? undefined : decideReview} /> : null;
-  const taskEvidencePanel = desktop?.isDesktop ? <TaskEvidencePanel state={taskState} /> : null;
+  // Suíte de regressão do projeto: configuração na subbarra, execução na revisão.
+  // Só a janela principal configura, para a suíte ou abre o log.
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow || !desktop.getRegressionSuite || !taskState.projectId) {
+      setRegressionSuite(null);
+      return undefined;
+    }
+    let active = true;
+    setRegressionSuite({ projectId: taskState.projectId, loading: true });
+    desktop.getRegressionSuite({ cwd: taskScope.current.cwd }).then((result) => {
+      if (active) setRegressionSuite({ projectId: taskState.projectId, suite: result.suite });
+    }).catch((error) => {
+      if (active) setRegressionSuite({ projectId: taskState.projectId, error: cleanIpcError(error) });
+    });
+    return () => { active = false; };
+  }, [isSecondaryWindow, taskState.projectId]);
+
+  const regressionActions = desktop?.isDesktop && !isSecondaryWindow && desktop.getRegressionRun ? {
+    load: (id) => desktop.getRegressionRun({ cwd: workingDirectory, id }),
+    async cancel(id) {
+      try {
+        await desktop.cancelRegressionRun({ cwd: workingDirectory, id });
+        notify('Suíte de regressão parada');
+        return null;
+      } catch (error) {
+        return cleanIpcError(error);
+      } finally {
+        await reloadTasks();
+      }
+    },
+    async openLog(id, reveal) {
+      try {
+        await desktop.openRegressionLog({ cwd: workingDirectory, id, reveal });
+        return null;
+      } catch (error) {
+        return cleanIpcError(error);
+      }
+    },
+  } : undefined;
+
+  const persistentTaskPanel = desktop?.isDesktop ? <PersistentTaskPanel state={taskState} onNew={isSecondaryWindow ? undefined : () => setTaskModalOpen(true)} onCancelHandoff={isSecondaryWindow ? undefined : cancelHandoff} onRelease={isSecondaryWindow ? undefined : releaseTask} onDecideReview={isSecondaryWindow ? undefined : decideReview} regressionActions={regressionActions} /> : null;
+  const taskEvidencePanel = desktop?.isDesktop ? <TaskEvidencePanel state={taskState} regressionActions={regressionActions} /> : null;
   const sessionMessagesPanel = desktop?.isDesktop ? <SessionMessagesPanel state={messageState} readOnly={isSecondaryWindow} onMarkRead={markMessageRead} /> : null;
 
   useEffect(() => {
@@ -1567,9 +1610,12 @@ export default function App() {
           </div>
           <div className="mission-subbar">
             <div><StatusDot color="#f2994a" /><span>{projectSessions.length} sessões neste projeto</span></div>
-            {desktop?.isDesktop && !isSecondaryWindow && kimiIntegration
-              ? <KimiIntegrationStatus status={kimiIntegration} onManage={() => setIntegrationModalOpen(true)} />
-              : <span>{desktop?.isDesktop ? 'Histórico e sessões locais' : 'Wireframe ilustrativo'}</span>}
+            <div className="mission-subbar-status">
+              {regressionSuite?.projectId === currentProject?.id && <RegressionSuiteStatus suite={regressionSuite} onManage={() => setRegressionModalOpen(true)} />}
+              {desktop?.isDesktop && !isSecondaryWindow && kimiIntegration
+                ? <KimiIntegrationStatus status={kimiIntegration} onManage={() => setIntegrationModalOpen(true)} />
+                : <span>{desktop?.isDesktop ? 'Histórico e sessões locais' : 'Wireframe ilustrativo'}</span>}
+            </div>
           </div>
 
           {/* Avisos ocupam uma única linha da grade; a grade de sessões fica com o espaço restante. */}
@@ -1665,6 +1711,11 @@ export default function App() {
       {functionsOpen && <AgentFunctionsModal desktop={desktop} adapters={adapters} onClose={() => setFunctionsOpen(false)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
       {openFolderRequest && <OpenFolderModal key={openFolderRequest.id} request={openFolderRequest} onAuthorize={authorizeOpenFolder} onCancel={cancelOpenFolder} />}
+      {regressionModalOpen && regressionSuite?.projectId && <RegressionSuiteModal desktop={desktop} cwd={workingDirectory} projectName={taskState.projectName} onClose={() => setRegressionModalOpen(false)} onSaved={(suite) => {
+        setRegressionSuite((current) => current?.projectId === suite.projectId ? { projectId: suite.projectId, suite } : current);
+        setRegressionModalOpen(false);
+        notify(suite.enabled ? 'Suíte de regressão ligada' : 'Suíte de regressão desligada');
+      }} />}
       {taskModalOpen && <NewTaskModal projectName={taskState.projectName} cwd={workingDirectory} onCreate={createTask} onClose={() => setTaskModalOpen(false)} />}
       {integrationModalOpen && kimiIntegration && !kimiIntegration.loading && <KimiIntegrationModal status={kimiIntegration} onInstall={installKimiIntegration} onRemove={removeKimiIntegration} onRefresh={refreshKimiIntegration} onClose={() => setIntegrationModalOpen(false)} />}
       {messageModal && <NewMessageModal projectName={currentProject?.name || activeProject} fromName={messageModal.session.name} toName={projectSessions.find((session) => session.roleKind === 'orchestrator')?.name || 'principal'} onSend={sendDiscovery} onClose={() => setMessageModal(null)} />}
