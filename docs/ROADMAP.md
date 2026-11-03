@@ -44,9 +44,9 @@ Requisito do mantenedor: trocar o modelo de um agente em execução **sem perder
   - nova run com a mesma identidade, mantendo o scrollback anterior visível no card e entregando um resumo (handoff) ao novo modelo.
 - Decidir depois da investigação: o que conta como "não perder". Pode ser só a tela, ou também o contexto da conversa no modelo.
 
-### 3. Suíte de regressão liga/desliga — plano aprovado, fases 1 a 3 entregues
+### 3. Suíte de regressão liga/desliga — entregue
 
-Plano: `docs/planos/PLANO_V0_2_SUITE_DE_REGRESSAO.md`. Escopo escolhido pelo mantenedor em 03/11/2026:
+Plano: `docs/planos/PLANO_V0_2_SUITE_DE_REGRESSAO.md`, entregue nas fases 1 a 4 (PRs #53 a #56). Escopo escolhido pelo mantenedor em 03/11/2026:
 
 - um comando por projeto, informado pelo usuário;
 - roda na worktree da tarefa quando o agente pede revisão, e o resultado vira evidência verificada pelo sistema;

@@ -1,6 +1,6 @@
 # Plano v0.2: suíte de regressão liga/desliga
 
-Situação: **aprovado pelo mantenedor em 03/11/2026**, com o log completo em arquivo e o prazo escolhido pelo usuário. A implementação segue as fases abaixo.
+Situação: **aprovado pelo mantenedor em 03/11/2026**, com o log completo em arquivo e o prazo escolhido pelo usuário. **Entregue** nas quatro fases abaixo (PRs #53 a #56).
 
 Cobre o item 3 do `docs/ROADMAP.md`. As quatro escolhas de escopo foram feitas pelo mantenedor em 03/11/2026:
 
