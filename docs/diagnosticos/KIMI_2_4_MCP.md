@@ -108,3 +108,10 @@ O smoke completo semeia dois modelos fictícios e um provedor HTTP em uma home i
 O diagnóstico isolado também exige saída espontânea com código zero; encerramento forçado apenas limpa uma falha e nunca a transforma em aprovação. O resultado JSON do smoke completo só é publicado depois das verificações e do encerramento do provedor. Uma chamada tardia ao provedor grava falha, preservando eventual erro anterior.
 
 As primeiras execuções integradas encontraram truncamento de apresentação: o diretório não cabia em `/status`, e o rodapé de atalhos não cabia no card. O teste amplia o PTY para conferir o caminho completo e identifica o seletor por seu título e opções; a troca continua comprovada no journal. O diagnóstico isolado também passou a aguardar o eco do comando antes do Enter, evitando que a inicialização agrupe as entradas como uma colagem. Os timeouts anteriores permanecem registrados no PR; não houve aumento dos limites nem retirada de asserções de perfil, modelo ou conexão.
+
+## Estado no fornecedor (verificado em 03/11/2026)
+
+- A última versão estável continua sendo a **2.4.1** (30/10/2026). Há apenas canários da 2.5.0, que não são distribuição oficial para o ATLAS.
+- No `main` do repositório oficial, `doCreateSession` em `packages/node-sdk/src/sdk-rpc-client-v2.ts` ainda não encaminha `agentProfile`/`agentFiles` para sessões locais. A correção ainda não chegou ao código-fonte.
+- O defeito já é conhecido upstream: issues [#2767](https://github.com/MoonshotAI/kimi-code/issues/2767) (TUI ignora `--agent-file` no início) e [#3857](https://github.com/MoonshotAI/kimi-code/issues/3857), e os PRs [#3855](https://github.com/MoonshotAI/kimi-code/pull/3855) e [#2832](https://github.com/MoonshotAI/kimi-code/pull/2832), abertos e aguardando revisão.
+- Próxima verificação: quando sair uma versão estável acima de 2.4.1, rodar `npm run smoke:kimi-profile -- --switch-model` e `npm run smoke:agent` com ela, sem tocar na instalação real. Só depois disso liberar a principal e o botão de troca. Contribuir upstream é decisão do mantenedor.
