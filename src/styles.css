@@ -786,7 +786,7 @@ body { transition: background-color .18s ease, color .18s ease; }
 .evidence-review-state, .evidence-footnote { margin: 0; color: var(--muted); font-size: 12px; }
 .task-modal form > p { font-size: 12px; color: var(--muted); }
 .task-modal textarea { width: 100%; resize: vertical; min-height: 70px; border: 1px solid var(--border); border-radius: 5px; padding: 10px; color: var(--text); background: var(--surface); font: inherit; }
-.integration-status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font: 11px var(--mono); }
+.integration-status, .regression-status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font: 11px var(--mono); }
 .link-button { padding: 2px 4px; border: 0; border-radius: 3px; background: transparent; color: var(--accent-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .link-button:hover { color: var(--text); }
 .link-button:focus-visible, .integration-entry:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
@@ -809,7 +809,7 @@ body { transition: background-color .18s ease, color .18s ease; }
 .button.secondary.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
 .button.secondary.danger:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface-raised)); }
 .session-header .origin-badge.atlas-tools { color: var(--success); }
-.integration-modal:focus { outline: none; }
+.integration-modal:focus, .regression-modal:focus { outline: none; }
 .explorer-integration { display: grid; gap: 10px; }
 .explorer-status { margin: 0; font-size: 12px; color: var(--text); }
 .explorer-integration .integration-path { white-space: pre-wrap; }
@@ -883,3 +883,35 @@ body { transition: background-color .18s ease, color .18s ease; }
 .model-switch-step > button { justify-self: start; }
 .model-switch-warning { margin: 0; padding: 6px 8px; border-left: 3px solid var(--warning); color: var(--text); font-size: 12px; line-height: 1.5; }
 .session-control:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Suíte de regressão (v0.2): configuração na subbarra e resultado na revisão. */
+.mission-subbar-status { display: flex; align-items: center; gap: 16px; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
+.regression-modal { width: min(560px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow-y: auto; }
+.regression-intro { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.modal .regression-switch, .modal .regression-choice { display: flex; align-items: center; gap: 8px; min-height: 32px; color: var(--text); font-size: 12px; cursor: pointer; }
+.modal .regression-switch input, .modal .regression-choice input { width: 16px; height: 16px; flex: none; margin: 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
+.modal .regression-switch input:focus-visible, .modal .regression-choice input:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.regression-help { margin-top: -8px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.regression-help code { font-family: var(--mono); color: var(--text); }
+.regression-timeout { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.regression-timeout legend { margin-bottom: 4px; padding: 0; color: var(--muted); font-size: 12px; }
+.regression-amount { display: grid; grid-template-columns: 110px 130px; gap: 8px; padding-left: 24px; }
+.modal .regression-amount input:disabled, .modal .regression-amount select:disabled { opacity: .55; cursor: not-allowed; }
+.field-error { margin: 0; padding-left: 24px; color: var(--danger); font-size: 11px; }
+.regression-warning { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 8px 10px; border-left: 3px solid var(--warning); color: var(--text); font-size: 12px; line-height: 1.5; }
+.regression-warning svg { flex: none; margin-top: 2px; color: var(--warning); }
+.regression-result { display: grid; gap: 8px; }
+.regression-evidence p { margin: 0; padding: 0; border: 0; background: none; }
+.regression-state { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; }
+.regression-state strong { font-weight: 600; }
+.regression-evidence code { font-family: var(--mono); overflow-wrap: anywhere; }
+.regression-test-files { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border)); border-radius: 5px; }
+.regression-test-files p { margin: 0; padding: 0; border: 0; background: none; }
+.regression-test-files ul { display: grid; gap: 2px; margin: 0; padding-left: 16px; color: var(--text); font-size: 11px; max-height: 160px; overflow-y: auto; }
+.regression-log { border: 1px solid var(--border); border-radius: 5px; background: var(--surface); }
+.regression-log summary { min-height: 32px; display: flex; align-items: center; padding: 0 10px; color: var(--text); font-size: 12px; cursor: pointer; }
+.regression-log summary:focus-visible, .regression-log pre:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.regression-log > p { margin: 0; padding: 0 10px 8px; border: 0; background: none; color: var(--muted); }
+.regression-log pre { max-height: 280px; margin: 0; padding: 8px 10px; overflow: auto; border-top: 1px solid var(--border); color: var(--text); font: 11px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.review-suite-state { margin-right: auto; align-self: center; color: var(--muted); font-size: 12px; }
+.regression-stopping { align-self: center; color: var(--muted); font-size: 12px; }

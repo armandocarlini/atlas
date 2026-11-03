@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import useModalFocus from './useModalFocus.js';
+import { RegressionRunEvidence, regressionLabel } from './RegressionSuite.jsx';
 
 const TASK_STATE_LABELS = {
   backlog: 'Backlog',
@@ -23,9 +24,10 @@ function formatDateTime(iso) {
 }
 
 // Evidências de uma revisão: o que o agente declarou e o que o ATLAS verificou no Git.
-function ReviewEvidence({ evidence }) {
+function ReviewEvidence({ evidence, regressionRun, regressionActions }) {
   const report = evidence.find((item) => item.kind === 'agent_report');
   const snapshot = evidence.find((item) => item.kind === 'git_snapshot');
+  const regression = evidence.find((item) => item.kind === 'regression_run');
   const git = snapshot?.payload;
   return <>
     {report && <div className="handoff-text">
@@ -45,10 +47,11 @@ function ReviewEvidence({ evidence }) {
         <dt>Sem commit</dt><dd className={git.uncommittedFiles ? 'warning-text' : ''}>{git.uncommittedFiles ? `${git.uncommittedFiles} arquivos fora dos commits` : 'nenhum'}</dd>
       </dl>}
     </div>}
+    {(regression || regressionRun) && <RegressionRunEvidence key={regression?.id || regressionRun.id} run={regressionRun} evidence={regression} actions={regressionActions} />}
   </>;
 }
 
-function ReviewDecision({ review, onDecide }) {
+function ReviewDecision({ review, onDecide, regression }) {
   const [mode, setMode] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -72,6 +75,8 @@ function ReviewDecision({ review, onDecide }) {
         <button type="button" className="button primary compact" disabled={busy || !note.trim()} onClick={() => decide('changes')}>{busy ? 'Enviando…' : 'Enviar pedido de ajustes'}</button>
       </div>
     </> : <div className="review-actions">
+      {/* Só informa: a suíte vermelha não bloqueia nem pede confirmação extra. */}
+      {regression && <span className="review-suite-state">Suíte: {regressionLabel(regression.state, regression.exitCode, { short: true })}</span>}
       <button type="button" className="button secondary compact" disabled={busy} onClick={() => setMode('changes')}>Pedir ajustes</button>
       <button type="button" className="button primary compact" disabled={busy} onClick={() => decide('accept')}>{busy ? 'Concluindo…' : 'Aceitar e concluir'}</button>
     </div>}
@@ -81,7 +86,7 @@ function ReviewDecision({ review, onDecide }) {
 
 // Execução atribuída à tarefa: oferta aberta, responsável e bloqueio. Textos
 // escritos por agentes aparecem como texto e identificados como tal.
-function TaskAssignment({ task, handoffs, reviews, evidence, onCancelHandoff, onRelease, onDecideReview }) {
+function TaskAssignment({ task, handoffs, reviews, evidence, regressionRuns, regressionActions, onCancelHandoff, onRelease, onDecideReview }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const related = handoffs.filter((handoff) => handoff.taskId === task.id);
@@ -102,18 +107,21 @@ function TaskAssignment({ task, handoffs, reviews, evidence, onCancelHandoff, on
 
   const review = reviews.filter((item) => item.taskId === task.id).at(-1);
   const reviewEvidence = review ? evidence.filter((item) => item.reviewId === review.id) : [];
+  const regressionRun = review ? regressionRuns.find((item) => item.reviewId === review.id) : undefined;
+  const regressionResult = reviewEvidence.find((item) => item.kind === 'regression_run')?.payload;
+  const regression = regressionResult || regressionRun;
 
   let body;
   if (task.state === 'in_review' && review?.state === 'pending') {
     body = <>
       <p>Revisão pedida por <strong>{review.requesterName}</strong> em {formatDateTime(review.createdAt)}. Confira as evidências e os critérios de aceite.</p>
-      <ReviewEvidence evidence={reviewEvidence} />
-      {onDecideReview && <ReviewDecision key={review.id} review={review} onDecide={onDecideReview} />}
+      <ReviewEvidence evidence={reviewEvidence} regressionRun={regressionRun} regressionActions={regressionActions} />
+      {onDecideReview && <ReviewDecision key={review.id} review={review} onDecide={onDecideReview} regression={regression} />}
     </>;
   } else if (task.state === 'done' && review?.state === 'accepted') {
     body = <>
       <p>Concluída por você em {formatDateTime(review.decidedAt)}, com o trabalho de <strong>{task.assigneeName || 'sessão encerrada'}</strong>.</p>
-      <ReviewEvidence evidence={reviewEvidence} />
+      <ReviewEvidence evidence={reviewEvidence} regressionRun={regressionRun} regressionActions={regressionActions} />
     </>;
   } else if (open) {
     body = <>
@@ -143,12 +151,13 @@ function TaskAssignment({ task, handoffs, reviews, evidence, onCancelHandoff, on
   </section>;
 }
 
-export function PersistentTaskPanel({ state, onNew, onCancelHandoff, onRelease, onDecideReview }) {
+export function PersistentTaskPanel({ state, onNew, onCancelHandoff, onRelease, onDecideReview, regressionActions }) {
   const [selectedId, setSelectedId] = useState(null);
   const selected = state.items.find((task) => task.id === selectedId) || state.items[0];
   const handoffs = state.handoffs || [];
   const reviews = state.reviews || [];
   const evidence = state.evidence || [];
+  const regressionRuns = state.regressionRuns || [];
   return <section className="persistent-tasks" aria-label="Tarefas persistentes do projeto">
     <div className="section-title"><span>TAREFAS DO PROJETO</span>{onNew && <button type="button" className="button secondary compact" disabled={!state.projectId || state.loading} onClick={onNew}>Nova tarefa</button>}</div>
     {state.loading ? <p role="status">Carregando tarefas…</p> : state.error ? <p className="error-note" role="alert">{state.error}</p> : !state.projectId ? <p>Selecione um projeto autorizado.</p> : <>
@@ -161,7 +170,7 @@ export function PersistentTaskPanel({ state, onNew, onCancelHandoff, onRelease, 
           <h2>{selected.title}</h2>
           {selected.description && <p className="task-text">{selected.description}</p>}
           <h3>Critérios de aceite</h3><p className="task-text">{selected.acceptance}</p>
-          <TaskAssignment key={selected.id} task={selected} handoffs={handoffs} reviews={reviews} evidence={evidence} onCancelHandoff={onCancelHandoff} onRelease={onRelease} onDecideReview={onDecideReview} />
+          <TaskAssignment key={selected.id} task={selected} handoffs={handoffs} reviews={reviews} evidence={evidence} regressionRuns={regressionRuns} regressionActions={regressionActions} onCancelHandoff={onCancelHandoff} onRelease={onRelease} onDecideReview={onDecideReview} />
         </article>
       </>}
     </>}
@@ -210,7 +219,7 @@ export function NewTaskModal({ projectName, cwd, onCreate, onClose }) {
 }
 
 // Evidências reais do projeto, agrupadas por revisão, da mais recente para a mais antiga.
-export function TaskEvidencePanel({ state }) {
+export function TaskEvidencePanel({ state, regressionActions }) {
   const reviews = [...(state.reviews || [])].reverse();
   const evidence = state.evidence || [];
   const titleOf = (taskId) => state.items.find((task) => task.id === taskId)?.title || 'Tarefa';
@@ -221,7 +230,7 @@ export function TaskEvidencePanel({ state }) {
       : reviews.map((review) => <article key={review.id} className="evidence-review">
         <h3>{titleOf(review.taskId)}</h3>
         <p className="evidence-review-state">{reviewLabel[review.state] || review.state} · {formatDateTime(review.createdAt)}</p>
-        <ReviewEvidence evidence={evidence.filter((item) => item.reviewId === review.id)} />
+        <ReviewEvidence evidence={evidence.filter((item) => item.reviewId === review.id)} regressionRun={(state.regressionRuns || []).find((item) => item.reviewId === review.id)} regressionActions={regressionActions} />
       </article>)}
     <p className="evidence-footnote">Uma run concluída não marca a tarefa como pronta: só a sua revisão conclui.</p>
   </section>;
