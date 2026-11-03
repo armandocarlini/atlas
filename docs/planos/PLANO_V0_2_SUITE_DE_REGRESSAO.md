@@ -121,5 +121,5 @@ Cada fase é um PR com CI verde em Ubuntu, Windows e Package.
 ## Decisões do mantenedor
 
 1. ~~Aprovar o plano~~: aprovado em 03/11/2026.
-2. ~~Aprovado~~: `tasks_list` informa aos agentes só o **estado** da suíte, sem log (seção 5). A alternativa é não informar nada aos agentes.
+2. Aprovado: `tasks_list` informa aos agentes só o **estado** da suíte, sem log (seção 5).
 3. ~~Prazo padrão de 10 minutos~~: substituído pelo prazo escolhido pelo usuário, sem padrão e com a opção "sem prazo". O teto de segurança de 1 GB por log foi aprovado.
