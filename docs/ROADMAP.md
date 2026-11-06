@@ -76,7 +76,9 @@ Anotações para avaliar mais tarde. Não são plano nem compromisso, e nenhum a
 
 ### Redesign visual do ATLAS
 
-O mantenedor pretende refazer todo o design visual mais adiante, e a direção ainda não está definida. Pontos observados em 27/10/2026, para considerar nessa hora:
+Em andamento, a pedido do mantenedor (06/11/2026). A direção está definida: mármore, marfim e ouro, com a estátua do logo como personagem. Plano em `docs/planos/PLANO_IDENTIDADE_VISUAL.md`. A fase 1 (identidade) foi entregue. As fases 2 e 3 só mudam a interface. As fases 4 (modo Conversa) e 5 (várias equipes por repositório) estão marcadas **[decidir]**.
+
+Pontos observados em 27/10/2026 que continuam valendo:
 
 - **Terminal com a aparência do terminal do sistema.** O processo já é nativo (ConPTY), mas o desenho no xterm.js usa as cores do ATLAS: fundo do tema, cursor e seleção na cor de destaque, paleta ANSI padrão do xterm, fonte 13 com entrelinha 1,25, sem margem interna. Possível caminho: ler, só para leitura, o `settings.json` do Terminal do Windows (fonte, tamanho, esquema de cores, cursor) e cair no padrão do Windows (Cascadia Mono, Campbell) quando ele não existir; copiar e colar como no Windows; cor do ATLAS só na moldura do card.
 - **Abertura sem "resultado incerto".** Hoje o processo morre com o app, e na abertura seguinte a reconciliação marca a run como `lost`. Todo projeto abre no card "Histórico de sessão" com borda de erro e datas em ISO. Possível caminho: registrar o fechamento normal do ATLAS como encerramento, guardar a última tela do terminal e mostrá-la só para leitura, com "Nova execução" no próprio card. Guardar a tela também ajuda o item 2 da v0.2.

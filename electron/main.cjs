@@ -69,7 +69,7 @@ function loadRenderer(window, query = {}) {
 function createSecureWindow(options, query) {
   const window = new BrowserWindow({
     show: false,
-    backgroundColor: '#080a0b',
+    backgroundColor: '#09090a',
     autoHideMenuBar: true,
     ...options,
     webPreferences: {

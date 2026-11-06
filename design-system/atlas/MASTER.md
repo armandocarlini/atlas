@@ -5,22 +5,32 @@
 
 **Project:** ATLAS
 **Category:** Developer Tool / Desktop Cockpit
-**Design Dials:** Variance 3/10 | Motion 1/10 | Density 7/10
+**Design Dials:** Variance 4/10 | Motion 3/10 | Density 7/10
 
 ---
 
 ## Global Rules
 
+### Identidade
+
+O ATLAS tem o titã do logo como personagem: a estátua de mármore que sustenta o globo escuro com órbitas de ouro. A interface usa as mesmas matérias: fundo obsidiana, texto marfim, ouro nas marcas e órbitas.
+
+- **Marca:** `src/assets/atlas-statue.webp`, recorte do logo com fundo transparente, local e sem rede. Aparece na barra de título (`AtlasMark`) e grande na tela do projeto sem sessões (`AtlasWelcome`).
+- **Wordmark:** "ATLAS" em Jost 300, espaçamento de .5em a .6em, sempre em maiúsculas.
+- **Ouro (`--gold`):** marca, rótulos de seção, aba ativa, seleção e órbitas. Não é cor de estado nem de ação.
+- Estilos da identidade ficam em `src/identity.css`, carregado depois de `src/styles.css`.
+
 ### Color Palette
 
 | Role | Default | CSS Variable |
 |------|---------|--------------|
-| Accent/CTA | `#F2994A` | `--accent` |
+| Accent/CTA | `#E6DCC8` (Marfim) | `--accent` |
 | Accent text/focus | Ajustado para leitura em cada fundo | `--accent-text` |
 | On Accent/CTA | Calculado por contraste | `--accent-ink` |
-| Background | `#080A0B`, personalizável | `--bg` |
+| Brand gold | `#C8A76B`, ajustado para 4.5:1 em cada fundo | `--gold` |
+| Background | `#09090A` (Obsidiana), personalizável | `--bg` |
 | Terminal Background | Segue `--bg` | `--terminal-bg` |
-| Foreground | Calculado por contraste | `--text` |
+| Foreground | Marfim `#ECE5D8` ou grafite `#14120F`, por contraste | `--text` |
 | Surface | Derivada de fundo + foreground | `--surface` |
 | Raised Surface | Derivada de fundo + foreground | `--surface-raised` |
 | Hover Surface | Derivada de fundo + foreground | `--surface-hover` |
@@ -30,19 +40,21 @@
 | Warning | `#F2B84B` | `--warning` |
 | Destructive | `#EF6363` | `--danger` |
 
-- Laranja é o destaque padrão; fundo e destaque são independentes.
+- Marfim sobre obsidiana é o padrão. Ouro e Laranja continuam entre os presets; fundo e destaque são independentes.
+- Quem ainda estava no padrão anterior sem nunca ter mudado (Laranja sobre Grafite) passa ao novo padrão. Qualquer outra escolha salva é mantida.
 - Temas claro, escuro e fundo personalizado usam os mesmos tokens em todas as janelas.
 - Verde, âmbar e vermelho comunicam estados, não decoração.
 - Não aplicar a cor de destaque ao conteúdo ANSI dos harnesses.
-- `--accent` permanece a cor escolhida para preenchimentos e marcas. Texto e foco usam `--accent-text` para preservar contraste, inclusive com destaque preto sobre fundo escuro.
-- As cores semânticas são calculadas em `src/appearance.js`. No tema Névoa, o texto de destaque usa `#69472A` sobre a superfície, com contraste de aproximadamente 6,73:1; o preenchimento laranja permanece `#F2994A`.
+- `--accent` é a cor escolhida, exceto quando ela quase some no fundo (contraste abaixo de 1.8:1, como Marfim sobre Papel). Aí só o preenchimento caminha na direção do texto até aparecer (`visibleAccent`); a escolha salva não muda. Texto e foco usam `--accent-text`.
+- As cores semânticas são calculadas em `src/appearance.js`.
 
 ### Typography
 
+- **Marca e títulos:** Jost (variável), empacotada com o app por `@fontsource-variable/jost`. Nada vem da rede.
 - **Interface:** Segoe UI Variable, Segoe UI ou system-ui.
 - **Terminal e metadados técnicos:** Cascadia Code, Cascadia Mono ou Consolas.
-- **Mood:** preciso, funcional, legível e content-first.
-- Usar fontes locais nesta fase, sem depender de Google Fonts ou rede.
+- Rótulos de seção em maiúsculas, 10.5–11px, peso 600, espaçamento .16em, em `--gold`.
+- **Mood:** preciso, sereno, monumental na marca e funcional no trabalho.
 
 ### Spacing
 
@@ -60,10 +72,10 @@
 
 ### Elevation
 
-- Cards do workspace não dependem de sombra para hierarquia.
-- Usar bordas discretas e diferenças de superfície.
-- Sombras ficam reservadas a modais, janelas internas e estados de arraste.
-- Não usar glow, gradientes decorativos ou movimento de hover que desloque o layout.
+- Cartões de sessão: raio de 12px, borda discreta e uma sombra baixa e larga que os separa do fundo sem brilho.
+- Seleção: borda e anel em ouro, além do estado textual.
+- Modais: material elevado (raio de 16px), scrim com desfoque, que vira fundo sólido com `prefers-reduced-transparency`.
+- Gradientes só como luz quente sutil no topo da barra de título e da navegação. Sem glow em controles.
 
 ---
 
@@ -76,7 +88,7 @@
   background: var(--accent);
   color: var(--accent-ink);
   border: 1px solid var(--accent);
-  border-radius: 5px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background-color 180ms ease;
 }
@@ -85,7 +97,7 @@
   background: var(--surface-raised);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 8px;
   cursor: pointer;
 }
 ```
@@ -99,6 +111,8 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 - Cada card oferece Pop-up e Foco; o pop-up permite Reintegrar sem encerrar o processo.
 - O cabeçalho usa uma linha para nome, origem, CLI e ações. Tokens fictícios e metadados redundantes não competem com o terminal.
 - Seleção, foco e estado não dependem apenas de cor.
+- A linha da grade define a altura do cartão: piso de 380px, crescendo para que duas linhas caibam na janela. Cartões não têm altura mínima própria, para nunca se sobreporem. No Foco, o cartão ocupa toda a área.
+- A barra de status inferior foi retirada para dar altura aos terminais; projeto e diretório continuam nas abas e nos cartões.
 
 ### Navegação e painéis
 
@@ -115,7 +129,7 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 8px;
 }
 
 .input:focus-visible {
@@ -144,10 +158,13 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 
 ## Motion
 
-- Microinterações discretas entre 150–200ms, sem animação contínua decorativa.
+- Microinterações entre 150–240ms; pressionar um botão reduz a escala para .97.
+- Modais e toasts chegam como material (opacidade, deslocamento curto e desfoque), sem piscar.
+- A tela do projeto sem sessões tem uma entrada única de cerca de 2s: estátua, órbitas que se desenham, wordmark e texto. Não há animação em loop.
 - Não deslocar componentes em hover.
 - Respeitar `prefers-reduced-motion` e apresentar o estado final imediatamente.
 - Terminal e streams não aguardam transições visuais.
+- Barras de rolagem finas e retas, visíveis só enquanto a área rola (`src/scrollbars.js`).
 
 ---
 
