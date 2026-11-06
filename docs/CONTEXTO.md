@@ -1,6 +1,6 @@
 # Contexto atual do ATLAS
 
-Última revisão: 03/11/2026, com a suíte de regressão da v0.2 entregue (banco, executor, disparo pela revisão, interface e perfil da principal).
+Última revisão: 06/11/2026, com a fase 1 da identidade visual (mármore, marfim e ouro, com a estátua do logo).
 
 Este arquivo descreve **o que existe hoje**. Ele é reescrito a cada marco: não acrescente diário aqui. A história de como chegamos até este ponto fica em `docs/historico/`. O que vem depois fica em `docs/ROADMAP.md`.
 
@@ -33,6 +33,7 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 | Revisão | O agente pede revisão com evidência declarada, e o ATLAS anexa um retrato Git somente leitura e endurecido. Só o usuário conclui (`done`) | `electron/task-review.cjs`, `electron/git-evidence.cjs` |
 | Reinício | Runs ativas viram `lost`, claims caem e aprovações interrompidas viram `failed`. Nada é reaberto sozinho | `electron/operational-store.cjs` |
 | Abrir no ATLAS | `--atlas-open=<pasta>` com instância única. A entrada do Explorador (HKCU) só é gravada com consentimento | `electron/open-path-host.cjs`, `electron/explorer-integration.cjs`, `src/OpenFolder.jsx` |
+| Interface | Identidade mármore, marfim e ouro, com a estátua do logo na barra de título e no projeto sem sessões. Marfim sobre Obsidiana é o padrão; o usuário troca destaque e fundo, e `--gold`, o texto e o preenchimento do destaque se ajustam para continuar legíveis. Jost empacotada, sem rede. A grade de terminais não se sobrepõe: a linha define a altura do cartão. Sem barra de status; rolagem visível só ao rolar. Regras em `design-system/atlas/MASTER.md`; próximas fases em `docs/planos/PLANO_IDENTIDADE_VISUAL.md` | `src/identity.css`, `src/appearance.js`, `src/scrollbars.js`, `src/assets/atlas-statue.webp` |
 | Instalador | NSIS por usuário (`npm run dist:win`), pergunta antes de gravar a entrada do Explorador | `electron-builder.yml`, `scripts/smoke-installer.mjs` |
 
 Ferramentas MCP da ponte: `sessions_list`, `tasks_list`, `messages_unread`, `messages_mark_read`, `messages_send`, `agents_request`, `agents_request_status`, `agent_functions_list`, `tasks_delegate`, `handoffs_cancel`, `handoffs_pending`, `handoffs_accept`, `handoffs_reject`, `tasks_update`, `tasks_release` e `tasks_request_review`. A lista exposta depende do papel da sessão.
