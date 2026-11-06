@@ -6,8 +6,13 @@ export function contrastRatio(first, second) {
   const [light, dark] = [luminance(first), luminance(second)].sort((a, b) => b - a);
   return (light + .05) / (dark + .05);
 }
+// Tinta quente (marfim e grafite) da identidade do ATLAS; o contraste decide qual usar.
+export const INK_DARK = '#14120f';
+export const INK_LIGHT = '#ece5d8';
+// Ouro do logo: marcas, rótulos de seção e estados do Atlas. Ajustado para leitura em cada fundo.
+export const BRAND_GOLD = '#c8a76b';
 export function contrastInk(background) {
-  const choices = ['#111315', '#f5f6f7'];
+  const choices = [INK_DARK, INK_LIGHT];
   const preferred = choices.sort((a, b) => contrastRatio(b, background) - contrastRatio(a, background))[0];
   if (contrastRatio(preferred, background) >= 4.5) return preferred;
   return contrastRatio('#000000', background) > contrastRatio('#ffffff', background) ? '#000000' : '#ffffff';
@@ -20,8 +25,18 @@ export function readableColor(color, backgrounds, minimum = 4.5) {
   }
   return target;
 }
-export function appearanceTokens({ background, color }) {
+// Um destaque quase igual ao fundo (marfim sobre Papel, por exemplo) some nos preenchimentos.
+// Nesse caso o preenchimento escurece ou clareia na direção do texto; a escolha salva continua a mesma.
+export function visibleAccent(color, background, ink = contrastInk(background)) {
+  for (let step = 0; step <= 100; step += 2) {
+    const candidate = mixColor(color, ink, step / 100);
+    if (contrastRatio(candidate, background) >= 1.8) return candidate;
+  }
+  return ink;
+}
+export function appearanceTokens({ background, color: chosen }) {
   const ink = contrastInk(background);
+  const color = visibleAccent(chosen, background, ink);
   const accentInk = contrastInk(color);
   const surface = (amount) => {
     while (amount > 0 && contrastRatio(ink, mixColor(background, ink, amount)) < 4.5) amount -= .005;
@@ -35,12 +50,20 @@ export function appearanceTokens({ background, color }) {
     '--faint': readableColor(mixColor(background, ink, .68), surfaces),
     '--border': mixColor(background, ink, .2), '--border-soft': mixColor(background, ink, .11),
     '--accent': color, '--accent-ink': accentInk,
-    '--accent-bright': mixColor(color, accentInk === '#111315' || accentInk === '#000000' ? '#ffffff' : '#000000', .12),
+    '--accent-bright': mixColor(color, accentInk === INK_DARK || accentInk === '#000000' ? '#ffffff' : '#000000', .12),
     '--accent-soft': `${color}18`,
     '--accent-text': readableColor(color, surfaces, 5.5),
     '--success': readableColor('#4ecb8d', surfaces, 5.5),
     '--warning': readableColor('#f2b84b', surfaces, 5.5),
     '--danger': readableColor('#ef6363', surfaces, 5.5),
     '--review': readableColor('#a685f2', surfaces, 5.5),
+    '--gold': readableColor(BRAND_GOLD, surfaces, 4.5),
+    '--gold-line': `${BRAND_GOLD}4d`,
   };
+}
+
+// Até a identidade nova, o padrão era laranja sobre grafite, gravado a cada abertura.
+// Só quem ficou exatamente nesse padrão passa ao novo; qualquer outra escolha é mantida.
+export function isPreviousDefaultTheme(saved) {
+  return saved?.name === 'Laranja' && saved.color?.toLowerCase() === '#f2994a' && saved.background?.toLowerCase() === '#080a0b';
 }

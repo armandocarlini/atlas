@@ -40,7 +40,7 @@ import {
 } from 'lucide-react';
 import TerminalView from './TerminalView.jsx';
 import GitDiscovery from './GitDiscovery.jsx';
-import { appearanceTokens, contrastInk } from './appearance.js';
+import { appearanceTokens, contrastInk, isPreviousDefaultTheme, visibleAccent } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
 import { agentSession, mergeAgentSessions, sessionExit, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
@@ -61,6 +61,8 @@ function cleanIpcError(error) {
 }
 
 const THEME_PRESETS = [
+  { name: 'Marfim', color: '#e6dcc8' },
+  { name: 'Ouro', color: '#c8a76b' },
   { name: 'Laranja', color: '#f2994a' },
   { name: 'Petróleo', color: '#35b6c9' },
   { name: 'Azul', color: '#5b9cf5' },
@@ -69,18 +71,20 @@ const THEME_PRESETS = [
   { name: 'Vermelho', color: '#ef6363' },
 ];
 const BACKGROUND_PRESETS = [
+  { name: 'Obsidiana', background: '#09090a' },
   { name: 'Grafite', background: '#080a0b' },
   { name: 'Preto', background: '#000000' },
   { name: 'Azul-noturno', background: '#111722' },
   { name: 'Névoa', background: '#eef1f4' },
   { name: 'Papel', background: '#f7f4ed' },
 ];
-const DEFAULT_THEME = { name: 'Laranja', color: '#f2994a', background: '#080a0b' };
+const DEFAULT_THEME = { name: 'Marfim', color: '#e6dcc8', background: '#09090a' };
 const INITIAL_DIRECTORY = 'C:\\projetos\\atlas';
 
 function getInitialTheme() {
   try {
     const saved = JSON.parse(localStorage.getItem('atlas-appearance'));
+    if (isPreviousDefaultTheme(saved)) return DEFAULT_THEME;
     if (saved?.color && /^#[0-9a-f]{6}$/i.test(saved.color)) {
       return { ...DEFAULT_THEME, ...saved, background: /^#[0-9a-f]{6}$/i.test(saved.background) ? saved.background : DEFAULT_THEME.background };
     }
@@ -243,12 +247,23 @@ const missions = [
   { name: 'Release pública', count: 1, color: '#777f86' },
 ];
 
+// A estátua do logo é a marca do ATLAS (imagem em src/assets, sem rede).
 function AtlasMark() {
+  return <span className="atlas-statue-mark" aria-hidden="true" />;
+}
+
+const ORBIT_PATH = 'M0 332a320 92 0 1 0 640 0a320 92 0 1 0-640 0';
+// Projeto sem sessões: o Atlas recebe o usuário. O movimento respeita "reduzir movimento" pelo CSS.
+function AtlasWelcome({ projectName }) {
   return (
-    <div className="atlas-mark" aria-hidden="true">
-      <span />
-      <span />
-      <span />
+    <div className="atlas-welcome">
+      <div className="atlas-welcome-stage" aria-hidden="true">
+        <span className="atlas-statue" />
+        <svg viewBox="0 0 640 955"><g transform="rotate(-14 320 332)"><path d={ORBIT_PATH} /><path d="M70 332a250 66 0 1 0 500 0a250 66 0 1 0-500 0" transform="rotate(36 320 332)" /></g></svg>
+      </div>
+      <div className="atlas-welcome-wordmark" aria-hidden="true">ATLAS</div>
+      <h2>Nenhuma sessão em {projectName}</h2>
+      <p>Abra um terminal ou uma sessão de agente. Nenhum agente começa sem a sua confirmação, e é você quem escolhe o CLI e o modelo.</p>
     </div>
   );
 }
@@ -330,7 +345,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
             <p>{session.status}. Nenhum processo está conectado.</p>
             <p>O conteúdo do terminal não foi salvo. Abra uma nova sessão para continuar o trabalho.</p>
             <dl><dt>Diretório</dt><dd>{session.worktree}</dd><dt>Início</dt><dd>{session.createdAt}</dd><dt>Fim registrado</dt><dd>{session.endedAt || 'sem confirmação'}</dd></dl>
-          </div> : session.ptyId ? <TerminalView terminalId={session.ptyId} desktop={desktop} theme={{ ...theme, ink: getAccentInk(theme.background) }} onExit={(exit) => onExit(session.id, { ...exit, ptyId: session.ptyId })} /> : <>
+          </div> : session.ptyId ? <TerminalView terminalId={session.ptyId} desktop={desktop} theme={{ ...theme, color: visibleAccent(theme.color, theme.background), ink: getAccentInk(theme.background) }} onExit={(exit) => onExit(session.id, { ...exit, ptyId: session.ptyId })} /> : <>
             <div className="terminal-lines">
               <HarnessIntro harness={harness} session={session} />
               {[...session.lines, ...localLines].map((line, index) => (
@@ -1628,7 +1643,8 @@ export default function App() {
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice && <div className="scope-note orchestrator-choice-note" role="status"><span>A sessão principal deste projeto ainda não foi iniciada. Escolha o CLI e o modelo que vão planejar e delegar.</span><button className="button primary compact" onClick={() => openOrchestratorChoice()}>Escolher agente</button></div>}
           </div>
 
-          <div className={`session-grid ${focusId ? 'focus-mode' : ''}`}>
+          <div className={`session-grid ${focusId ? 'focus-mode' : ''} ${!focusId && !visibleSessions.length ? 'is-empty' : ''}`}>
+            {!focusId && !visibleSessions.length && <AtlasWelcome projectName={desktop?.isDesktop ? currentProject?.name || activeProject : activeMission} />}
             {visibleSessions.map((session) => <SessionCard
               key={session.id}
               session={session}
@@ -1669,11 +1685,6 @@ export default function App() {
           style={getColumnStyle('right')}
         />}
       </div>
-
-      <footer className="statusbar">
-        <div><span className="statusbar-brand"><AtlasMark />{activeProject}</span><span><GitBranch size={11} />{worktreeOptions.find((item) => item.path === selectedWorktree)?.branch || 'projeto local'}</span><span><ShieldCheck size={11} />escopo autorizado</span></div>
-        <div><span>Git somente leitura</span><span>Scrollback em memória</span><span className="statusbar-mode">MANUAL</span></div>
-      </footer>
 
       {panelsDetached && !desktop?.isDesktop && <div className="detached-panels-window" style={{ left: popupPosition.x, top: popupPosition.y }}>
         <Inspector
