@@ -457,7 +457,7 @@ try {
   fs.writeFileSync(path.join(resultsDir, 'session-modal-adapters.json'), JSON.stringify(adapterOption, null, 2));
   // Só adaptadores detectados no PATH, com versão ou "não encontrado"; nunca os cards de demonstração.
   assert(adapterOption.slice(1).every((item) => /\d+\.\d+\.\d+|não encontrado/.test(item.text)), 'modal desktop não deve listar CLIs fictícios');
-  assert.deepEqual(adapterOption.map((item) => item.value), ['', 'kimi-code', 'opencode', 'claude-code'], 'placeholder e adaptadores na ordem do ATLAS');
+  assert.deepEqual(adapterOption.map((item) => item.value), ['', 'kimi-code', 'opencode', 'claude-code', 'codex'], 'placeholder e adaptadores na ordem do ATLAS');
   assert.deepEqual(adapterOption.slice(0, 3).map((item) => item.disabled), [true, false, false], 'placeholder desabilitado, Kimi e OpenCode da fixture disponíveis');
   assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]').value`), '', 'nenhum CLI pré-selecionado');
   assert(await main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`), 'criar exige a escolha');

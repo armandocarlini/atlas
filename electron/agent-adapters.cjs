@@ -52,6 +52,16 @@ const ADAPTERS = [
     modelEntry: 'free',
     atlasTools: 'per-run',
   },
+  {
+    id: 'codex',
+    name: 'Codex',
+    command: 'codex',
+    versionArgs: ['--version'],
+    spawnArgs: [],
+    // Modelos vêm de `codex debug models`, sem rede. A ponte MCP entra por `-c`
+    // só nesta run, sem gravar no config.toml do usuário. Só agente nesta versão.
+    atlasTools: 'per-run',
+  },
 ];
 
 function pathExtensions(env, platform) {
@@ -170,6 +180,20 @@ async function listModels(adapter, { env = process.env, execFileImpl = defaultEx
     } catch (error) {
       throw new Error(`O OpenCode não listou os modelos: ${describeError(error, { timeoutMs: MODELS_TIMEOUT_MS, command: 'models' })}.`);
     }
+  } else if (adapter.id === 'codex') {
+    let catalog;
+    try {
+      const { stdout } = await runCli(adapter.executable, ['debug', 'models'], { execFileImpl, env, timeout: MODELS_TIMEOUT_MS });
+      const text = stripAnsi(stdout);
+      catalog = JSON.parse(text.slice(text.indexOf('{')));
+    } catch (error) {
+      throw new Error(`O Codex não listou os modelos: ${describeError(error, { timeoutMs: MODELS_TIMEOUT_MS, command: 'debug models' })}.`);
+    }
+    // Só os que o próprio Codex mostra na escolha de modelo, na ordem dele.
+    models = (Array.isArray(catalog?.models) ? catalog.models : [])
+      .filter((item) => item && item.visibility === 'list' && typeof item.slug === 'string')
+      .sort((left, right) => (left.priority ?? 0) - (right.priority ?? 0))
+      .map((item) => item.slug);
   }
   return [...new Set(models.filter((model) => MODEL_PATTERN.test(model)))];
 }
@@ -198,12 +222,38 @@ function assertOrchestratorSupport(adapter) {
   if (adapter.id === 'kimi-code' && /^(?:2\.4\.0|2\.4\.1)$/.test(adapter.version)) {
     throw new Error(`Kimi Code ${adapter.version} indisponível para a principal: a integração MCP e a preservação do perfil somente leitura não estão verificadas nesta versão. Escolha outro CLI detectado. Agentes manuais continuam disponíveis.`);
   }
+  // docs/diagnosticos/CLAUDE_CODEX_FASE1.md: a edição de arquivos não sai do Codex
+  // e, sem shell, ele não lê arquivos; o somente leitura não está comprovado.
+  if (adapter.id === 'codex') {
+    throw new Error('Codex indisponível para a principal: ainda não há como garantir que ela só leia (a ferramenta de edição continua ativa no CLI). Escolha outro CLI detectado. O Codex continua disponível como agente.');
+  }
 }
 
 // Principal no Claude Code (docs/diagnosticos/CLAUDE_CODEX_FASE1.md): `--restricted`
 // tira shell e execução de código e ignora as configurações do usuário e do
 // repositório; só a ponte do ATLAS entra como servidor MCP.
 const CLAUDE_ORCHESTRATOR_TOOLS = 'Read,Grep,Glob';
+
+// O Codex no Windows é um shim .cmd: a linha passa pelo cmd.exe. Os valores dos
+// `-c` usam strings literais TOML (aspas simples) e só caracteres sem significado
+// para o shell; o token nunca vai em argumento, só o nome das variáveis.
+const CMD_SAFE_VALUE = /^[A-Za-z0-9 ._:\\/()-]+$/;
+const BRIDGE_ENV_FROM_RUN = ['ATLAS_MCP_ENDPOINT', 'ATLAS_MCP_TOKEN'];
+
+function codexBridgeArgs(bridge) {
+  const literal = (value) => {
+    if (typeof value !== 'string' || !CMD_SAFE_VALUE.test(value)) throw new Error('Caminho da ponte do ATLAS inseguro para o cmd.exe; o Codex não recebe as ferramentas do ATLAS nesta pasta de instalação.');
+    return `'${value}'`;
+  };
+  const staticEnv = Object.entries(bridge.env || {}).filter(([name]) => !BRIDGE_ENV_FROM_RUN.includes(name));
+  for (const [name] of staticEnv) if (!/^[A-Z0-9_]+$/.test(name)) throw new Error('Variável da ponte do ATLAS inválida.');
+  return [
+    '-c', `mcp_servers.atlas.command=${literal(bridge.command)}`,
+    '-c', `mcp_servers.atlas.args=[${bridge.args.map(literal).join(',')}]`,
+    '-c', `mcp_servers.atlas.env={${staticEnv.map(([name, value]) => `${name}=${literal(value)}`).join(',')}}`,
+    '-c', `mcp_servers.atlas.env_vars=[${BRIDGE_ENV_FROM_RUN.map((name) => `'${name}'`).join(',')}]`,
+  ];
+}
 
 function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, bridge = null }) {
   if (role === 'orchestrator') assertOrchestratorSupport(adapter);
@@ -250,6 +300,9 @@ function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile 
     }
     // A versão conferida não deve mudar por autoatualização ao iniciar a run.
     return { args, env: { DISABLE_AUTOUPDATER: '1' } };
+  }
+  if (adapter.id === 'codex') {
+    return { args: [...adapter.spawnArgs, ...modelArgs, ...(bridge ? codexBridgeArgs(bridge) : [])], env: {} };
   }
   throw new Error(`${adapter.name} não tem lançamento definido no ATLAS.`);
 }

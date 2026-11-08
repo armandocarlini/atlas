@@ -31,6 +31,7 @@
     "smoke:orchestrator": "node scripts/smoke-agent.mjs --configured-model",
     "smoke:opencode": "node scripts/smoke-opencode.mjs",
     "smoke:claude": "node scripts/smoke-claude.mjs",
+    "smoke:codex": "node scripts/smoke-codex.mjs",
     "smoke:installer": "node scripts/smoke-installer.mjs",
     "check:public": "node scripts/check-public-files.mjs"
   },
