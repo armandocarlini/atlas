@@ -79,6 +79,8 @@ Uma tela alternativa para quem não programa: um chat comum e, ao lado, a equipe
 
 ## Fase 5 — várias equipes no mesmo repositório [decidir]
 
+Plano técnico em `docs/planos/PLANO_V0_2_EQUIPES_NO_REPOSITORIO.md`, aguardando aprovação.
+
 Várias equipes no mesmo repositório (por exemplo, Interface e Instalador), cada uma com a sua principal, coordenando-se para não editar os mesmos arquivos nem fazer commit uma sobre a outra.
 
 - **Muda uma invariante:** "identidade única da principal por projeto" passaria a ser "por equipe". Precisa de plano aprovado.

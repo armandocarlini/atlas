@@ -102,5 +102,6 @@ Pontos observados em 27/10/2026 que continuam valendo:
 | Troca de modelo sem perder a tela | Entregue; a principal no Kimi espera a correção da ponte e a preservação efetiva do perfil de leitura nas versões 2.4 |
 | Suíte de regressão liga/desliga | Entregue (PRs #53 a #56) |
 | Equipe com várias IAs | Plano aprovado em 08/11/2026; muda duas invariantes da principal (somente leitura por padrão e visão de CLI e modelo) |
+| Várias equipes no mesmo repositório | Plano em revisão (`docs/planos/PLANO_V0_2_EQUIPES_NO_REPOSITORIO.md`); muda a principal única por projeto para única por equipe e começa depois da chave "Principal só coordena" |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |
