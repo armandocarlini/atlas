@@ -117,6 +117,7 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 ### Navegação e painéis
 
 - Uma barra só em cima: marca, abas de projeto e ações. Não há barra de status.
+- O Painel do Atlas abre a navegação: estado da principal, "Espera você" e equipe por tarefa. Cada item leva ao lugar da decisão; o painel não duplica aprovações. Estado das sessões por ponto e texto (para leitores de tela, "ativa" fica oculto visualmente).
 - A paleta de comandos (Ctrl Shift P ou F1) reúne as ações, os projetos e os terminais. O atalho vale com o foco no terminal, e o que se digita nela nunca chega ao PTY. Toda ação nova entra também na paleta.
 
 - Navegação e Painéis podem ser ocultadas independentemente e recuperadas pela toolbar.
