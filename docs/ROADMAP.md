@@ -55,9 +55,16 @@ Plano: `docs/planos/PLANO_V0_2_SUITE_DE_REGRESSAO.md`, entregue nas fases 1 a 4 
 - o prazo é escolhido pelo usuário, inclusive "sem prazo", e há o botão "Parar suíte";
 - o log completo fica em arquivo.
 
-### 4. Itens já previstos na arquitetura
+### 4. Equipe com várias IAs: Claude Code, Codex, Gemini e revisão cruzada — plano aprovado
 
-- Playbooks.
+Plano: `docs/planos/PLANO_V0_2_EQUIPE_MULTI_IA.md`. Escopo escolhido pelo mantenedor entre 04 e 06/11/2026:
+
+- adaptadores Claude Code, Codex e Gemini, como agentes e como principal, com ponte e perfil passados só pela run;
+- chave por projeto "Principal só coordena", ligada por padrão; desligada, a principal faz sozinha o que é pequeno e delega o resto;
+- revisão cruzada: a principal vê qual IA trabalhou em cada tarefa e prefere outra para revisar, e o cartão avisa quando é a mesma.
+
+### 5. Itens já previstos na arquitetura
+
 - Paralelismo ampliado e mais políticas além do modo assistido.
 - Anexar sessões externas.
 
@@ -65,7 +72,7 @@ Plano: `docs/planos/PLANO_V0_2_SUITE_DE_REGRESSAO.md`, entregue nas fases 1 a 4 
 
 A ordem vem da arquitetura, ajustada ao que já foi entregue: o segundo adaptador, previsto para a v0.3, já entrou na v0.1.
 
-- **v0.3:** AI Memory opcional *no produto* (por interfaces oficiais, conteúdo não confiável, degradação explícita). Novos adaptadores (Claude Code, Codex, Gemini).
+- **v0.3:** AI Memory opcional *no produto* (por interfaces oficiais, conteúdo não confiável, degradação explícita). Outros adaptadores (Claude Code, Codex e Gemini foram antecipados para o item 4 da v0.2).
 - **v0.4:** catálogo de modelos, quotas, custos, fallback entre provedores e relatórios.
 - **v0.5:** runner independente da UI e recuperação ampliada.
 - **Futuro:** acesso remoto, iPhone, notificações push, Voice-to-Prompt e runners na nuvem.
@@ -73,6 +80,10 @@ A ordem vem da arquitetura, ajustada ao que já foi entregue: o segundo adaptado
 ## Possíveis ideias (sem decisão)
 
 Anotações para avaliar mais tarde. Não são plano nem compromisso, e nenhum agente começa estes itens sem pedido do mantenedor.
+
+### Playbooks
+
+Previstos na arquitetura e retirados da v0.2 em 04/11/2026. O mantenedor considerou que um roteiro fixo duplicaria o que a principal já decide ao conversar com o usuário e escolher as funções. Voltam só se surgir uma necessidade concreta no uso.
 
 ### Redesign visual do ATLAS
 
@@ -89,6 +100,7 @@ Pontos observados em 27/10/2026 que continuam valendo:
 |---|---|
 | LLM por função | Entregue; recomendações iniciais adiadas (benchmarks do mantenedor) |
 | Troca de modelo sem perder a tela | Entregue; a principal no Kimi espera a correção da ponte e a preservação efetiva do perfil de leitura nas versões 2.4 |
-| Suíte de regressão liga/desliga | Definir o significado exato |
+| Suíte de regressão liga/desliga | Entregue (PRs #53 a #56) |
+| Equipe com várias IAs | Plano aprovado em 08/11/2026; muda duas invariantes da principal (somente leitura por padrão e visão de CLI e modelo) |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |
