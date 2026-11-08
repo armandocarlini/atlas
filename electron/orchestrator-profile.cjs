@@ -34,14 +34,53 @@ const PROFILE = [
   orchestratorInstructions('mcp__atlas__'), '',
 ].join('\n');
 
-function ensureOrchestratorProfile(userData) {
+// Permissões da principal no Claude Code: as ferramentas do ATLAS sem pedido de
+// permissão e os arquivos de ambiente negados (Read e Grep respeitam a negação).
+const CLAUDE_ORCHESTRATOR_SETTINGS = {
+  permissions: {
+    allow: ['mcp__atlas'],
+    deny: ['Read(**/.env)', 'Read(**/.env.*)'],
+  },
+};
+
+function profileDirectory(userData) {
   const directory = path.join(userData, 'profiles');
   fs.mkdirSync(directory, { recursive: true });
   if (!fs.lstatSync(directory).isDirectory()) throw new Error('Pasta de perfis deve ser um diretório regular.');
-  const filename = path.join(directory, 'atlas-orchestrator.md');
+  return directory;
+}
+
+function writeProfileFile(directory, name, content) {
+  const filename = path.join(directory, name);
   if (fs.existsSync(filename) && !fs.lstatSync(filename).isFile()) throw new Error('Perfil do orquestrador deve ser um arquivo regular.');
-  fs.writeFileSync(filename, PROFILE, { encoding: 'utf8', mode: 0o600 });
+  fs.writeFileSync(filename, content, { encoding: 'utf8', mode: 0o600 });
   return filename;
 }
 
-module.exports = { ensureOrchestratorProfile, orchestratorInstructions, PROFILE };
+function ensureOrchestratorProfile(userData) {
+  return writeProfileFile(profileDirectory(userData), 'atlas-orchestrator.md', PROFILE);
+}
+
+// Arquivos da run no Claude Code, regravados a cada início do ATLAS. O JSON do MCP
+// não guarda segredo: endpoint e token vêm do ambiente do PTY de cada run.
+function ensureClaudeProfile(userData, bridgeEntry = null) {
+  const directory = profileDirectory(userData);
+  const mcpConfig = bridgeEntry
+    ? writeProfileFile(directory, 'claude-mcp.json', JSON.stringify({
+      mcpServers: {
+        atlas: {
+          command: bridgeEntry.command,
+          args: bridgeEntry.args,
+          env: { ...bridgeEntry.env, ATLAS_MCP_ENDPOINT: '${ATLAS_MCP_ENDPOINT}', ATLAS_MCP_TOKEN: '${ATLAS_MCP_TOKEN}' },
+        },
+      },
+    }, null, 2))
+    : null;
+  return {
+    instructions: writeProfileFile(directory, 'claude-orchestrator.md', `${orchestratorInstructions('mcp__atlas__')}\n`),
+    settings: writeProfileFile(directory, 'claude-orchestrator-settings.json', JSON.stringify(CLAUDE_ORCHESTRATOR_SETTINGS, null, 2)),
+    mcpConfig,
+  };
+}
+
+module.exports = { ensureOrchestratorProfile, ensureClaudeProfile, orchestratorInstructions, PROFILE, CLAUDE_ORCHESTRATOR_SETTINGS };

@@ -104,6 +104,7 @@ test('o adaptador kimi não recebe flags de autonomia nem prompt inicial', () =>
 
 const { listModels, launchFor, runCli } = createRequire(import.meta.url)('../electron/agent-adapters.cjs');
 const opencode = ADAPTERS.find((adapter) => adapter.id === 'opencode');
+const claude = ADAPTERS.find((adapter) => adapter.id === 'claude-code');
 
 test('OpenCode por shim .cmd é consultado pelo cmd.exe só com argumentos constantes', async () => {
   const calls = [];
@@ -167,4 +168,31 @@ test('lançamento por CLI: modelo, perfil da principal e ponte só por run no Op
   assert.equal(principal.env.OPENCODE_DISABLE_PROJECT_CONFIG, '1', 'configuração do repositório ignorada na principal');
   assert.equal(plain.env.OPENCODE_DISABLE_PROJECT_CONFIG, undefined, 'agentes comuns seguem a configuração do projeto');
   assert(principal.args.every((item) => item !== '--auto'), 'sem flags de autonomia');
+});
+
+test('lançamento do Claude Code: só caminhos na linha de comando e principal restrita', () => {
+  assert.equal(claude.command, 'claude');
+  assert.deepEqual(claude.spawnArgs, [], 'sem flags de autonomia');
+  assert.equal(claude.modelEntry, 'free');
+  const claudeProfile = { instructions: 'C:\\perfil\\claude-orchestrator.md', settings: 'C:\\perfil\\claude-orchestrator-settings.json', mcpConfig: 'C:\\perfil\\claude-mcp.json' };
+  const bridge = { command: 'C:\\ATLAS.exe', args: ['C:\\ponte.cjs'], env: { ELECTRON_RUN_AS_NODE: '1', ATLAS_MCP_TOKEN: 'segredo-da-run' } };
+  const plain = launchFor({ adapter: claude, model: 'claude-opus-5-5' });
+  assert.deepEqual(plain, { args: ['--model', 'claude-opus-5-5'], env: { DISABLE_AUTOUPDATER: '1' } });
+  const agent = launchFor({ adapter: claude, claudeProfile, bridge });
+  assert.deepEqual(agent.args, ['--mcp-config', 'C:\\perfil\\claude-mcp.json'], 'agente comum mantém os servidores MCP e as permissões dele');
+  const principal = launchFor({ adapter: claude, role: 'orchestrator', model: 'opus', claudeProfile, bridge });
+  assert.deepEqual(principal.args, [
+    '--model', 'opus',
+    '--mcp-config', 'C:\\perfil\\claude-mcp.json',
+    '--restricted', '--tools', 'Read,Grep,Glob', '--strict-mcp-config',
+    '--settings', 'C:\\perfil\\claude-orchestrator-settings.json',
+    '--append-system-prompt-file', 'C:\\perfil\\claude-orchestrator.md',
+  ]);
+  // Regressão de segurança: o token da run nunca vai em argumento.
+  assert(!JSON.stringify(principal).includes('segredo-da-run'));
+  assert(!principal.args.some((item) => /bypass|dangerously|auto/.test(item)), 'sem flags de autonomia');
+  const semPonte = launchFor({ adapter: claude, role: 'orchestrator', claudeProfile });
+  assert(!semPonte.args.includes('--mcp-config') && semPonte.args.includes('--strict-mcp-config'), 'sem ponte, nenhum servidor MCP');
+  assert.throws(() => launchFor({ adapter: claude, role: 'orchestrator' }), /Perfil do orquestrador/);
+  assert.throws(() => launchFor({ adapter: claude, model: 'opus & calc' }), /Modelo inválido/);
 });

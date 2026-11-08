@@ -40,6 +40,18 @@ const ADAPTERS = [
     // sem gravar na configuração do usuário.
     atlasTools: 'per-run',
   },
+  {
+    id: 'claude-code',
+    name: 'Claude Code',
+    command: 'claude',
+    versionArgs: ['--version'],
+    spawnArgs: [],
+    // O CLI não lista modelos: o usuário digita o modelo ou deixa vazio para o
+    // da configuração dele. A ponte MCP, as instruções e as permissões da principal
+    // entram por arquivos do perfil do ATLAS, só nesta run.
+    modelEntry: 'free',
+    atlasTools: 'per-run',
+  },
 ];
 
 function pathExtensions(env, platform) {
@@ -188,7 +200,12 @@ function assertOrchestratorSupport(adapter) {
   }
 }
 
-function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, bridge = null }) {
+// Principal no Claude Code (docs/diagnosticos/CLAUDE_CODEX_FASE1.md): `--restricted`
+// tira shell e execução de código e ignora as configurações do usuário e do
+// repositório; só a ponte do ATLAS entra como servidor MCP.
+const CLAUDE_ORCHESTRATOR_TOOLS = 'Read,Grep,Glob';
+
+function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, bridge = null }) {
   if (role === 'orchestrator') assertOrchestratorSupport(adapter);
   if (model !== null && !MODEL_PATTERN.test(model)) throw new Error('Modelo inválido.');
   const modelArgs = model ? ['--model', model] : [];
@@ -221,6 +238,18 @@ function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile 
       // ignorada: ela poderia reabrir permissões ou iniciar plugins e servidores MCP.
       env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(config), ...(role === 'orchestrator' ? { OPENCODE_DISABLE_PROJECT_CONFIG: '1' } : {}) },
     };
+  }
+  if (adapter.id === 'claude-code') {
+    if (role === 'orchestrator' && !claudeProfile) throw new Error('Perfil do orquestrador não configurado.');
+    // Só caminhos de arquivo na linha de comando: o token chega à ponte pelo
+    // ambiente do PTY, expandido no JSON do MCP.
+    const args = [...adapter.spawnArgs, ...modelArgs];
+    if (bridge && claudeProfile?.mcpConfig) args.push('--mcp-config', claudeProfile.mcpConfig);
+    if (role === 'orchestrator') {
+      args.push('--restricted', '--tools', CLAUDE_ORCHESTRATOR_TOOLS, '--strict-mcp-config', '--settings', claudeProfile.settings, '--append-system-prompt-file', claudeProfile.instructions);
+    }
+    // A versão conferida não deve mudar por autoatualização ao iniciar a run.
+    return { args, env: { DISABLE_AUTOUPDATER: '1' } };
   }
   throw new Error(`${adapter.name} não tem lançamento definido no ATLAS.`);
 }

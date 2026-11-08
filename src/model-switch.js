@@ -32,6 +32,8 @@ const ORCHESTRATOR_VERIFIED = new Set(['opencode']);
 
 export function canSwitch(session) {
   if (session.archived || session.exited) return { allowed: false, reason: 'A sessão não está em execução.' };
+  // Sem lista de modelos, o ATLAS não tem como conferir o modelo informado.
+  if (session.adapterId === 'claude-code') return { allowed: false, reason: 'O Claude Code não lista modelos ao ATLAS; use /model no terminal, mas a troca não fica registrada no card.' };
   if (session.roleKind === 'orchestrator' && !ORCHESTRATOR_VERIFIED.has(session.adapterId)) {
     return { allowed: false, reason: 'Ainda não verificamos se a principal continua somente leitura depois de trocar o modelo neste CLI.' };
   }

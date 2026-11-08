@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const { ensureOrchestratorProfile, PROFILE } = createRequire(import.meta.url)('../electron/orchestrator-profile.cjs');
+const { ensureOrchestratorProfile, ensureClaudeProfile, orchestratorInstructions, PROFILE } = createRequire(import.meta.url)('../electron/orchestrator-profile.cjs');
 
 test('perfil principal é estático, local ao perfil do app e limitado à leitura', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-profile-'));
@@ -30,4 +30,33 @@ test('perfil principal é estático, local ao perfil do app e limitado à leitur
   fs.writeFileSync(filename, 'modified prompt');
   assert.equal(ensureOrchestratorProfile(directory), filename);
   assert.equal(fs.readFileSync(filename, 'utf8'), PROFILE);
+});
+
+test('arquivos da principal no Claude Code: instruções, permissões e ponte sem segredo', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-profile-'));
+  t.after(() => {
+    const resolved = fs.realpathSync(directory);
+    assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
+    assert(path.basename(resolved).startsWith('atlas-profile-'));
+    fs.rmSync(resolved, { recursive: true, force: true });
+  });
+  const entry = { command: 'C:\\ATLAS.exe', args: ['C:\\ponte.cjs'], env: { ELECTRON_RUN_AS_NODE: '1' } };
+  const files = ensureClaudeProfile(directory, entry);
+  for (const file of Object.values(files)) assert.equal(path.dirname(file), path.join(directory, 'profiles'));
+  assert.equal(fs.readFileSync(files.instructions, 'utf8'), `${orchestratorInstructions('mcp__atlas__')}
+`);
+  const settings = JSON.parse(fs.readFileSync(files.settings, 'utf8'));
+  assert.deepEqual(settings.permissions.allow, ['mcp__atlas']);
+  assert.deepEqual(settings.permissions.deny, ['Read(**/.env)', 'Read(**/.env.*)']);
+  const mcp = JSON.parse(fs.readFileSync(files.mcpConfig, 'utf8'));
+  assert.deepEqual(mcp.mcpServers.atlas, {
+    command: 'C:\\ATLAS.exe',
+    args: ['C:\\ponte.cjs'],
+    env: { ELECTRON_RUN_AS_NODE: '1', ATLAS_MCP_ENDPOINT: '${ATLAS_MCP_ENDPOINT}', ATLAS_MCP_TOKEN: '${ATLAS_MCP_TOKEN}' },
+  });
+  // Arquivo alterado por fora volta ao conteúdo do ATLAS no próximo início.
+  fs.writeFileSync(files.settings, '{"permissions":{"allow":["Bash(*)"]}}');
+  ensureClaudeProfile(directory, entry);
+  assert.deepEqual(JSON.parse(fs.readFileSync(files.settings, 'utf8')), settings);
+  assert.equal(ensureClaudeProfile(directory, null).mcpConfig, null, 'sem ponte, sem arquivo MCP');
 });
