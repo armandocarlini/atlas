@@ -188,6 +188,8 @@ try {
   assert.equal(await main.evaluate(`document.querySelectorAll('.origin-badge.demo').length`), 0, 'Desktop must not show illustrative agent cards');
   // Sem CLI padrão: a principal só inicia depois de o usuário escolher CLI e modelo.
   await until(() => main.evaluate(`document.querySelector('.orchestrator-choice-note')?.innerText.includes('ainda não foi iniciada')`), 'principal aguarda a escolha do agente');
+  // Painel do Atlas: a principal parada aparece em "Espera você".
+  await until(() => main.evaluate(`[...document.querySelectorAll('.atlas-decision.principal')].some(item => item.innerText.includes('Iniciar a sessão principal'))`), 'painel mostra a principal parada');
   // Regressão: sem sessão Kimi no projeto, nada de aviso do Kimi (só o indicador discreto).
   assert.equal(await main.evaluate(`document.querySelectorAll('.integration-notice').length`), 0, 'Kimi notice only with a Kimi session');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 1, 'Unauthorized project history must remain hidden');
@@ -589,6 +591,11 @@ try {
   assert(requestCards[0].includes('Novo agente: revisor-recusado') && requestCards[0].includes('Pedido de ORQUESTRADOR-fixture'), 'Request names requester and agent');
   assert(requestCards[1].includes('Segunda linha preservada') && requestCards[1].includes('Vale até') && requestCards[1].includes('Política: até 2 agentes'), 'Request shows purpose, validity and policy');
   assert(requestCards.every((text) => text.includes('sem flags de autonomia')), 'Request states how the agent starts');
+  // Painel do Atlas: cada pedido pendente espera o usuário e leva ao próprio cartão.
+  const panelRequests = await main.evaluate(`[...document.querySelectorAll('.atlas-decision.request strong')].map(item => item.textContent)`);
+  assert(panelRequests.includes('Novo agente: revisor-recusado') && panelRequests.length === 2, `Panel lists pending requests: ${panelRequests}`);
+  await main.evaluate(`[...document.querySelectorAll('.atlas-decision.request')].find(item => item.innerText.includes('revisor-recusado')).click()`);
+  await until(() => main.evaluate(`document.activeElement?.closest('.agent-request')?.innerText.includes('revisor-recusado')`), 'painel leva ao cartão do pedido');
   const requestAudit = await main.evaluate(`(${auditInterface.toString()})()`);
   assert.equal(requestAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in agent requests');
   await screenshot(main, 'agent-requests');
@@ -622,7 +629,8 @@ try {
   assert.equal(await main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'revisor-sem-cli')`), false);
   await click(main, '.agent-request button', 'Dispensar');
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'failed request dismissed');
-  console.log('PASS pedidos de agente da principal: conteúdo, validade, política, recusa e falha honesta sem CLI');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.atlas-decision.request').length`), 0, 'Decided requests leave the panel');
+  console.log('PASS pedidos de agente da principal: conteúdo, validade, política, recusa, falha honesta sem CLI e Painel do Atlas');
   // Delegação semeada como a principal e um agente da fixture fariam pela ponte MCP:
   // uma oferta aberta e uma tarefa aceita e bloqueada. O usuário cancela e devolve.
   const delegationStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });

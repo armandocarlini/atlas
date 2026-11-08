@@ -59,17 +59,19 @@ Só interface.
   - A busca ignora acentos e maiúsculas.
 - **Barras das colunas:** "Navegação", "Terminais" e "Painéis" continuam como rótulos de seção, porque guardam Ocultar e Pop-up. Também dá para ocultar e mostrar as colunas pela paleta.
 
-## Fase 3 — Painel do Atlas
+## Fase 3 — Painel do Atlas (entregue)
 
-Só interface, com os dados que já existem: pedidos, tarefas, sessões e revisão.
+Só interface, com os dados que já existem. O painel fica no topo da coluna de navegação, no lugar dos atalhos fixos, que não faziam nada e agora estão na paleta.
 
-- **No topo:** quem coordena (a principal, com o modelo dela) e, logo abaixo, **"Espera você"**:
-  - pedidos de agente;
-  - revisões prontas para o usuário concluir.
+- **No topo:** a estátua, o projeto, o estado da principal e quantos agentes estão ativos.
+- **"Espera você":**
+  - a principal ainda não iniciada;
+  - os pedidos de agente pendentes;
+  - as revisões pendentes de tarefas em revisão.
 
-  Cada um com a ação dele.
-- **A equipe agrupada por tarefa:** cada agente com função, modelo e estado. A linha leva ao terminal certo.
-- **Rostos dos modelos:** logos dos fornecedores, só como identificação, com a licença de cada ícone conferida antes.
+  Cada item leva ao lugar da decisão: o cartão do pedido, com o foco nele, o painel de Tarefas ou a escolha da principal. A aprovação continua no cartão, com CLI e modelo à vista.
+- **Equipe:** a principal à parte e os agentes agrupados pela tarefa que detêm. Os outros ficam em "Sem tarefa". Cada linha mostra função, CLI e modelo. Um clique seleciona o terminal; um duplo clique foca.
+- **Fica para depois:** os rostos dos modelos (logos dos fornecedores), até a licença de cada ícone ser conferida.
 
 ## Fase 4 — modo Conversa [decidir]
 

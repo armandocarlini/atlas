@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity,
   ArrowUp,
   Bell,
   Bot,
@@ -15,8 +14,6 @@ import {
   FolderGit2,
   GitBranch,
   Grid2X2,
-  Inbox,
-  Keyboard,
   Layers3,
   ListTodo,
   Maximize2,
@@ -42,6 +39,7 @@ import GitDiscovery from './GitDiscovery.jsx';
 import { appearanceTokens, contrastInk, isPreviousDefaultTheme, visibleAccent } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
 import CommandPalette from './CommandPalette.jsx';
+import AtlasPanel from './AtlasPanel.jsx';
 import { agentSession, mergeAgentSessions, sessionExit, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
@@ -1436,6 +1434,18 @@ export default function App() {
     return commands;
   }
 
+  // Painel do Atlas: leva ao cartão do pedido ou à tarefa, onde a decisão acontece.
+  function openAgentRequest(requestId) {
+    const card = document.getElementById(`agent-request-${requestId}`)?.closest('.agent-request');
+    card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    card?.querySelector('select, button')?.focus({ preventScroll: true });
+  }
+
+  function openTaskPanel() {
+    setHiddenColumns((current) => current.right ? { ...current, right: false } : current);
+    setInspectorTab('task');
+  }
+
   function toggleHiddenColumn(column) {
     setHiddenColumns((current) => ({ ...current, [column]: !current[column] }));
   }
@@ -1622,11 +1632,21 @@ export default function App() {
             <button type="button" className="detach-control" onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleHiddenColumn('left')} aria-expanded="true" aria-controls="atlas-navigation">Ocultar</button>
           </div>
           <aside className="sidebar" id="atlas-navigation">
-            <div className="sidebar-primary">
-              <button className="active"><Grid2X2 size={15} /><span>Cockpit</span><kbd>1</kbd></button>
-              <button onClick={() => setInspectorTab('task')} title="Abrir Tarefas"><ListTodo size={15} /><span>Tarefas</span><small>{desktop?.isDesktop ? taskState.items.length : 8}</small></button>
-              {!desktop?.isDesktop && <><button><Inbox size={15} /><span>Pendências</span><small className="amber">3</small></button><button><Workflow size={15} /><span>Execuções</span><small>4</small></button></>}
-            </div>
+            <AtlasPanel
+              projectName={desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}
+              sessions={projectSessions.map((session) => session.roleKind ? session : { ...session, roleKind: session.origin === 'principal' ? 'orchestrator' : 'agent' })}
+              tasks={desktop?.isDesktop ? taskState.items : []}
+              reviews={desktop?.isDesktop ? taskState.reviews || [] : []}
+              requests={desktop?.isDesktop && !isSecondaryWindow ? agentRequestState.items : []}
+              needsPrincipal={Boolean(desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice)}
+              functions={agentFunctions.items}
+              selectedId={selectedId}
+              onSelectSession={selectSessionTerminal}
+              onFocusSession={focusSession}
+              onOpenRequest={openAgentRequest}
+              onOpenTask={openTaskPanel}
+              onStartPrincipal={() => openOrchestratorChoice()}
+            />
             {!desktop?.isDesktop && <div className="sidebar-section">
               <div className="sidebar-heading"><span>MISSÕES</span><button><Plus size={13} /></button></div>
               <div className="mission-list">
@@ -1634,12 +1654,6 @@ export default function App() {
               </div>
             </div>}
             <GitDiscovery projects={projects} selectedWorktree={selectedWorktree} onSelect={selectWorktree} onRefresh={refreshProjects} loading={projectsLoading || projects.some((project) => project.scanning)} />
-            <div className="sidebar-section pinned-section">
-              <div className="sidebar-heading"><span>ATALHOS</span></div>
-              <button className="sidebar-link"><Keyboard size={14} /><span>Comandos e teclas</span><kbd>?</kbd></button>
-              <button className="sidebar-link"><GitBranch size={14} /><span>Worktrees</span><small>{worktreeOptions.length}</small></button>
-              <button className="sidebar-link"><Activity size={14} /><span>Eventos</span></button>
-            </div>
             <div className="sidebar-bottom">
               <div className="local-card"><div><ShieldCheck size={15} /><strong>Local e privado</strong></div><p>Git + PTY local<br />Nenhuma telemetria ativa</p><span><StatusDot color="#7dbb91" />Núcleo disponível</span></div>
               <button className="workspace-settings" onClick={resetLayout}><span>Restaurar layout</span></button>
