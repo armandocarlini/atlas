@@ -455,10 +455,33 @@ try {
   await until(() => main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].some(item => item.textContent.includes('Kimi Code'))`), 'adapters listed in session modal');
   const adapterOption = await main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].map(item => ({ text: item.textContent, value: item.value, disabled: item.disabled }))`);
   fs.writeFileSync(path.join(resultsDir, 'session-modal-adapters.json'), JSON.stringify(adapterOption, null, 2));
-  assert(adapterOption.every((item) => item.text !== 'Claude Code'), 'modal desktop não deve listar CLIs fictícios');
-  assert.deepEqual(adapterOption.map((item) => [item.value, item.disabled]), [['', true], ['kimi-code', false], ['opencode', false]], 'placeholder desabilitado, CLIs detectados disponíveis');
+  // Só adaptadores detectados no PATH, com versão ou "não encontrado"; nunca os cards de demonstração.
+  assert(adapterOption.slice(1).every((item) => /\d+\.\d+\.\d+|não encontrado/.test(item.text)), 'modal desktop não deve listar CLIs fictícios');
+  assert.deepEqual(adapterOption.map((item) => item.value), ['', 'kimi-code', 'opencode', 'claude-code'], 'placeholder e adaptadores na ordem do ATLAS');
+  assert.deepEqual(adapterOption.slice(0, 3).map((item) => item.disabled), [true, false, false], 'placeholder desabilitado, Kimi e OpenCode da fixture disponíveis');
   assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]').value`), '', 'nenhum CLI pré-selecionado');
   assert(await main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`), 'criar exige a escolha');
+  // Claude Code não lista modelos: campo de texto opcional, validado no formato aceito pelo ATLAS.
+  if (adapterOption.find((item) => item.value === 'claude-code')?.disabled === false) {
+    const submitDisabled = () => main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`);
+    const typeModel = async (value) => {
+      await main.evaluate(`(() => { const field = document.querySelector('.modal input[name=model]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, ${JSON.stringify(value)}); field.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+      await delay(120);
+    };
+    await choose(main, '.modal', 'cli', 'claude-code');
+    await until(() => main.evaluate(`Boolean(document.querySelector('.modal input[name=model][type=text]'))`), 'free model entry for Claude Code');
+    assert(!(await submitDisabled()), 'modelo vazio usa a configuração do Claude Code');
+    await typeModel('opus & calc');
+    assert(await submitDisabled(), 'modelo fora do formato bloqueia a criação');
+    assert.equal(await main.evaluate(`document.querySelector('.modal input[name=model]').getAttribute('aria-invalid')`), 'true');
+    assert(await main.evaluate(`document.querySelector('#model-entry-help')?.getAttribute('role') === 'alert'`), 'erro do modelo anunciado');
+    await typeModel('claude-opus-5-5');
+    assert(!(await submitDisabled()), 'modelo digitado válido libera a criação');
+    const claudeModelAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+    assert.equal(claudeModelAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in Claude Code model entry');
+    await screenshot(main, 'session-claude-model');
+    console.log('PASS Claude Code: modelo digitado opcional e validado no cartão');
+  }
   // Regressão: a lista lenta do OpenCode chega depois da troca para o Kimi e não pode desfazê-la.
   await choose(main, '.modal', 'cli', 'opencode');
   await choose(main, '.modal', 'cli', 'kimi-code');

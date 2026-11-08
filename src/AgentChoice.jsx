@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 
+// Mesmo formato aceito pelo ATLAS ao iniciar a sessão (MODEL_PATTERN).
+const MODEL_FORMAT = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
+
 const cleanError = (error) => String(error?.message || error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
 
 // Escolha do CLI e do modelo de uma sessão de agente, inclusive da principal.
@@ -23,7 +26,9 @@ export function AgentChoice({ adapters, value, onChange, desktop = window.atlasD
     onChange({ adapterId, model: '', ready: false });
     desktop.listAgentModels({ adapterId, refresh }).then((result) => {
       if (request !== latest.current) return;
-      const kept = keep && result.models.includes(keep) ? keep : '';
+      // CLI sem lista (`modelEntry: 'free'`): o modelo salvo é mantido como digitado.
+      const free = available.find((item) => item.id === adapterId)?.modelEntry === 'free' && !result.models.length;
+      const kept = keep && (free || result.models.includes(keep)) ? keep : '';
       setModels({ adapterId, status: 'ready', items: result.models, error: '', missing: keep && !kept && result.models.length ? keep : '' });
       // Sem modelos identificados, o CLI usa a própria configuração.
       onChange({ adapterId, model: kept, ready: Boolean(kept) || result.models.length === 0 });
@@ -72,7 +77,17 @@ export function AgentChoice({ adapters, value, onChange, desktop = window.atlasD
       <button type="button" className="button secondary compact" onClick={() => load(adapter.id, true)}>Tentar de novo</button>
     </div>}
     {loaded && models.status === 'ready' && models.missing && <p className="agent-choice-note error" role="alert">O modelo {models.missing} não está na lista do {adapter.name}. Escolha outro.</p>}
-    {loaded && models.status === 'ready' && !models.items.length && <p className="agent-choice-note">Nenhum modelo identificado no {adapter.name}; ele usa o modelo da própria configuração.</p>}
+    {loaded && models.status === 'ready' && !models.items.length && adapter.modelEntry !== 'free' && <p className="agent-choice-note">Nenhum modelo identificado no {adapter.name}; ele usa o modelo da própria configuração.</p>}
+    {loaded && models.status === 'ready' && !models.items.length && adapter.modelEntry === 'free' && <>
+      <label>Modelo (opcional)
+        <input type="text" name="model" value={value.model} spellCheck={false} autoComplete="off" maxLength={200} placeholder="ex.: claude-opus-5-5 ou opus" disabled={disabled}
+          aria-invalid={Boolean(value.model) && !MODEL_FORMAT.test(value.model)} aria-describedby="model-entry-help"
+          onChange={(event) => { const model = event.target.value.trim(); onChange({ adapterId: adapter.id, model, ready: !model || MODEL_FORMAT.test(model) }); }} />
+      </label>
+      {value.model && !MODEL_FORMAT.test(value.model)
+        ? <p id="model-entry-help" className="agent-choice-note error" role="alert">Use só letras, números e . _ : / -, começando por letra ou número.</p>
+        : <p id="model-entry-help" className="agent-choice-note">O {adapter.name} não lista modelos ao ATLAS. Digite o nome que ele aceita em --model, ou deixe vazio para usar o modelo da configuração dele.</p>}
+    </>}
     {loaded && models.status === 'ready' && models.items.length > 0 && <>
       {models.items.length > 12 && <label>Filtrar modelos
         <input type="search" name="model-filter" value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="ex.: nvidia, llama, deepseek" disabled={disabled} />

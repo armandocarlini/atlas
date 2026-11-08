@@ -7,7 +7,7 @@ const MODELS_CACHE_MS = 60 * 1000;
 // Ciclo de vida de sessões de agente neste marco: identidade gerada no
 // processo principal, cwd validado, PTY real e estado mínimo em memória.
 // O estado operacional é apenas running/exited; nada é inferido do ANSI.
-function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, listModelsImpl = listModels, store, onPersistenceError = console.error, orchestratorProfile, mcpHost = null, bridgeEntry = null, onRunEnded = () => {} }) {
+function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, listModelsImpl = listModels, store, onPersistenceError = console.error, orchestratorProfile, claudeProfile = null, mcpHost = null, bridgeEntry = null, onRunEnded = () => {} }) {
   const agents = new Map();
   const pendingOrchestrators = new Map();
   const modelCache = new Map();
@@ -102,14 +102,16 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
   }
 
   // Não há CLI nem modelo padrão: os dois vêm da escolha do usuário. Sem modelos
-  // identificados para o CLI, ele usa a própria configuração.
+  // identificados para o CLI, ele usa a própria configuração; nos CLIs sem lista
+  // (`modelEntry: 'free'`), o modelo digitado só passa pela validação de formato.
   async function resolveLaunch(adapterId, model) {
     const adapter = await requireAdapter(adapterId);
     const chosen = typeof model === 'string' && model ? model : null;
     if (chosen !== null && !MODEL_PATTERN.test(chosen)) throw new Error('Modelo inválido.');
     const models = await modelsFor(adapter);
     if (models.length && chosen === null) throw new Error(`Escolha o modelo do ${adapter.name} entre os identificados.`);
-    if (chosen !== null && !models.includes(chosen)) throw new Error(`O modelo ${chosen} não foi identificado no ${adapter.name}. Atualize a lista de modelos.`);
+    const free = adapter.modelEntry === 'free' && !models.length;
+    if (chosen !== null && !free && !models.includes(chosen)) throw new Error(`O modelo ${chosen} não foi identificado no ${adapter.name}. Atualize a lista de modelos.`);
     return { adapter, model: chosen };
   }
 
@@ -147,7 +149,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
 
     let record;
     try {
-      const launch = launchFor({ adapter, role, model, orchestratorProfile, bridge });
+      const launch = launchFor({ adapter, role, model, orchestratorProfile, claudeProfile, bridge });
       record = transport.spawn({
         file: adapter.executable,
         args: launch.args,

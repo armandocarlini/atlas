@@ -8,7 +8,7 @@ import path from 'node:path';
 const { createAgentHost } = createRequire(import.meta.url)('../electron/agent-host.cjs');
 const { createOperationalStore } = createRequire(import.meta.url)('../electron/operational-store.cjs');
 
-function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [], orchestratorProfile = '/fixture/atlas-orchestrator.md', mcpHost, onRunEnded, listModelsImpl, bridgeEntry } = {}) {
+function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [], orchestratorProfile = '/fixture/atlas-orchestrator.md', claudeProfile = null, mcpHost, onRunEnded, listModelsImpl, bridgeEntry } = {}) {
   const handlers = new Map();
   const listeners = new Map();
   const ipcMain = {
@@ -52,6 +52,7 @@ function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersi
     store,
     onPersistenceError,
     orchestratorProfile,
+    claudeProfile,
     mcpHost,
     bridgeEntry,
     onRunEnded,
@@ -414,6 +415,7 @@ test('token da run é vinculado à run persistida e o fim da run avisa o projeto
 
 const KIMI = { id: 'kimi-code', name: 'Kimi Code', command: 'kimi', spawnArgs: [], executable: 'C:\\cli\\kimi.exe', version: '2.3.3', status: 'available', error: null };
 const OPENCODE = { id: 'opencode', name: 'OpenCode', command: 'opencode', spawnArgs: [], executable: 'C:\\npm\\opencode.cmd', version: '1.18.21', status: 'available', error: null };
+const CLAUDE = { id: 'claude-code', name: 'Claude Code', command: 'claude', spawnArgs: [], modelEntry: 'free', executable: 'C:\\cli\\claude.exe', version: '2.1.318', status: 'available', error: null };
 const modelsByAdapter = { 'kimi-code': ['kimi-code/k3', 'kimi-code/k3.1-pro'], opencode: ['nvidia/deepseek-ai/deepseek-v4-flash', 'nvidia/meta/llama-3.3-70b-instruct'] };
 
 test('sem CLI escolhido nenhum agente inicia e não há CLI padrão', async () => {
@@ -451,6 +453,22 @@ test('CLI sem modelos identificados usa a própria configuração e recusa model
   const agent = await handlers.get('agent:create')(mainEvent, { adapterId: 'kimi-code', cwd: 'C:\\projeto' });
   assert.equal(agent.model, null);
   assert.deepEqual(spawns[0].args, []);
+});
+
+test('Claude Code sem lista aceita modelo digitado, só com formato válido', async () => {
+  const claudeProfile = { instructions: 'C:\\perfil\\claude-orchestrator.md', settings: 'C:\\perfil\\claude-orchestrator-settings.json', mcpConfig: 'C:\\perfil\\claude-mcp.json' };
+  const { handlers, spawns, mainEvent } = createHarness({ adapters: [CLAUDE, KIMI], claudeProfile, listModelsImpl: async () => [] });
+  const create = (request) => handlers.get('agent:create')(mainEvent, { cwd: 'C:\\projeto', ...request });
+  await assert.rejects(create({ adapterId: 'claude-code', model: 'opus & calc' }), /Modelo inválido/);
+  const typed = await create({ adapterId: 'claude-code', model: 'claude-opus-5-5' });
+  assert.equal(typed.model, 'claude-opus-5-5');
+  assert.deepEqual(spawns[0].args, ['--model', 'claude-opus-5-5']);
+  assert.equal(spawns[0].env.DISABLE_AUTOUPDATER, '1');
+  const configured = await create({ adapterId: 'claude-code' });
+  assert.equal(configured.model, null);
+  assert.deepEqual(spawns[1].args, []);
+  // A regra vale só para CLIs sem lista: o Kimi continua recusando modelo avulso.
+  await assert.rejects(create({ adapterId: 'kimi-code', model: 'claude-opus-5-5' }), /não foi identificado/);
 });
 
 test('agent:list-models só na janela principal, com cache e atualização explícita', async () => {

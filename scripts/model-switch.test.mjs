@@ -28,4 +28,8 @@ test('principal só troca onde o perfil somente leitura foi verificado; sessão 
   assert.equal(kimiPrincipal.allowed, false);
   assert.match(kimiPrincipal.reason, /somente leitura/);
   assert.equal(canSwitch({ roleKind: 'agent', adapterId: 'opencode', exited: true }).allowed, false);
+  // Claude Code não lista modelos: a troca no terminal não tem como ser conferida pelo ATLAS.
+  const claudeAgent = canSwitch({ roleKind: 'agent', adapterId: 'claude-code' });
+  assert.equal(claudeAgent.allowed, false);
+  assert.match(claudeAgent.reason, /não lista modelos/);
 });
