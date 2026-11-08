@@ -1,6 +1,6 @@
 # Plano v0.2: equipe com várias IAs (Claude Code, Codex, Gemini e revisão cruzada)
 
-Situação: **aprovado pelo mantenedor em 08/11/2026.** A implementação segue as fases abaixo.
+Situação: **aprovado pelo mantenedor em 08/11/2026.** A fase 1 (investigação de Claude Code e Codex) está registrada em `docs/diagnosticos/CLAUDE_CODEX_FASE1.md`. O Gemini aguarda a instalação do CLI pelo mantenedor.
 
 Substitui o antigo item 4 da v0.2 no `docs/ROADMAP.md`. Os playbooks saem da v0.2 e vão para "Possíveis ideias". O mantenedor considerou que eles duplicam o que a principal já faz.
 
@@ -121,7 +121,7 @@ A funcionalidade `image_generation` aparece como estável e ligada na lista de f
   - **Gemini:** permissões normais do CLI, sem o perfil somente leitura, com a aprovação padrão dele.
   - **Kimi:** como a principal Kimi está bloqueada nas versões 2.4.0/2.4.1, o modo `auto` vale quando ela voltar.
 - **O que continua protegido no modo auto:** o modo libera edição e comandos, nas permissões normais do CLI. As outras proteções da principal continuam:
-  - a leitura de `.env` continua negada;
+  - a leitura de `.env` continua negada **nas ferramentas de arquivo**. Com shell, qualquer CLI consegue ler o `.env`, como os agentes já conseguem hoje, e o aviso da chave diz isso (ajuste da fase 1);
   - a configuração do repositório que inicia processos continua ignorada, ou seja, hooks, plugins e servidores MCP do projeto;
   - a única ponte MCP é a do ATLAS.
 
@@ -156,7 +156,7 @@ Não há ferramenta nova. O usuário cria uma função, por exemplo "Imagem", co
 
 Cada fase tem branch, PR e CI verde em Ubuntu e Windows.
 
-1. **Investigação sem API**, só fixtures e homes isolados:
+1. **Investigação sem API** (feita para Claude Code e Codex em 08/11/2026; resultado em `docs/diagnosticos/CLAUDE_CODEX_FASE1.md`), só fixtures e homes isolados:
    - confirmar as flags e as chaves de configuração acima nos três CLIs (o Gemini depois que o mantenedor instalar);
    - confirmar o token por ambiente, o bloqueio de `.env` e de shell na principal, a lista de modelos e o `/model`.
    - O resultado vai para `docs/diagnosticos/`, e este plano é ajustado se algo não se confirmar.
@@ -199,7 +199,7 @@ Estas não vieram da conversa. Foram decididas ao escrever o plano:
 
 - Sem ponte por token em ambiente, o CLI entra só como sessão manual. O token nunca vai na linha de comando.
 - O Gemini só é verificado depois que o mantenedor instalar o CLI. O ATLAS não o instala.
-- O Codex só vira principal somente leitura se a fase 1 achar uma forma confiável de negar o shell ou a leitura de `.env`.
+- O Codex só vira principal se houver prova de que a escrita é recusada. A fase 1 não achou essa prova: `apply_patch` continua declarado, e sem shell o Codex não lê arquivos. **Nesta entrega, o Codex é só agente.**
 - O modo auto mantém o bloqueio de `.env`, a configuração do repositório ignorada e a ponte MCP única.
 - O cartão só mostra o modo da principal, sem troca por run.
 - `workedBy` guarda a função, e o aviso ignora as entradas da mesma função do pedido.
