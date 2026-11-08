@@ -45,17 +45,19 @@ Só interface, sem mudar dados nem IPC. Para conviver com o trabalho de outros a
   - `prefers-reduced-transparency` tira o desfoque.
 - **Design system:** `design-system/atlas/MASTER.md` foi reescrito com a identidade.
 
-## Fase 2 — barra única e menos cromo
+## Fase 2 — barra única e paleta de comandos (entregue)
 
-Só interface. Muda seletores usados pelo `test:desktop`, que deve ser atualizado no mesmo PR.
+Só interface.
 
-- **Barra superior única:**
-  - marca;
-  - seletor de repositório no lugar das abas;
-  - ações em ícones com nome acessível e dica.
-- **Paleta de comandos** com Ctrl Shift P ou F1. Os atalhos evitam conflito com shell e tmux.
-- **Navegação** recolhida num trilho estreito, aberta por atalho.
-- As barras "Arrastar coluna" ficam visíveis só ao reorganizar.
+- **Uma barra só em cima**, com marca, abas de projeto e ações:
+  - a barra de título e a linha de abas viraram uma, e os terminais ganharam mais 40px de altura;
+  - saíram "Início", o avatar e o rótulo "Sessões locais", que não faziam nada;
+  - o caminho da pasta ficou curto, com o caminho completo na dica.
+- **Abas em vez de seletor.** Os projetos continuam em abas, a um clique, porque são poucos. Seletor e abas de equipe ficam para a fase 5, quando houver equipes.
+- **Paleta de comandos** com Ctrl Shift P ou F1. Funciona também com o foco dentro do terminal: o atalho é lido antes do xterm, e nada do que se digita nela chega ao PTY.
+  - A paleta reúne as ações dos botões, os projetos e os terminais do projeto.
+  - A busca ignora acentos e maiúsculas.
+- **Barras das colunas:** "Navegação", "Terminais" e "Painéis" continuam como rótulos de seção, porque guardam Ocultar e Pop-up. Também dá para ocultar e mostrar as colunas pela paleta.
 
 ## Fase 3 — Painel do Atlas
 

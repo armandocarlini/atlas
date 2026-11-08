@@ -358,6 +358,25 @@ try {
   assert(!(await raw(first.id)).includes('ATLAS_SECOND_OK'));
   assert(!(await raw(second.id)).includes('ATLAS_UNICODE_OK'));
   console.log('PASS dois terminais com processos e streams independentes');
+  // Paleta de comandos: abre com o foco dentro do terminal (o xterm não pode engolir o atalho),
+  // filtra, leva ao terminal escolhido e fecha com Esc.
+  await main.evaluate(`document.querySelector(${JSON.stringify(input)}).focus()`);
+  await key(main, 'P', { code: 'KeyP', windowsVirtualKeyCode: 80, modifiers: 10 });
+  await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette input'))`), 'palette opened from terminal focus');
+  for (const char of 'ir smoke-um') await key(main, char, { text: char });
+  await until(() => main.evaluate(`[...document.querySelectorAll('.command-palette li[role=option]')].map(item => item.textContent).join('|').startsWith('Ir para smoke-um')`), 'palette filtered to terminal');
+  await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+  // Com smoke-dois em Foco, "Ir para smoke-um" leva o Foco para smoke-um.
+  await until(() => main.evaluate(`!document.querySelector('.command-palette') && ${card('smoke-um')}?.classList.contains('selected') && ${card('smoke-um')}.classList.contains('focused') && !${card('smoke-dois')}`), 'palette moved focus to the chosen terminal');
+  await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+  await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette'))`), 'palette opened with F1');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'palette closed with Escape');
+  assert(!(await raw(first.id)).includes('ir smoke-um'), 'Palette typing must not reach the PTY');
+  console.log('PASS paleta de comandos: atalho com foco no terminal, busca, Foco no escolhido e Esc');
+  // Volta ao estado anterior: grade e smoke-dois em Foco, como o restante do roteiro espera.
+  await focus('smoke-um');
+  await focus('smoke-dois');
   await main.evaluate(`[...${card('smoke-dois')}.querySelectorAll('button')].find(item => item.textContent === 'Pop-up').click()`);
   const popupPage = await until(async () => (await pages()).find((item) => item.url.includes('window=terminal')), 'popup');
   const popup = await connect(popupPage);
