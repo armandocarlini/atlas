@@ -24,7 +24,6 @@ import {
   MoreHorizontal,
   Palette,
   Plus,
-  Radio,
   Search,
   Send,
   Settings,
@@ -42,6 +41,7 @@ import TerminalView from './TerminalView.jsx';
 import GitDiscovery from './GitDiscovery.jsx';
 import { appearanceTokens, contrastInk, isPreviousDefaultTheme, visibleAccent } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
+import CommandPalette from './CommandPalette.jsx';
 import { agentSession, mergeAgentSessions, sessionExit, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
@@ -629,6 +629,7 @@ export default function App() {
   const [theme, setTheme] = useState(getInitialTheme);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [functionsOpen, setFunctionsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   // Sessão cujo modelo o usuário está trocando no CLI (painel de orientação e registro).
   const [modelSwitch, setModelSwitch] = useState(null);
   // Funções de agente: o aviso na barra lateral conta as que ainda pedem CLI e modelo.
@@ -1101,9 +1102,20 @@ export default function App() {
         setAppearanceOpen(true);
       }
     }
+    // Paleta de comandos: Ctrl Shift P ou F1. Em captura, para funcionar com o foco no terminal;
+    // nenhum dos dois é atalho comum de shell, tmux ou dos CLIs.
+    function handlePaletteKey(event) {
+      const combo = (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.code === 'KeyP';
+      if (!combo && !(event.key === 'F1' && !event.ctrlKey && !event.shiftKey && !event.altKey)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPaletteOpen((open) => !open);
+    }
     window.addEventListener('keydown', handleKey);
+    window.addEventListener('keydown', handlePaletteKey, true);
     return () => {
       window.removeEventListener('keydown', handleKey);
+      window.removeEventListener('keydown', handlePaletteKey, true);
       window.removeEventListener('pointermove', handleColumnPointerMove);
       window.removeEventListener('pointerup', finishColumnDrag);
       window.removeEventListener('pointercancel', cancelColumnDrag);
@@ -1390,6 +1402,40 @@ export default function App() {
     setDetachedTerminals((current) => current.includes(session.id) ? current.filter((id) => id !== session.id) : [...current, session.id]);
   }
 
+  function selectProject(project) {
+    projectSelectionRef.current = true;
+    setActiveProject(project.name);
+    if (project.path) setWorkingDirectory(project.path);
+  }
+
+  function selectSessionTerminal(id) {
+    // Em Foco, ir para outro terminal troca o foco para ele; senão o escolhido ficaria fora da tela.
+    setFocusId((current) => current && current !== id ? id : current);
+    setSelectedId(id);
+    window.setTimeout(() => document.querySelector(`[data-session-id="${id}"] .xterm-helper-textarea`)?.focus(), 0);
+  }
+
+  // Comandos da paleta: as mesmas ações dos botões, sem ocupar a tela.
+  function paletteCommands() {
+    const commands = [
+      { id: 'new-session', group: 'Sessões', label: 'Nova sessão de agente', keywords: 'agente cli modelo', run: () => setModal('session') },
+      { id: 'new-terminal', group: 'Sessões', label: 'Novo terminal', keywords: 'powershell shell', run: () => setModal('terminal') },
+    ];
+    if (desktop?.isDesktop && !isSecondaryWindow) commands.push({ id: 'new-task', group: 'Sessões', label: 'Nova tarefa', keywords: 'backlog', run: () => setTaskModalOpen(true) });
+    commands.push(
+      { id: 'focus', group: 'Layout', label: focusId ? 'Voltar à grade' : 'Focar o terminal selecionado', keywords: 'foco grid maximizar', run: () => focusId ? setFocusId(null) : focusSession(selectedId) },
+      { id: 'toggle-left', group: 'Layout', label: hiddenColumns.left ? 'Mostrar navegação' : 'Ocultar navegação', keywords: 'coluna esquerda sidebar', run: () => toggleHiddenColumn('left') },
+      { id: 'toggle-right', group: 'Layout', label: hiddenColumns.right ? 'Mostrar painéis' : 'Ocultar painéis', keywords: 'coluna direita tarefas mensagens evidencias', run: () => toggleHiddenColumn('right') },
+      { id: 'reset-layout', group: 'Layout', label: 'Restaurar layout padrão', run: resetLayout },
+      { id: 'appearance', group: 'Preferências', label: 'Aparência e configurações', keywords: 'tema cor fundo', shortcut: 'Ctrl ,', run: () => setAppearanceOpen(true) },
+    );
+    if (desktop?.isDesktop && desktop.listAgentFunctions) commands.push({ id: 'functions', group: 'Preferências', label: 'Funções de agente', keywords: 'cli modelo orquestrador', run: () => setFunctionsOpen(true) });
+    commands.push({ id: 'add-project', group: 'Projetos', label: 'Autorizar pasta de projeto', keywords: 'adicionar repositorio', run: addProject });
+    (desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((name) => ({ name }))).forEach((project) => commands.push({ id: `project-${project.id || project.name}`, group: 'Projetos', label: `Ir para ${project.name}`, hint: project.path, keywords: 'projeto repositorio', run: () => selectProject(project) }));
+    projectSessions.forEach((session) => commands.push({ id: `session-${session.id}`, group: 'Terminais', label: `Ir para ${session.name}`, hint: modelLabel(session) ? `${session.cli} · ${modelLabel(session)}` : session.cli, keywords: 'terminal sessao agente', run: () => selectSessionTerminal(session.id) }));
+    return commands;
+  }
+
   function toggleHiddenColumn(column) {
     setHiddenColumns((current) => ({ ...current, [column]: !current[column] }));
   }
@@ -1546,18 +1592,18 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="titlebar">
-        <div className="brand"><AtlasMark /><strong>ATLAS</strong><span>0.1 · local</span></div>
-        <div className="titlebar-center"><Radio size={12} /><span>AMBIENTE LOCAL</span></div>
-        <div className="title-actions">{!desktop?.isDesktop && <><button className="text-control" title="Buscar">Buscar</button><button className="text-control notification-button" title="Notificações" aria-label="Notificações, 2 não lidas">Alertas <span>2</span></button></>}<button className="text-control" title="Aparência e configurações" onClick={() => setAppearanceOpen(true)}>Aparência</button><div className="user-avatar" aria-label="Perfil local">A</div></div>
+        <div className="brand" title="ATLAS 0.1 · local"><AtlasMark /><strong>ATLAS</strong></div>
+        <nav className="project-tabs" aria-label="Projetos">
+          {(desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((name) => ({ name }))).map((project) => <button key={project.id || project.name} className={`project-tab ${activeProject === project.name ? 'active' : ''}`} title={project.path || project.name} aria-current={activeProject === project.name ? 'page' : undefined} onClick={() => selectProject(project)}><StatusDot color={project.name === activeProject ? 'var(--gold)' : 'var(--faint)'} /><span>{project.name}</span>{project.repositories && <small>{project.repositories.length}</small>}</button>)}
+          <button className="add-project" title="Autorizar pasta de projeto" aria-label="Autorizar pasta de projeto" onClick={addProject}>+</button>
+        </nav>
+        <div className="title-actions">
+          <div className="workspace-path" title={workingDirectory}><span>{workingDirectory}</span></div>
+          {!desktop?.isDesktop && <div className="demo-label">AGENTES ILUSTRATIVOS</div>}
+          <button className="text-control palette-trigger" title="Paleta de comandos (Ctrl Shift P ou F1)" onClick={() => setPaletteOpen(true)}>Comandos <kbd>Ctrl Shift P</kbd></button>
+          <button className="text-control" title="Aparência e configurações (Ctrl ,)" onClick={() => setAppearanceOpen(true)}>Aparência</button>
+        </div>
       </header>
-
-      <nav className="project-tabs" aria-label="Projetos">
-        <button className="home-tab" title="Visão geral">Início</button>
-        {(desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((name) => ({ name }))).map((project) => <button key={project.id || project.name} className={`project-tab ${activeProject === project.name ? 'active' : ''}`} onClick={() => { projectSelectionRef.current = true; setActiveProject(project.name); if (project.path) setWorkingDirectory(project.path); }}><StatusDot color={project.name === activeProject ? 'var(--accent)' : '#8b9399'} /><span>{project.name}</span>{project.repositories && <small>{project.repositories.length}</small>}</button>)}
-        <button className="add-project" title="Autorizar pasta de projeto" aria-label="Autorizar pasta de projeto" onClick={addProject}>+</button>
-        <div className="workspace-path"><FolderGit2 size={13} /><span>{workingDirectory}</span></div>
-        <div className="demo-label">{desktop?.isDesktop ? 'SESSÕES LOCAIS' : 'AGENTES ILUSTRATIVOS'}</div>
-      </nav>
 
       <div className="workspace-body">
         {columnDrag?.moved && <div
@@ -1720,6 +1766,7 @@ export default function App() {
           notify(`Modelo de ${agent.name} registrado: ${agent.currentModel}`);
         }} />}
       {functionsOpen && <AgentFunctionsModal desktop={desktop} adapters={adapters} onClose={() => setFunctionsOpen(false)} />}
+      {paletteOpen && <CommandPalette commands={paletteCommands()} onClose={() => setPaletteOpen(false)} />}
       {appearanceOpen && <AppearanceModal theme={theme} onChange={setTheme} onClose={() => setAppearanceOpen(false)} />}
       {openFolderRequest && <OpenFolderModal key={openFolderRequest.id} request={openFolderRequest} onAuthorize={authorizeOpenFolder} onCancel={cancelOpenFolder} />}
       {regressionModalOpen && regressionSuite?.projectId && <RegressionSuiteModal desktop={desktop} cwd={workingDirectory} projectName={taskState.projectName} onClose={() => setRegressionModalOpen(false)} onSaved={(suite) => {
