@@ -42,7 +42,7 @@ Todo agente que trabalha no ATLAS usa o ai-memory, para que o que uma sessão ap
 
 Não quebre estas regras sem plano e decisão explícita do mantenedor.
 
-- **CLIs e modelos:** os adaptadores (Kimi Code, OpenCode, Claude Code) detectam o CLI pelo `PATH` e iniciam sessões interativas em pastas autorizadas, sem flags de autonomia. Não existe CLI nem modelo padrão **do ATLAS**: o código não escolhe CLI ou modelo por conta própria. O usuário pode definir **funções** com CLI e modelo, que só **preenchem** a escolha. O ATLAS pode **recomendar** modelos por função, a partir da lista curada pelo mantenedor (`electron/model-recommendations.json`), mas a recomendação nunca é selecionada sem o usuário. Agentes não alteram essa lista sem instrução explícita do mantenedor. Cada sessão (manual, principal ou pedida) continua iniciando apenas com a confirmação explícita do usuário, que pode trocar a sugestão. Configuração ausente ou inválida nunca é substituída em silêncio.
+- **CLIs e modelos:** os adaptadores (Kimi Code, OpenCode, Claude Code, Codex) detectam o CLI pelo `PATH` e iniciam sessões interativas em pastas autorizadas, sem flags de autonomia. Não existe CLI nem modelo padrão **do ATLAS**: o código não escolhe CLI ou modelo por conta própria. O usuário pode definir **funções** com CLI e modelo, que só **preenchem** a escolha. O ATLAS pode **recomendar** modelos por função, a partir da lista curada pelo mantenedor (`electron/model-recommendations.json`), mas a recomendação nunca é selecionada sem o usuário. Agentes não alteram essa lista sem instrução explícita do mantenedor. Cada sessão (manual, principal ou pedida) continua iniciando apenas com a confirmação explícita do usuário, que pode trocar a sugestão. Configuração ausente ou inválida nunca é substituída em silêncio.
 - **Sessão principal:**
   - perfil somente leitura no CLI escolhido (`--agent-file` no Kimi, agente `atlas-orchestrator` no OpenCode, `--restricted --tools "Read,Grep,Glob"` no Claude Code);
   - identidade única por projeto;
@@ -60,6 +60,7 @@ Não quebre estas regras sem plano e decisão explícita do mantenedor.
   - **Kimi:** a entrada `atlas` só vai para o `mcp.json` com consentimento explícito na interface e sai pelo mesmo diálogo.
   - **OpenCode:** a ponte e o perfil entram só pela run (`OPENCODE_CONFIG_CONTENT`), sem gravar configuração.
   - **Claude Code:** a ponte, as instruções e as permissões da principal entram só pela run, por arquivos do perfil do ATLAS (`--mcp-config`, `--append-system-prompt-file`, `--settings`), sem gravar em `~/.claude` nem no repositório. O token chega à ponte pelo ambiente do PTY, nunca em argumento.
+  - **Codex:** só agente. A ponte entra por `-c mcp_servers.atlas.*` só na run, com endpoint e token repassados do ambiente (`env_vars`), sem gravar no `config.toml`. A principal Codex é recusada até haver prova de somente leitura (`docs/diagnosticos/CLAUDE_CODEX_FASE1.md`).
   - **Escopo:** a ponte fica inerte fora do ATLAS. Dentro dele, oferece só dados do projeto, com identidade vinda do token da run.
   - **Funções:** `agent_functions_list` não expõe CLI nem modelo à principal; ela escolhe a função pelo trabalho, e o usuário confirma ou troca no cartão.
 - **Abrir no ATLAS:**
@@ -98,6 +99,7 @@ Não quebre estas regras sem plano e decisão explícita do mantenedor.
   - `npm run smoke:agent`: Kimi Code, com `KIMI_CODE_HOME` isolado.
   - `npm run smoke:opencode`: OpenCode, com `XDG_*` isolados.
   - `npm run smoke:claude`: Claude Code, com `CLAUDE_CONFIG_DIR` isolado e um servidor falso local no lugar da API.
+  - `npm run smoke:codex`: Codex, com `CODEX_HOME` isolado; confere modelos e a ponte montada pelo cmd.exe.
 - **Cobertura:** acrescente testes unitários, de integração e E2E proporcionais à alteração. Todo bug corrigido ganha regressão reproduzível. Inclua casos negativos e, conforme o subsistema, concorrência, reinício, migrations, backup/restore e segurança.
 - **Proibido:**
   - apagar ou enfraquecer testes para obter verde;

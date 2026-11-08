@@ -55,9 +55,9 @@ Plano: `docs/planos/PLANO_V0_2_SUITE_DE_REGRESSAO.md`, entregue nas fases 1 a 4 
 - o prazo é escolhido pelo usuário, inclusive "sem prazo", e há o botão "Parar suíte";
 - o log completo fica em arquivo.
 
-### 4. Equipe com várias IAs: Claude Code, Codex, Gemini e revisão cruzada — plano aprovado, fase 1 feita
+### 4. Equipe com várias IAs: Claude Code, Codex, Gemini e revisão cruzada — plano aprovado, fases 1 a 3 entregues
 
-Plano: `docs/planos/PLANO_V0_2_EQUIPE_MULTI_IA.md`. A investigação da fase 1 (`docs/diagnosticos/CLAUDE_CODEX_FASE1.md`) confirmou o Claude Code como agente e principal e o Codex só como agente; o Gemini espera a instalação do CLI. Escopo escolhido pelo mantenedor entre 04 e 06/11/2026:
+Plano: `docs/planos/PLANO_V0_2_EQUIPE_MULTI_IA.md`. A investigação da fase 1 (`docs/diagnosticos/CLAUDE_CODEX_FASE1.md`) confirmou o Claude Code como agente e principal e o Codex só como agente; o Gemini espera a instalação do CLI. Os adaptadores do Claude Code (PR #63) e do Codex (fase 3) já estão no produto. Escopo escolhido pelo mantenedor entre 04 e 06/11/2026:
 
 - adaptadores Claude Code, Codex e Gemini, como agentes e como principal, com ponte e perfil passados só pela run;
 - chave por projeto "Principal só coordena", ligada por padrão; desligada, a principal faz sozinha o que é pequeno e delega o resto;

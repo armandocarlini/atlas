@@ -102,9 +102,10 @@ test('o adaptador kimi não recebe flags de autonomia nem prompt inicial', () =>
   assert.deepEqual(kimi.versionArgs, ['--version']);
 });
 
-const { listModels, launchFor, runCli } = createRequire(import.meta.url)('../electron/agent-adapters.cjs');
+const { listModels, launchFor, runCli, assertOrchestratorSupport } = createRequire(import.meta.url)('../electron/agent-adapters.cjs');
 const opencode = ADAPTERS.find((adapter) => adapter.id === 'opencode');
 const claude = ADAPTERS.find((adapter) => adapter.id === 'claude-code');
+const codex = ADAPTERS.find((adapter) => adapter.id === 'codex');
 
 test('OpenCode por shim .cmd é consultado pelo cmd.exe só com argumentos constantes', async () => {
   const calls = [];
@@ -195,4 +196,44 @@ test('lançamento do Claude Code: só caminhos na linha de comando e principal r
   assert(!semPonte.args.includes('--mcp-config') && semPonte.args.includes('--strict-mcp-config'), 'sem ponte, nenhum servidor MCP');
   assert.throws(() => launchFor({ adapter: claude, role: 'orchestrator' }), /Perfil do orquestrador/);
   assert.throws(() => launchFor({ adapter: claude, model: 'opus & calc' }), /Modelo inválido/);
+});
+
+test('modelos do Codex vêm de `codex debug models`: só os visíveis, na ordem do CLI', async () => {
+  const catalog = { models: [
+    { slug: 'gpt-b', visibility: 'list', priority: 2 },
+    { slug: 'oculto', visibility: 'hide', priority: 0 },
+    { slug: 'gpt-a', visibility: 'list', priority: 1 },
+    { slug: 'mal formado & calc', visibility: 'list', priority: 3 },
+  ] };
+  const output = 'WARNING: aviso do CLI\n' + JSON.stringify(catalog);
+  const models = await listModels({ ...codex, status: 'available', executable: 'C:\\bin\\codex.exe' }, { execFileImpl: async (file, args) => { assert.deepEqual(args, ['debug', 'models']); return { stdout: output, stderr: '' }; } });
+  assert.deepEqual(models, ['gpt-a', 'gpt-b']);
+  await assert.rejects(listModels({ ...codex, status: 'available', executable: 'C:\\bin\\codex.exe' }, { execFileImpl: async () => ({ stdout: 'sem json', stderr: '' }) }), /O Codex não listou os modelos/);
+});
+
+test('lançamento do Codex: ponte só por -c, cmd.exe seguro e token fora da linha de comando', () => {
+  assert.equal(codex.command, 'codex');
+  assert.deepEqual(codex.spawnArgs, [], 'sem flags de autonomia');
+  assert.deepEqual(launchFor({ adapter: codex, model: 'gpt-a' }), { args: ['--model', 'gpt-a'], env: {} });
+  const bridge = { command: 'C:\\Program Files\\ATLAS (teste)\\ATLAS.exe', args: ['C:\\ATLAS\\atlas-mcp-bridge.cjs'], env: { ELECTRON_RUN_AS_NODE: '1', ATLAS_MCP_ENDPOINT: '\\\\.\\pipe\\atlas', ATLAS_MCP_TOKEN: 'segredo-da-run' } };
+  const agent = launchFor({ adapter: codex, model: 'gpt-a', bridge });
+  assert.deepEqual(agent.args, [
+    '--model', 'gpt-a',
+    '-c', "mcp_servers.atlas.command='C:\\Program Files\\ATLAS (teste)\\ATLAS.exe'",
+    '-c', "mcp_servers.atlas.args=['C:\\ATLAS\\atlas-mcp-bridge.cjs']",
+    '-c', "mcp_servers.atlas.env={ELECTRON_RUN_AS_NODE='1'}",
+    '-c', "mcp_servers.atlas.env_vars=['ATLAS_MCP_ENDPOINT','ATLAS_MCP_TOKEN']",
+  ]);
+  // Regressão de segurança: endpoint e token chegam pelo ambiente do PTY, nunca em argumento.
+  assert(!JSON.stringify(agent).includes('segredo-da-run') && !JSON.stringify(agent).includes('pipe'));
+  for (const unsafe of ['C:\\a&b\\ATLAS.exe', 'C:\\50%\\ATLAS.exe', "C:\\o'brien\\ATLAS.exe", 'C:\\x"y\\ATLAS.exe']) {
+    assert.throws(() => launchFor({ adapter: codex, bridge: { ...bridge, command: unsafe } }), /inseguro para o cmd.exe/, unsafe);
+  }
+  assert(!agent.args.some((item) => /bypass|dangerously|full-auto|approve-for-me/.test(item)), 'sem flags de autonomia');
+});
+
+test('Codex não é oferecido como principal enquanto o somente leitura não estiver comprovado', () => {
+  assert.throws(() => assertOrchestratorSupport({ ...codex, version: '0.164.0' }), /Codex indisponível para a principal.*disponível como agente/);
+  assert.throws(() => launchFor({ adapter: codex, role: 'orchestrator' }), /Codex indisponível para a principal/);
+  assert.doesNotThrow(() => assertOrchestratorSupport({ ...claude, version: '2.1.319' }));
 });
