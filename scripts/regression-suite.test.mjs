@@ -66,7 +66,7 @@ test('migration 13 amplia a evidência sem perder linhas nem ordem', (t) => {
   assert.deepEqual(store.listEvidence('p').map((item) => item.id), ['e2', 'e1'], 'mesma ordem de inserção');
   const migrated = new DatabaseSync(filename);
   opened.push(migrated);
-  assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 13);
+  assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.at(-1).version, 'banco migrado até a última versão');
   migrated.prepare("INSERT INTO evidence (id, project_id, task_id, kind, source, payload, created_at) VALUES ('r', 'p', 't', 'regression_run', 'system', '{}', ?)").run(at);
   assert.throws(() => migrated.prepare("INSERT INTO evidence (id, project_id, task_id, kind, source, payload, created_at) VALUES ('o', 'p', 't', 'outro', 'system', '{}', ?)").run(at), /CHECK/);
   assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);

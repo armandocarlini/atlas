@@ -257,3 +257,30 @@ test('lançamento do Gemini: agente só com o modelo; principal com política e 
   assert.throws(() => launchFor({ adapter: gemini, role: 'orchestrator' }), /Perfil do orquestrador/);
   assert.throws(() => launchFor({ adapter: gemini, role: 'orchestrator', geminiProfile: { ...geminiProfile, policy: 'C:\\a&b\\p.toml' } }), /insegura para o cmd.exe/);
 });
+
+test('modo auto da principal: escrita só com as aprovações do CLI, .env e ATLAS preservados', () => {
+  assert.throws(() => launchFor({ adapter: claude, role: 'orchestrator', orchestratorMode: 'tudo', claudeProfile: {} }), /Modo da principal inválido/);
+  assert.throws(() => launchFor({ adapter: { ...kimi, version: '2.3.3' }, role: 'orchestrator', orchestratorProfile: 'C:\\p.md', orchestratorMode: 'auto' }), /não foi verificado no Kimi Code/);
+  // OpenCode: sem a negação geral; .env negado e ferramentas do ATLAS liberadas.
+  const opencodeAuto = JSON.parse(launchFor({ adapter: opencode, role: 'orchestrator', orchestratorMode: 'auto' }).env.OPENCODE_CONFIG_CONTENT);
+  assert.equal(opencodeAuto.permission['*'], undefined);
+  assert.equal(opencodeAuto.permission.bash, undefined, 'shell segue a permissão do próprio OpenCode');
+  assert.equal(opencodeAuto.permission.read['*.env'], 'deny');
+  assert.equal(opencodeAuto.permission['atlas_*'], 'allow');
+  assert(opencodeAuto.agent['atlas-orchestrator'].prompt.includes('pode fazer sozinha alterações pequenas e claras'));
+  const opencodeCoordinate = JSON.parse(launchFor({ adapter: opencode, role: 'orchestrator' }).env.OPENCODE_CONFIG_CONTENT);
+  assert.equal(opencodeCoordinate.permission.bash, 'deny', 'padrão continua só coordena');
+  assert(opencodeCoordinate.agent['atlas-orchestrator'].prompt.includes('Neste projeto você só coordena'));
+  // Claude Code: ferramentas de escrita e instruções do modo auto, ainda --restricted.
+  const claudeProfile = { instructions: 'C:\\perfil\\a.md', instructionsAuto: 'C:\\perfil\\auto.md', settings: 'C:\\perfil\\s.json', mcpConfig: null };
+  const claudeAuto = launchFor({ adapter: claude, role: 'orchestrator', orchestratorMode: 'auto', claudeProfile });
+  assert.deepEqual(claudeAuto.args, ['--restricted', '--tools', 'Read,Grep,Glob,Edit,Write,Bash,PowerShell', '--strict-mcp-config', '--settings', 'C:\\perfil\\s.json', '--append-system-prompt-file', 'C:\\perfil\\auto.md']);
+  // Gemini: política e prompt do modo auto.
+  const geminiProfile = { policy: 'C:\\perfil\\p.toml', systemPrompt: 'C:\\perfil\\p.md', policyAuto: 'C:\\perfil\\auto.toml', systemPromptAuto: 'C:\\perfil\\auto.md' };
+  const geminiAuto = launchFor({ adapter: gemini, role: 'orchestrator', orchestratorMode: 'auto', geminiProfile });
+  assert.deepEqual(geminiAuto.args, ['--policy', 'C:\\perfil\\auto.toml', '--allowed-mcp-server-names', 'atlas']);
+  assert.deepEqual(geminiAuto.env, { GEMINI_SYSTEM_MD: 'C:\\perfil\\auto.md' });
+  // Agentes comuns ignoram o modo da principal.
+  assert.deepEqual(launchFor({ adapter: claude, orchestratorMode: 'auto' }).args, []);
+  for (const launch of [claudeAuto, geminiAuto]) assert(!launch.args.some((item) => /bypass|dangerously|yolo|skip-trust|auto_edit/.test(item)), 'sem flags de autonomia');
+});

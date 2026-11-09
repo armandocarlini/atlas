@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const { ensureOrchestratorProfile, ensureClaudeProfile, ensureGeminiProfile, orchestratorInstructions, GEMINI_ORCHESTRATOR_POLICY, PROFILE } = createRequire(import.meta.url)('../electron/orchestrator-profile.cjs');
+const { ensureOrchestratorProfile, ensureClaudeProfile, ensureGeminiProfile, orchestratorInstructions, GEMINI_ORCHESTRATOR_POLICY, GEMINI_ORCHESTRATOR_AUTO_POLICY, PROFILE } = createRequire(import.meta.url)('../electron/orchestrator-profile.cjs');
 
 test('perfil principal é estático, local ao perfil do app e limitado à leitura', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-profile-'));
@@ -85,4 +85,29 @@ test('principal no Gemini: política nega tudo exceto leitura e ATLAS; prompt pr
   assert(!/grep|shell|write|replace/.test(policy), 'sem grep, shell nem escrita liberados');
   const prompt = fs.readFileSync(files.systemPrompt, 'utf8');
   assert(prompt.includes('$' + '{AvailableTools}') && prompt.includes(orchestratorInstructions('mcp_atlas_')));
+});
+
+test('instruções e arquivos do modo auto: faz o pequeno, avisa que não passa por revisão; .env segue negado', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-profile-'));
+  t.after(() => {
+    const resolved = fs.realpathSync(directory);
+    assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
+    assert(path.basename(resolved).startsWith('atlas-profile-'));
+    fs.rmSync(resolved, { recursive: true, force: true });
+  });
+  const auto = orchestratorInstructions('x_', { mode: 'auto' });
+  assert(auto.includes('pode fazer sozinha alterações pequenas e claras') && auto.includes('não passam pela revisão de tarefa nem pela suíte'));
+  assert(!auto.includes('Neste projeto você só coordena'));
+  assert(orchestratorInstructions('x_').includes('Neste projeto você só coordena'), 'padrão é só coordena');
+  assert(PROFILE.includes('Neste projeto você só coordena'), 'perfil do Kimi segue só coordena');
+  const claudeFiles = ensureClaudeProfile(directory, null);
+  assert.equal(fs.readFileSync(claudeFiles.instructionsAuto, 'utf8'), orchestratorInstructions('mcp__atlas__', { mode: 'auto' }) + '\n');
+  const geminiFiles = ensureGeminiProfile(directory);
+  const policy = fs.readFileSync(geminiFiles.policyAuto, 'utf8');
+  assert.equal(policy, GEMINI_ORCHESTRATOR_AUTO_POLICY);
+  assert(!policy.includes('toolName = "*"\ndecision = "deny"'), 'modo auto sem a negação geral');
+  for (const tool of ['read_file', 'grep_search', 'write_file', 'replace']) assert(policy.includes('toolName = "' + tool + '"\nargsPattern = ' + "'\\.env'\ndecision = \"deny\""), tool + ' nega .env');
+  assert(policy.includes('mcpName = "atlas"'));
+  const prompt = fs.readFileSync(geminiFiles.systemPromptAuto, 'utf8');
+  assert(prompt.includes('pode fazer sozinha') && !prompt.includes('com acesso somente de leitura'));
 });
