@@ -124,3 +124,27 @@ test('mcp.json mantido como link é atualizado no destino resolvido, sem substit
   assert.deepEqual(JSON.parse(fs.readFileSync(linkFile, 'utf8')), { mcpServers: { github: { command: 'gh-mcp' } } }, 'o caminho do link não foi substituído por arquivo comum');
   assert.deepEqual(fs.readdirSync(realDirectory).filter((name) => name.endsWith('.tmp')), []);
 });
+
+test('Gemini: settings.json segue GEMINI_CLI_HOME, preserva o restante e referencia endpoint e token', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-gemini-home-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  assert.equal(config.geminiSettingsFile({ GEMINI_CLI_HOME: home }), path.join(home, '.gemini', 'settings.json'));
+  assert.equal(config.geminiSettingsFile({}), path.join(os.homedir(), '.gemini', 'settings.json'));
+  const entry = config.geminiEntry({ execPath: '/opt/atlas/electron', bridgePath: '/opt/atlas/electron/atlas-mcp-bridge.cjs' });
+  // Regressão de segurança: o arquivo guarda só referências; o token real nunca é gravado.
+  assert.deepEqual(entry.env, { ELECTRON_RUN_AS_NODE: '1', ATLAS_MCP_ENDPOINT: '$ATLAS_MCP_ENDPOINT', ATLAS_MCP_TOKEN: '$ATLAS_MCP_TOKEN' });
+  const file = config.geminiSettingsFile({ GEMINI_CLI_HOME: home });
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ security: { auth: { selectedType: 'oauth-personal' } }, mcpServers: { outro: { command: 'x' } } }));
+  assert.equal(config.getStatus({ entry, file }).state, 'absent');
+  assert.equal(config.install({ entry, file }).state, 'installed');
+  const written = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(written.security, { auth: { selectedType: 'oauth-personal' } });
+  assert.deepEqual(written.mcpServers, { outro: { command: 'x' }, atlas: entry });
+  assert.equal(config.remove({ entry, file }).state, 'absent');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers, { outro: { command: 'x' } });
+  // Comentários (JSONC) não são reescritos: o usuário corrige antes de conectar.
+  fs.writeFileSync(file, '{ // comentário\n "mcpServers": {} }');
+  assert.equal(config.getStatus({ entry, file }).state, 'invalid');
+  assert.throws(() => config.install({ entry, file }), /não é JSON válido/);
+});

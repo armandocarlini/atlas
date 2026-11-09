@@ -40,11 +40,17 @@ import { appearanceTokens, contrastInk, isPreviousDefaultTheme, visibleAccent } 
 import useModalFocus from './useModalFocus.js';
 import CommandPalette from './CommandPalette.jsx';
 import AtlasPanel from './AtlasPanel.jsx';
-import { agentSession, mergeAgentSessions, sessionExit, usesKimi } from './session-state.js';
+import { agentSession, mergeAgentSessions, sessionExit, usesGemini, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
 import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
+
+// Integrações MCP que dependem de consentimento: métodos da ponte do preload por CLI.
+const INTEGRATION_CLIS = {
+  kimi: { name: 'Kimi', get: 'getKimiIntegration', install: 'installKimiIntegration', remove: 'removeKimiIntegration' },
+  gemini: { name: 'Gemini', get: 'getGeminiIntegration', install: 'installGeminiIntegration', remove: 'removeGeminiIntegration' },
+};
 import { AgentRequestsPanel } from './AgentRequests.jsx';
 import { RegressionSuiteModal, RegressionSuiteStatus } from './RegressionSuite.jsx';
 import { AgentFunctionsModal } from './AgentFunctions.jsx';
@@ -602,11 +608,18 @@ export default function App() {
   const [orchestratorStatus, setOrchestratorStatus] = useState({ loading: false, error: '' });
   // Escolha do CLI e do modelo da principal: aberta pelo usuário, nunca preenchida.
   const [orchestratorChoice, setOrchestratorChoice] = useState(null);
-  const [kimiIntegration, setKimiIntegration] = useState(null);
+  // Integrações MCP por consentimento, por CLI: { kimi, gemini }.
+  const [integrations, setIntegrations] = useState({});
+  const kimiIntegration = integrations.kimi || null;
+  const geminiIntegration = integrations.gemini || null;
+  // O status do Gemini aparece na subbarra com o CLI detectado, com sessão do Gemini
+  // no projeto ou com a integração conectada (para poder removê-la).
+  const geminiDetected = Array.isArray(adapters) && adapters.some((adapter) => adapter.id === 'gemini' && adapter.status === 'available');
   const [regressionSuite, setRegressionSuite] = useState(null);
   const [regressionModalOpen, setRegressionModalOpen] = useState(false);
-  const [integrationModalOpen, setIntegrationModalOpen] = useState(false);
-  const [integrationNoticeDismissed, setIntegrationNoticeDismissed] = useState(false);
+  // CLI cujo diálogo de consentimento está aberto ('kimi' ou 'gemini').
+  const [integrationModal, setIntegrationModal] = useState(null);
+  const [integrationNoticeDismissed, setIntegrationNoticeDismissed] = useState({});
   const [toolConnections, setToolConnections] = useState({});
   const [agentRequestState, setAgentRequestState] = useState({ projectId: null, items: [], policy: null, error: '' });
   const [agentRequestErrors, setAgentRequestErrors] = useState({});
@@ -744,46 +757,51 @@ export default function App() {
   useEffect(() => {
     if (!desktop?.isDesktop || isSecondaryWindow || !desktop.getKimiIntegration) return undefined;
     let active = true;
-    setKimiIntegration({ loading: true });
-    desktop.getKimiIntegration().then((status) => {
-      if (active) setKimiIntegration(status);
-    }).catch((error) => {
-      if (active) setKimiIntegration({ state: 'invalid', error: error.message, file: '', entryText: '' });
-    });
+    for (const cli of Object.keys(INTEGRATION_CLIS)) {
+      const api = INTEGRATION_CLIS[cli];
+      if (!desktop[api.get]) continue;
+      setIntegrations((current) => ({ ...current, [cli]: { loading: true } }));
+      desktop[api.get]().then((status) => {
+        if (active) setIntegrations((current) => ({ ...current, [cli]: status }));
+      }).catch((error) => {
+        if (active) setIntegrations((current) => ({ ...current, [cli]: { state: 'invalid', error: error.message, file: '', entryText: '' } }));
+      });
+    }
     const unsubscribe = desktop.onAtlasToolsConnection?.(({ sessionId, connected }) => {
       setToolConnections((current) => ({ ...current, [sessionId]: connected }));
     });
     return () => { active = false; unsubscribe?.(); };
   }, [isSecondaryWindow]);
 
-  async function refreshKimiIntegration() {
-    setKimiIntegration(await desktop.getKimiIntegration());
+  async function refreshIntegration(cli) {
+    const status = await desktop[INTEGRATION_CLIS[cli].get]();
+    setIntegrations((current) => ({ ...current, [cli]: status }));
   }
 
   // Ações do diálogo de consentimento: a confirmação parte só daqui. Após falha,
   // o estado é relido para que subbarra e diálogo reflitam o arquivo atual.
-  async function changeKimiIntegration(action) {
+  async function changeIntegration(cli, method) {
     try {
-      return await action({ confirm: true });
+      return await desktop[INTEGRATION_CLIS[cli][method]]({ confirm: true });
     } catch (error) {
-      await refreshKimiIntegration().catch(() => {});
+      await refreshIntegration(cli).catch(() => {});
       throw new Error(cleanIpcError(error));
     }
   }
 
-  async function installKimiIntegration() {
-    const status = await changeKimiIntegration(desktop.installKimiIntegration);
-    setKimiIntegration(status);
-    setIntegrationModalOpen(false);
-    notify('Ferramentas do ATLAS conectadas ao Kimi. Inicie uma nova execução para carregá-las.');
+  async function installIntegration(cli) {
+    const status = await changeIntegration(cli, 'install');
+    setIntegrations((current) => ({ ...current, [cli]: status }));
+    setIntegrationModal(null);
+    notify(`Ferramentas do ATLAS conectadas ao ${INTEGRATION_CLIS[cli].name}. Inicie uma nova execução para carregá-las.`);
   }
 
-  async function removeKimiIntegration() {
-    const status = await changeKimiIntegration(desktop.removeKimiIntegration);
-    setKimiIntegration(status);
-    setIntegrationModalOpen(false);
-    setIntegrationNoticeDismissed(true);
-    notify('Integração do ATLAS removida da configuração do Kimi.');
+  async function removeIntegration(cli) {
+    const status = await changeIntegration(cli, 'remove');
+    setIntegrations((current) => ({ ...current, [cli]: status }));
+    setIntegrationModal(null);
+    setIntegrationNoticeDismissed((current) => ({ ...current, [cli]: true }));
+    notify(`Integração do ATLAS removida da configuração do ${INTEGRATION_CLIS[cli].name}.`);
   }
 
   useEffect(() => {
@@ -1688,14 +1706,16 @@ export default function App() {
             <div className="mission-subbar-status">
               {regressionSuite?.projectId === currentProject?.id && <RegressionSuiteStatus suite={regressionSuite} onManage={() => setRegressionModalOpen(true)} />}
               {desktop?.isDesktop && !isSecondaryWindow && kimiIntegration
-                ? <KimiIntegrationStatus status={kimiIntegration} onManage={() => setIntegrationModalOpen(true)} />
+                ? <KimiIntegrationStatus status={kimiIntegration} onManage={() => setIntegrationModal('kimi')} />
                 : <span>{desktop?.isDesktop ? 'Histórico e sessões locais' : 'Wireframe ilustrativo'}</span>}
+              {desktop?.isDesktop && !isSecondaryWindow && geminiIntegration && (geminiDetected || geminiIntegration.state === 'installed' || usesGemini(projectSessions)) && <KimiIntegrationStatus cli="Gemini" status={geminiIntegration} onManage={() => setIntegrationModal('gemini')} />}
             </div>
           </div>
 
           {/* Avisos ocupam uma única linha da grade; a grade de sessões fica com o espaço restante. */}
           <div className="workspace-notices">
-          {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed && usesKimi(projectSessions) && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModalOpen(true)} onDismiss={() => setIntegrationNoticeDismissed(true)} />}
+          {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed.kimi && usesKimi(projectSessions) && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModal('kimi')} onDismiss={() => setIntegrationNoticeDismissed((current) => ({ ...current, kimi: true }))} />}
+          {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed.gemini && usesGemini(projectSessions) && <KimiIntegrationNotice cli="Gemini" status={geminiIntegration} onReview={() => setIntegrationModal('gemini')} onDismiss={() => setIntegrationNoticeDismissed((current) => ({ ...current, gemini: true }))} />}
           {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} adapters={adapters} functions={agentFunctions} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}
 
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.loading && <p className="scope-note" role="status">Abrindo sessão principal…</p>}
@@ -1789,7 +1809,7 @@ export default function App() {
         notify(suite.enabled ? 'Suíte de regressão ligada' : 'Suíte de regressão desligada');
       }} />}
       {taskModalOpen && <NewTaskModal projectName={taskState.projectName} cwd={workingDirectory} onCreate={createTask} onClose={() => setTaskModalOpen(false)} />}
-      {integrationModalOpen && kimiIntegration && !kimiIntegration.loading && <KimiIntegrationModal status={kimiIntegration} onInstall={installKimiIntegration} onRemove={removeKimiIntegration} onRefresh={refreshKimiIntegration} onClose={() => setIntegrationModalOpen(false)} />}
+      {integrationModal && integrations[integrationModal] && !integrations[integrationModal].loading && <KimiIntegrationModal key={integrationModal} cli={INTEGRATION_CLIS[integrationModal].name} status={integrations[integrationModal]} onInstall={() => installIntegration(integrationModal)} onRemove={() => removeIntegration(integrationModal)} onRefresh={() => refreshIntegration(integrationModal)} onClose={() => setIntegrationModal(null)} />}
       {messageModal && <NewMessageModal projectName={currentProject?.name || activeProject} fromName={messageModal.session.name} toName={projectSessions.find((session) => session.roleKind === 'orchestrator')?.name || 'principal'} onSend={sendDiscovery} onClose={() => setMessageModal(null)} />}
       {toast && <div className="toast" role="status"><CheckCircle2 size={15} />{toast}</div>}
     </div>

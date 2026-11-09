@@ -14,7 +14,7 @@ const { createAgentRequestHost } = require('./agent-request-host.cjs');
 const { createAgentFunctionHost } = require('./agent-function-host.cjs');
 const { createOpenPathHost } = require('./open-path-host.cjs');
 const { createExplorerIntegration, createExplorerHost } = require('./explorer-integration.cjs');
-const { ensureOrchestratorProfile, ensureClaudeProfile } = require('./orchestrator-profile.cjs');
+const { ensureOrchestratorProfile, ensureClaudeProfile, ensureGeminiProfile } = require('./orchestrator-profile.cjs');
 const { createRegressionRunner } = require('./regression-runner.cjs');
 const { createRegressionSuiteHost } = require('./regression-suite-host.cjs');
 
@@ -288,6 +288,7 @@ app.whenReady().then(async () => {
     store: operationalStore,
     orchestratorProfile: ensureOrchestratorProfile(app.getPath('userData')),
     claudeProfile: ensureClaudeProfile(app.getPath('userData'), integration.entry),
+    geminiProfile: ensureGeminiProfile(app.getPath('userData')),
     mcpHost,
     bridgeEntry: integration.entry,
     onRunEnded: (projectId) => sendToMain('task:changed', { projectId }),

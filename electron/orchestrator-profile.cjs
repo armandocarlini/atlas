@@ -83,4 +83,48 @@ function ensureClaudeProfile(userData, bridgeEntry = null) {
   };
 }
 
-module.exports = { ensureOrchestratorProfile, ensureClaudeProfile, orchestratorInstructions, PROFILE, CLAUDE_ORCHESTRATOR_SETTINGS };
+// Política da principal no Gemini (docs/diagnosticos/GEMINI_FASE4.md): tudo negado,
+// exceto ler e listar arquivos e as ferramentas do ATLAS. Sem grep, que leria o
+// conteúdo de `.env` numa busca pela pasta. Um arquivo inválido faz o Gemini
+// ignorar a política inteira: este texto é fixo e coberto por teste e smoke.
+const GEMINI_ORCHESTRATOR_POLICY = `# Principal do ATLAS: somente leitura e ferramentas do ATLAS.
+[[rule]]
+toolName = "*"
+decision = "deny"
+priority = 900
+
+${['read_file', 'list_directory', 'glob'].map((tool) => `[[rule]]
+toolName = "${tool}"
+decision = "allow"
+priority = 950
+
+[[rule]]
+toolName = "${tool}"
+argsPattern = '\\.env'
+decision = "deny"
+priority = 990
+`).join('\n')}
+[[rule]]
+mcpName = "atlas"
+toolName = "*"
+decision = "allow"
+priority = 960
+`;
+
+// GEMINI_SYSTEM_MD substitui o prompt do Gemini inteiro; \${AvailableTools} é preenchido pelo CLI.
+const GEMINI_ORCHESTRATOR_PROMPT = `Você roda no Gemini CLI, em um terminal interativo, com acesso somente de leitura.
+Ferramentas disponíveis nesta sessão:
+\${AvailableTools}
+
+${orchestratorInstructions('mcp_atlas_')}
+`;
+
+function ensureGeminiProfile(userData) {
+  const directory = profileDirectory(userData);
+  return {
+    policy: writeProfileFile(directory, 'gemini-orchestrator-policy.toml', GEMINI_ORCHESTRATOR_POLICY),
+    systemPrompt: writeProfileFile(directory, 'gemini-orchestrator.md', GEMINI_ORCHESTRATOR_PROMPT),
+  };
+}
+
+module.exports = { ensureOrchestratorProfile, ensureClaudeProfile, ensureGeminiProfile, orchestratorInstructions, PROFILE, CLAUDE_ORCHESTRATOR_SETTINGS, GEMINI_ORCHESTRATOR_POLICY, GEMINI_ORCHESTRATOR_PROMPT };

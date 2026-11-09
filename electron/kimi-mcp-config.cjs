@@ -3,9 +3,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
-// Entrada `atlas` no mcp.json do Kimi Code. O arquivo pertence ao usuário:
-// só é escrito após consentimento explícito, outros servidores e campos são
-// preservados e uma entrada `atlas` que não é do ATLAS nunca é sobrescrita.
+// Entrada `atlas` no mcp.json do Kimi Code e no settings.json do Gemini CLI. Os
+// arquivos pertencem ao usuário: só são escritos após consentimento explícito,
+// outros servidores e campos são preservados e uma entrada `atlas` que não é do
+// ATLAS nunca é sobrescrita.
 const SERVER_NAME = 'atlas';
 const BRIDGE_FILE = 'atlas-mcp-bridge.cjs';
 
@@ -21,6 +22,18 @@ function bridgePathFor(directory) {
 
 function atlasEntry({ execPath, bridgePath }) {
   return { command: execPath, args: [bridgePath], env: { ELECTRON_RUN_AS_NODE: '1' } };
+}
+
+// O Gemini CLI não repassa o ambiente da sessão aos servidores MCP: endpoint e
+// token vêm por referência, expandida a cada run. Fora do ATLAS chegam vazios e
+// a ponte fica inerte. docs/diagnosticos/GEMINI_FASE4.md.
+function geminiSettingsFile(env = process.env) {
+  return path.join(env.GEMINI_CLI_HOME || os.homedir(), '.gemini', 'settings.json');
+}
+
+function geminiEntry({ execPath, bridgePath }) {
+  const entry = atlasEntry({ execPath, bridgePath });
+  return { ...entry, env: { ...entry.env, ATLAS_MCP_ENDPOINT: '$ATLAS_MCP_ENDPOINT', ATLAS_MCP_TOKEN: '$ATLAS_MCP_TOKEN' } };
 }
 
 function isManaged(entry) {
@@ -53,14 +66,14 @@ function readConfig(file) {
   return { exists: true, data: { ...data, mcpServers: { ...(data.mcpServers || {}) } } };
 }
 
-function inspect({ home, entry }) {
-  const file = path.join(home, 'mcp.json');
+// `file` escolhe o arquivo (settings.json do Gemini); sem ele, o mcp.json do Kimi.
+function inspect({ home, entry, file = path.join(home, 'mcp.json') }) {
   const config = readConfig(file);
   return { config, status: describeStatus(file, config, entry) };
 }
 
-function getStatus({ home, entry }) {
-  return inspect({ home, entry }).status;
+function getStatus({ home, entry, file }) {
+  return inspect({ home, entry, file }).status;
 }
 
 function describeStatus(file, config, entry) {
@@ -88,22 +101,22 @@ function writeAtomic(file, data) {
 }
 
 // Verificação e escrita usam a mesma leitura do arquivo.
-function install({ home, entry }) {
-  const { config, status } = inspect({ home, entry });
+function install({ home, entry, file }) {
+  const { config, status } = inspect({ home, entry, file });
   if (status.state === 'invalid' || status.state === 'conflict') throw new Error(status.error);
   if (status.state === 'installed') return status;
   config.data.mcpServers[SERVER_NAME] = entry;
   writeAtomic(status.file, config.data);
-  return getStatus({ home, entry });
+  return getStatus({ home, entry, file });
 }
 
-function remove({ home, entry }) {
-  const { config, status } = inspect({ home, entry });
+function remove({ home, entry, file }) {
+  const { config, status } = inspect({ home, entry, file });
   if (status.state === 'invalid' || status.state === 'conflict') throw new Error(status.error);
   if (status.state === 'absent') return status;
   delete config.data.mcpServers[SERVER_NAME];
   writeAtomic(status.file, config.data);
-  return getStatus({ home, entry });
+  return getStatus({ home, entry, file });
 }
 
-module.exports = { SERVER_NAME, BRIDGE_FILE, bridgePathFor, kimiHome, atlasEntry, isManaged, getStatus, install, remove };
+module.exports = { SERVER_NAME, BRIDGE_FILE, bridgePathFor, kimiHome, atlasEntry, geminiSettingsFile, geminiEntry, isManaged, getStatus, install, remove };

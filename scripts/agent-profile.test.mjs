@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const { ensureOrchestratorProfile, ensureClaudeProfile, orchestratorInstructions, PROFILE } = createRequire(import.meta.url)('../electron/orchestrator-profile.cjs');
+const { ensureOrchestratorProfile, ensureClaudeProfile, ensureGeminiProfile, orchestratorInstructions, GEMINI_ORCHESTRATOR_POLICY, PROFILE } = createRequire(import.meta.url)('../electron/orchestrator-profile.cjs');
 
 test('perfil principal é estático, local ao perfil do app e limitado à leitura', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-profile-'));
@@ -59,4 +59,30 @@ test('arquivos da principal no Claude Code: instruções, permissões e ponte se
   ensureClaudeProfile(directory, entry);
   assert.deepEqual(JSON.parse(fs.readFileSync(files.settings, 'utf8')), settings);
   assert.equal(ensureClaudeProfile(directory, null).mcpConfig, null, 'sem ponte, sem arquivo MCP');
+});
+
+test('principal no Gemini: política nega tudo exceto leitura e ATLAS; prompt próprio com as ferramentas do CLI', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-profile-'));
+  t.after(() => {
+    const resolved = fs.realpathSync(directory);
+    assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
+    assert(path.basename(resolved).startsWith('atlas-profile-'));
+    fs.rmSync(resolved, { recursive: true, force: true });
+  });
+  const files = ensureGeminiProfile(directory);
+  const policy = fs.readFileSync(files.policy, 'utf8');
+  assert.equal(policy, GEMINI_ORCHESTRATOR_POLICY);
+  const rules = policy.split('[[rule]]').slice(1).map((block) => Object.fromEntries([...block.matchAll(/^(\w+) = (.+)$/gm)].map(([, key, value]) => [key, value])));
+  // Regressão de segurança: a primeira regra nega tudo; só leitura de arquivos e a ponte são liberadas.
+  assert.deepEqual(rules[0], { toolName: '"*"', decision: '"deny"', priority: '900' });
+  const allowed = rules.filter((rule) => rule.decision === '"allow"').map((rule) => rule.mcpName ? 'mcp:' + rule.mcpName : rule.toolName).sort();
+  assert.deepEqual(allowed, ['"glob"', '"list_directory"', '"read_file"', 'mcp:"atlas"']);
+  for (const tool of ['read_file', 'list_directory', 'glob']) {
+    const deny = rules.find((rule) => rule.toolName === '"' + tool + '"' && rule.decision === '"deny"');
+    assert.equal(deny.argsPattern, "'\\.env'", tool + ' nega .env');
+    assert(Number(deny.priority) > 960, 'negação do .env vence a liberação');
+  }
+  assert(!/grep|shell|write|replace/.test(policy), 'sem grep, shell nem escrita liberados');
+  const prompt = fs.readFileSync(files.systemPrompt, 'utf8');
+  assert(prompt.includes('$' + '{AvailableTools}') && prompt.includes(orchestratorInstructions('mcp_atlas_')));
 });

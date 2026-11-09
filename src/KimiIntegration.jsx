@@ -9,23 +9,29 @@ export const INTEGRATION_LABELS = {
   invalid: 'com erro no arquivo',
 };
 
+// Nome do CLI e do arquivo em cada integração (Kimi Code: mcp.json; Gemini CLI: settings.json).
+const TARGETS = {
+  Kimi: { file: 'arquivo de configuração MCP do Kimi' },
+  Gemini: { file: 'arquivo de configurações do Gemini' },
+};
+
 // Status discreto na subbarra do workspace; sempre oferece o caminho para revisar ou remover.
-export function KimiIntegrationStatus({ status, onManage }) {
+export function KimiIntegrationStatus({ status, onManage, cli = 'Kimi' }) {
   if (!status) return null;
   const label = status.loading ? 'verificando…' : INTEGRATION_LABELS[status.state] || 'indisponíveis';
   return <span className="integration-status" role="status">
-    <span>Ferramentas ATLAS no Kimi: {label}</span>
+    <span>Ferramentas ATLAS no {cli}: {label}</span>
     {!status.loading && <button type="button" className="link-button" onClick={onManage}>{status.state === 'installed' ? 'Gerenciar' : 'Revisar'}</button>}
   </span>;
 }
 
 // Aviso dispensável enquanto a integração não está conectada.
-export function KimiIntegrationNotice({ status, onReview, onDismiss }) {
+export function KimiIntegrationNotice({ status, onReview, onDismiss, cli = 'Kimi' }) {
   if (!status || status.loading || status.state === 'installed') return null;
   const problem = status.state === 'invalid' || status.state === 'conflict';
   const message = problem ? status.error
-    : status.state === 'outdated' ? 'A integração do ATLAS com o Kimi aponta para outra instalação do ATLAS. Revise para atualizar.'
-      : 'As ferramentas do ATLAS não estão conectadas ao Kimi. Sem elas, a sessão principal não lê descobertas nem mensagens do projeto.';
+    : status.state === 'outdated' ? `A integração do ATLAS com o ${cli} aponta para outra instalação do ATLAS. Revise para atualizar.`
+      : `As ferramentas do ATLAS não estão conectadas ao ${cli}. Sem elas, a sessão principal não lê descobertas nem mensagens do projeto.`;
   return <div className={`scope-note integration-notice ${problem ? 'error-note' : ''}`} role={problem ? 'alert' : 'status'}>
     <span>{message}</span>
     <div className="integration-notice-actions">
@@ -35,7 +41,8 @@ export function KimiIntegrationNotice({ status, onReview, onDismiss }) {
   </div>;
 }
 
-export function KimiIntegrationModal({ status, onInstall, onRemove, onRefresh, onClose }) {
+export function KimiIntegrationModal({ status, onInstall, onRemove, onRefresh, onClose, cli = 'Kimi' }) {
+  const target = TARGETS[cli] || { file: `arquivo de configuração do ${cli}` };
   const dialogRef = useModalFocus();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -63,13 +70,13 @@ export function KimiIntegrationModal({ status, onInstall, onRemove, onRefresh, o
   }}>
     <section className="modal integration-modal" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="integration-title" aria-describedby="integration-summary" aria-busy={busy}>
       <header>
-        <div><span className="eyebrow">Integração local</span><h2 id="integration-title">{installed ? 'Ferramentas do ATLAS no Kimi' : 'Conectar ferramentas do ATLAS ao Kimi'}</h2></div>
+        <div><span className="eyebrow">Integração local</span><h2 id="integration-title">{installed ? `Ferramentas do ATLAS no ${cli}` : `Conectar ferramentas do ATLAS ao ${cli}`}</h2></div>
         <button type="button" className="session-control" disabled={busy} onClick={onClose}>Fechar</button>
       </header>
       <div className="integration-body">
         <p id="integration-summary">{installed
-          ? 'O servidor atlas está registrado no arquivo de configuração MCP do Kimi abaixo. Remover apaga somente essa entrada.'
-          : 'O ATLAS vai adicionar o servidor atlas ao arquivo de configuração MCP do Kimi abaixo. Outros servidores e campos do arquivo são preservados.'}</p>
+          ? `O servidor atlas está registrado no ${target.file} abaixo. Remover apaga somente essa entrada.`
+          : `O ATLAS vai adicionar o servidor atlas ao ${target.file} abaixo. Outros servidores e campos do arquivo são preservados.`}</p>
         <div className="integration-field">
           <span>Arquivo</span>
           <code className="integration-path">{status.file}</code>
@@ -79,9 +86,9 @@ export function KimiIntegrationModal({ status, onInstall, onRemove, onRefresh, o
           <pre className="integration-entry" tabIndex={0} aria-label="Conteúdo exato da entrada atlas">{status.entryText}</pre>
         </div>
         <ul className="integration-effects">
-          <li><span>Vale para todas as sessões do Kimi. Fora do ATLAS o servidor não expõe ferramentas.</span></li>
+          <li><span>Vale para todas as sessões do {cli}. Fora do ATLAS o servidor não expõe ferramentas.</span></li>
           <li><span>No ATLAS, cada sessão acessa só sessões, tarefas e mensagens do próprio projeto. A sessão principal pode pedir novos agentes, que só começam após sua aprovação. Não há ferramentas para executar comandos ou alterar arquivos.</span></li>
-          <li><span>O Kimi continua pedindo sua aprovação antes de cada ferramenta, conforme suas regras de permissão.</span></li>
+          <li><span>O {cli} continua pedindo sua aprovação antes de cada ferramenta, conforme suas regras de permissão.</span></li>
           <li><span>Sessões já abertas precisam de nova execução para carregar as ferramentas.</span></li>
         </ul>
         {(error || (blocked && status.error)) && <p className="error-note integration-error" role="alert">{error || status.error}</p>}

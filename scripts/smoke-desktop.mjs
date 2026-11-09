@@ -19,6 +19,8 @@ const extraProject = path.join(fixture, 'Projeto adicional');
 // A integração MCP grava no mcp.json do Kimi: o smoke nunca usa a home real.
 const kimiHome = path.join(fixture, 'kimi-home');
 const kimiMcp = path.join(kimiHome, 'mcp.json');
+// A integração do Gemini grava no settings.json da home dele: também só na fixture.
+const geminiHome = path.join(fixture, 'gemini-home');
 fs.mkdirSync(resultsDir, { recursive: true });
 fs.mkdirSync(profile);
 fs.mkdirSync(kimiHome);
@@ -89,7 +91,7 @@ const controlToken = randomUUID();
 // Chave de fixture no registro do usuário para a entrada do Explorador; removida ao final.
 const explorerRoot = `HKCU\\Software\\ATLAS-Smoke-${randomUUID()}`;
 const openFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-smoke-open-'));
-const env = { ...process.env, ATLAS_EXPLORER_ROOT: explorerRoot, ATLAS_SMOKE_PROFILE: profile, ATLAS_SMOKE_PROJECT: extraProject, ATLAS_SMOKE_CONTROL_PORT: String(controlPort), ATLAS_SMOKE_TOKEN: controlToken, ATLAS_SMOKE_NO_CLI: '1', KIMI_CODE_HOME: kimiHome };
+const env = { ...process.env, ATLAS_EXPLORER_ROOT: explorerRoot, ATLAS_SMOKE_PROFILE: profile, ATLAS_SMOKE_PROJECT: extraProject, ATLAS_SMOKE_CONTROL_PORT: String(controlPort), ATLAS_SMOKE_TOKEN: controlToken, ATLAS_SMOKE_NO_CLI: '1', KIMI_CODE_HOME: kimiHome, GEMINI_CLI_HOME: geminiHome };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.VITE_DEV_SERVER_URL;
 // Codex can inject its bundled PowerShell modules; exercise Windows' own modules.
@@ -459,7 +461,7 @@ try {
   fs.writeFileSync(path.join(resultsDir, 'session-modal-adapters.json'), JSON.stringify(adapterOption, null, 2));
   // Só adaptadores detectados no PATH, com versão ou "não encontrado"; nunca os cards de demonstração.
   assert(adapterOption.slice(1).every((item) => /\d+\.\d+\.\d+|não encontrado/.test(item.text)), 'modal desktop não deve listar CLIs fictícios');
-  assert.deepEqual(adapterOption.map((item) => item.value), ['', 'kimi-code', 'opencode', 'claude-code', 'codex'], 'placeholder e adaptadores na ordem do ATLAS');
+  assert.deepEqual(adapterOption.map((item) => item.value), ['', 'kimi-code', 'opencode', 'claude-code', 'codex', 'gemini'], 'placeholder e adaptadores na ordem do ATLAS');
   assert.deepEqual(adapterOption.slice(0, 3).map((item) => item.disabled), [true, false, false], 'placeholder desabilitado, Kimi e OpenCode da fixture disponíveis');
   assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]').value`), '', 'nenhum CLI pré-selecionado');
   assert(await main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`), 'criar exige a escolha');
@@ -520,6 +522,37 @@ try {
   await click(main, '.modal button', 'Cancelar');
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'orchestrator choice closed');
   console.log('PASS escolha explícita de CLI e modelo para sessão e principal, sem padrão e com falha honesta');
+
+  // Gemini: a ponte não entra por run; o mesmo consentimento grava no settings.json da home de fixture.
+  const geminiSettings = path.join(geminiHome, '.gemini', 'settings.json');
+  fs.mkdirSync(path.dirname(geminiSettings), { recursive: true });
+  fs.writeFileSync(geminiSettings, JSON.stringify({ security: { auth: { selectedType: 'oauth-personal' } } }));
+  const geminiStatus = "[...document.querySelectorAll('.integration-status')].find((item) => item.innerText.includes('no Gemini'))";
+  await until(() => main.evaluate(`${geminiStatus}?.innerText.includes('não conectadas')`), 'gemini integration status after detection');
+  await main.evaluate(`${geminiStatus}.querySelector('.link-button').click()`);
+  await until(() => main.evaluate("document.querySelector('.integration-modal #integration-title')?.textContent.includes('Gemini')"), 'gemini consent dialog open');
+  const geminiConsent = await main.evaluate("(() => { const dialog = document.querySelector('.integration-modal'); return { inDialog: dialog.contains(document.activeElement), path: dialog.querySelector('.integration-path').textContent, entry: dialog.querySelector('.integration-entry').textContent, summary: dialog.querySelector('#integration-summary').textContent }; })()");
+  assert(geminiConsent.inDialog, 'focus moves into the Gemini dialog');
+  assert.equal(geminiConsent.path, geminiSettings, 'Dialog shows the exact Gemini settings file');
+  assert(geminiConsent.entry.includes('$ATLAS_MCP_TOKEN') && geminiConsent.entry.includes('$ATLAS_MCP_ENDPOINT'), 'Entry carries only references to the run token');
+  assert(geminiConsent.summary.includes('arquivo de configurações do Gemini'));
+  const geminiAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(geminiAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in Gemini consent dialog');
+  await screenshot(main, 'integration-consent-gemini');
+  await click(main, '.integration-modal .button.primary', 'Conectar');
+  await until(() => main.evaluate(`!document.querySelector('.integration-modal') && ${geminiStatus}?.innerText.includes('conectadas') && !${geminiStatus}.innerText.includes('não')`), 'gemini integration installed');
+  const geminiInstalled = JSON.parse(fs.readFileSync(geminiSettings, 'utf8'));
+  assert.deepEqual(geminiInstalled.security, { auth: { selectedType: 'oauth-personal' } }, 'Other Gemini settings preserved');
+  assert.deepEqual(geminiInstalled.mcpServers.atlas.env, { ELECTRON_RUN_AS_NODE: '1', ATLAS_MCP_ENDPOINT: '$ATLAS_MCP_ENDPOINT', ATLAS_MCP_TOKEN: '$ATLAS_MCP_TOKEN' });
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(kimiMcp, 'utf8')).mcpServers), ['github'], 'Kimi configuration untouched');
+  await main.evaluate(`${geminiStatus}.querySelector('.link-button').click()`);
+  await until(() => main.evaluate("Boolean(document.querySelector('.integration-modal .button.danger'))"), 'gemini manage dialog offers removal');
+  await click(main, '.integration-modal .button.danger', 'Remover integração');
+  await until(() => main.evaluate(`!document.querySelector('.integration-modal') && ${geminiStatus}?.innerText.includes('não conectadas')`), 'gemini integration removed');
+  const geminiRemoved = JSON.parse(fs.readFileSync(geminiSettings, 'utf8'));
+  assert.equal(geminiRemoved.mcpServers.atlas, undefined, 'Removal deletes the ATLAS entry');
+  assert.deepEqual(geminiRemoved.security, { auth: { selectedType: 'oauth-personal' } });
+  console.log('PASS consentimento do Gemini: settings.json exato, só referências ao token, conectar e remover preservando o restante');
   // Funções de agente (v0.2): Orquestrador e cinco padrão nascem sem CLI nem modelo;
   // a escolha salva só preenche e volta preenchida ao editar.
   await until(() => main.evaluate(`document.querySelector('.functions-pending')?.textContent === '6 a configurar'`), 'aviso de funções a configurar');

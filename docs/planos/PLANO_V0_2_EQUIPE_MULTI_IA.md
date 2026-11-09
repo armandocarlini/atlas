@@ -1,6 +1,6 @@
 # Plano v0.2: equipe com várias IAs (Claude Code, Codex, Gemini e revisão cruzada)
 
-Situação: **aprovado pelo mantenedor em 08/11/2026.** A fase 1 (investigação de Claude Code e Codex) está registrada em `docs/diagnosticos/CLAUDE_CODEX_FASE1.md`. O Gemini aguarda a instalação do CLI pelo mantenedor.
+Situação: **aprovado pelo mantenedor em 08/11/2026.** A fase 1 (investigação de Claude Code e Codex) está registrada em `docs/diagnosticos/CLAUDE_CODEX_FASE1.md`. O Gemini foi investigado em 09/11/2026 (`docs/diagnosticos/GEMINI_FASE4.md`): a ponte não entra por run, e o mantenedor decidiu que ela entra com consentimento, como no Kimi.
 
 Substitui o antigo item 4 da v0.2 no `docs/ROADMAP.md`. Os playbooks saem da v0.2 e vão para "Possíveis ideias". O mantenedor considerou que eles duplicam o que a principal já faz.
 

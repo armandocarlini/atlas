@@ -7,7 +7,7 @@ const MODELS_CACHE_MS = 60 * 1000;
 // Ciclo de vida de sessões de agente neste marco: identidade gerada no
 // processo principal, cwd validado, PTY real e estado mínimo em memória.
 // O estado operacional é apenas running/exited; nada é inferido do ANSI.
-function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, listModelsImpl = listModels, store, onPersistenceError = console.error, orchestratorProfile, claudeProfile = null, mcpHost = null, bridgeEntry = null, onRunEnded = () => {} }) {
+function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, listModelsImpl = listModels, store, onPersistenceError = console.error, orchestratorProfile, claudeProfile = null, geminiProfile = null, mcpHost = null, bridgeEntry = null, onRunEnded = () => {} }) {
   const agents = new Map();
   const pendingOrchestrators = new Map();
   const modelCache = new Map();
@@ -149,7 +149,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
 
     let record;
     try {
-      const launch = launchFor({ adapter, role, model, orchestratorProfile, claudeProfile, bridge });
+      const launch = launchFor({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge });
       record = transport.spawn({
         file: adapter.executable,
         args: launch.args,

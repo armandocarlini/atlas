@@ -32,6 +32,7 @@
     "smoke:opencode": "node scripts/smoke-opencode.mjs",
     "smoke:claude": "node scripts/smoke-claude.mjs",
     "smoke:codex": "node scripts/smoke-codex.mjs",
+    "smoke:gemini": "node scripts/smoke-gemini.mjs",
     "smoke:installer": "node scripts/smoke-installer.mjs",
     "check:public": "node scripts/check-public-files.mjs"
   },
