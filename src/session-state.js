@@ -47,3 +47,7 @@ export function sessionExit(current, sessionId, exit) {
 export function usesKimi(sessions) {
   return sessions.some((session) => typeof session.cli === 'string' && /kimi/i.test(session.cli));
 }
+
+export function usesGemini(sessions) {
+  return sessions.some((session) => typeof session.cli === 'string' && /gemini/i.test(session.cli));
+}

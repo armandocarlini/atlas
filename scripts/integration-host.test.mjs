@@ -17,7 +17,7 @@ function harness(t) {
     isMainSender: (event) => event.sender === 'main',
     execPath: '/opt/atlas/electron',
     bridgePath: '/opt/atlas/electron/atlas-mcp-bridge.cjs',
-    env: { KIMI_CODE_HOME: home },
+    env: { KIMI_CODE_HOME: home, GEMINI_CLI_HOME: home },
   });
   // ipcMain.handle converte exceções síncronas em rejeições; o harness faz o mesmo.
   const call = async (name, request, sender = 'main') => handlers.get(name)({ sender }, request);
@@ -55,4 +55,20 @@ test('JSON inválido do usuário vira erro acionável sem escrita', async (t) =>
   assert.match(status.error, /não é JSON válido/);
   await assert.rejects(call('integration:kimi-mcp-install', { confirm: true }), /não é JSON válido/);
   assert.equal(fs.readFileSync(file, 'utf8'), '{ quebrado');
+});
+
+test('Gemini: mesmo consentimento, no settings.json do Gemini e com referências no lugar do token', async (t) => {
+  const { call, home } = harness(t);
+  const file = path.join(home, '.gemini', 'settings.json');
+  const status = await call('integration:gemini-mcp-status');
+  assert.equal(status.state, 'absent');
+  assert.equal(status.file, file);
+  assert.deepEqual(JSON.parse(status.entryText).mcpServers.atlas.env, { ELECTRON_RUN_AS_NODE: '1', ATLAS_MCP_ENDPOINT: '$ATLAS_MCP_ENDPOINT', ATLAS_MCP_TOKEN: '$ATLAS_MCP_TOKEN' });
+  await assert.rejects(call('integration:gemini-mcp-install', {}), /Confirme/);
+  await assert.rejects(call('integration:gemini-mcp-install', { confirm: true }, 'popup'), /não autorizada a alterar a integração do Gemini/);
+  assert.equal(fs.existsSync(file), false);
+  assert.equal((await call('integration:gemini-mcp-install', { confirm: true })).state, 'installed');
+  assert(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.atlas);
+  assert.equal(fs.existsSync(path.join(home, 'mcp.json')), false, 'o mcp.json do Kimi não é tocado');
+  assert.equal((await call('integration:gemini-mcp-remove', { confirm: true })).state, 'absent');
 });

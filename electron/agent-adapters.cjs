@@ -62,6 +62,17 @@ const ADAPTERS = [
     // só nesta run, sem gravar no config.toml do usuário. Só agente nesta versão.
     atlasTools: 'per-run',
   },
+  {
+    id: 'gemini',
+    name: 'Gemini',
+    command: 'gemini',
+    versionArgs: ['--version'],
+    spawnArgs: [],
+    // Modelos vêm de `gemini --list-models`. A ponte não entra por run no Gemini:
+    // fica no settings.json do usuário, gravada só com consentimento (como no Kimi).
+    // A política e as instruções da principal entram por arquivos, só na run.
+    atlasTools: 'consent',
+  },
 ];
 
 function pathExtensions(env, platform) {
@@ -180,6 +191,14 @@ async function listModels(adapter, { env = process.env, execFileImpl = defaultEx
     } catch (error) {
       throw new Error(`O OpenCode não listou os modelos: ${describeError(error, { timeoutMs: MODELS_TIMEOUT_MS, command: 'models' })}.`);
     }
+  } else if (adapter.id === 'gemini') {
+    try {
+      const { stdout } = await runCli(adapter.executable, ['--list-models'], { execFileImpl, env, timeout: MODELS_TIMEOUT_MS });
+      // Cada modelo abre uma linha sem recuo: "gemini-2.5-pro (gemini-2.5-pro)".
+      models = stripAnsi(stdout).split(/\r?\n/).map((line) => line.match(/^([A-Za-z0-9][A-Za-z0-9._:/-]*) \(/)?.[1]).filter(Boolean);
+    } catch (error) {
+      throw new Error(`O Gemini não listou os modelos: ${describeError(error, { timeoutMs: MODELS_TIMEOUT_MS, command: '--list-models' })}.`);
+    }
   } else if (adapter.id === 'codex') {
     let catalog;
     try {
@@ -255,7 +274,7 @@ function codexBridgeArgs(bridge) {
   ];
 }
 
-function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, bridge = null }) {
+function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, geminiProfile = null, bridge = null }) {
   if (role === 'orchestrator') assertOrchestratorSupport(adapter);
   if (model !== null && !MODEL_PATTERN.test(model)) throw new Error('Modelo inválido.');
   const modelArgs = model ? ['--model', model] : [];
@@ -300,6 +319,20 @@ function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile 
     }
     // A versão conferida não deve mudar por autoatualização ao iniciar a run.
     return { args, env: { DISABLE_AUTOUPDATER: '1' } };
+  }
+  if (adapter.id === 'gemini') {
+    if (role !== 'orchestrator') return { args: [...adapter.spawnArgs, ...modelArgs], env: {} };
+    if (!geminiProfile) throw new Error('Perfil do orquestrador não configurado.');
+    // Shim .cmd: os caminhos do perfil passam pelo cmd.exe.
+    for (const file of [geminiProfile.policy, geminiProfile.systemPrompt]) {
+      if (!CMD_SAFE_VALUE.test(file)) throw new Error('Pasta de perfis do ATLAS insegura para o cmd.exe; a principal no Gemini não pode iniciar.');
+    }
+    // Política: só leitura de arquivos (sem grep) e as ferramentas do ATLAS; só a
+    // ponte do ATLAS como servidor MCP. O prompt da principal substitui o do CLI.
+    return {
+      args: [...adapter.spawnArgs, ...modelArgs, '--policy', geminiProfile.policy, '--allowed-mcp-server-names', 'atlas'],
+      env: { GEMINI_SYSTEM_MD: geminiProfile.systemPrompt },
+    };
   }
   if (adapter.id === 'codex') {
     return { args: [...adapter.spawnArgs, ...modelArgs, ...(bridge ? codexBridgeArgs(bridge) : [])], env: {} };

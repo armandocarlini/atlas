@@ -106,6 +106,7 @@ const { listModels, launchFor, runCli, assertOrchestratorSupport } = createRequi
 const opencode = ADAPTERS.find((adapter) => adapter.id === 'opencode');
 const claude = ADAPTERS.find((adapter) => adapter.id === 'claude-code');
 const codex = ADAPTERS.find((adapter) => adapter.id === 'codex');
+const gemini = ADAPTERS.find((adapter) => adapter.id === 'gemini');
 
 test('OpenCode por shim .cmd é consultado pelo cmd.exe só com argumentos constantes', async () => {
   const calls = [];
@@ -236,4 +237,23 @@ test('Codex não é oferecido como principal enquanto o somente leitura não est
   assert.throws(() => assertOrchestratorSupport({ ...codex, version: '0.164.0' }), /Codex indisponível para a principal.*disponível como agente/);
   assert.throws(() => launchFor({ adapter: codex, role: 'orchestrator' }), /Codex indisponível para a principal/);
   assert.doesNotThrow(() => assertOrchestratorSupport({ ...claude, version: '2.1.319' }));
+});
+
+test('modelos do Gemini vêm de `gemini --list-models`, um por linha sem recuo', async () => {
+  const output = 'Available Gemini Models:\n\nauto (Auto)\n  Description:   decide sozinho\n  Context limit: 1\n\ngemini-2.5-pro (gemini-2.5-pro)\n  Context limit: 1\n\nmal formado & x (y)\n';
+  const models = await listModels({ ...gemini, status: 'available', executable: 'C:\\bin\\gemini.exe' }, { execFileImpl: async (file, args) => { assert.deepEqual(args, ['--list-models']); return { stdout: output, stderr: '' }; } });
+  assert.deepEqual(models, ['auto', 'gemini-2.5-pro']);
+});
+
+test('lançamento do Gemini: agente só com o modelo; principal com política e prompt do ATLAS', () => {
+  assert.equal(gemini.atlasTools, 'consent', 'a ponte vem do settings.json com consentimento');
+  assert.deepEqual(launchFor({ adapter: gemini, model: 'gemini-2.5-pro' }), { args: ['--model', 'gemini-2.5-pro'], env: {} });
+  const geminiProfile = { policy: 'C:\\perfil\\gemini-orchestrator-policy.toml', systemPrompt: 'C:\\perfil\\gemini-orchestrator.md' };
+  const principal = launchFor({ adapter: gemini, role: 'orchestrator', model: 'gemini-2.5-pro', geminiProfile, bridge: { command: 'x', args: [], env: { ATLAS_MCP_TOKEN: 'segredo-da-run' } } });
+  assert.deepEqual(principal.args, ['--model', 'gemini-2.5-pro', '--policy', 'C:\\perfil\\gemini-orchestrator-policy.toml', '--allowed-mcp-server-names', 'atlas']);
+  assert.deepEqual(principal.env, { GEMINI_SYSTEM_MD: 'C:\\perfil\\gemini-orchestrator.md' });
+  assert(!JSON.stringify(principal).includes('segredo-da-run'));
+  assert(!principal.args.some((item) => /yolo|auto_edit|approval-mode|skip-trust/.test(item)), 'sem flags de autonomia nem de confiança');
+  assert.throws(() => launchFor({ adapter: gemini, role: 'orchestrator' }), /Perfil do orquestrador/);
+  assert.throws(() => launchFor({ adapter: gemini, role: 'orchestrator', geminiProfile: { ...geminiProfile, policy: 'C:\\a&b\\p.toml' } }), /insegura para o cmd.exe/);
 });
