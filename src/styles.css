@@ -915,3 +915,6 @@ body { transition: background-color .18s ease, color .18s ease; }
 .regression-log pre { max-height: 280px; margin: 0; padding: 8px 10px; overflow: auto; border-top: 1px solid var(--border); color: var(--text); font: 11px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .review-suite-state { margin-right: auto; align-self: center; color: var(--muted); font-size: 12px; }
 .regression-stopping { align-self: center; color: var(--muted); font-size: 12px; }
+
+/* Chave "Principal só coordena": desligada, o aviso usa o tom de atenção do design system. */
+.agent-choice-note.orchestrator-mode-warning { color: var(--warning); }

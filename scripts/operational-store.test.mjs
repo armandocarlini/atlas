@@ -249,3 +249,20 @@ test('tentativas da principal ordenam por sequência durável, mesmo se relógio
   assert.equal(runs[1].cli_version, '2.3.3');
   assert.equal(store.listSessions(projectId).length, 1);
 });
+
+test('modo da principal: sem linha é só coordena; só valores conhecidos; troca auditada', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-mode-'));
+  const store = createOperationalStore({ filename: path.join(directory, 'atlas.db') });
+  t.after(() => { store.close(); fs.rmSync(directory, { recursive: true, force: true }); });
+  store.registerProject({ id: 'p1', name: 'P1', path: '/fixtures/p1' });
+  assert.equal(store.getOrchestratorMode('p1'), 'coordinate');
+  assert.throws(() => store.setOrchestratorMode({ projectId: 'p1', mode: 'yolo' }), /Modo da principal inválido/);
+  assert.throws(() => store.setOrchestratorMode({ projectId: 'nenhum', mode: 'auto' }), /Projeto não encontrado/);
+  assert.equal(store.setOrchestratorMode({ projectId: 'p1', mode: 'auto' }), 'auto');
+  assert.equal(store.getOrchestratorMode('p1'), 'auto');
+  store.setOrchestratorMode({ projectId: 'p1', mode: 'auto' });
+  store.setOrchestratorMode({ projectId: 'p1', mode: 'coordinate' });
+  const events = store.listEvents('p1').filter((item) => item.type === 'orchestrator.mode');
+  assert.deepEqual(events.map((item) => item.payload.mode), ['auto', 'coordinate'], 'repetir o mesmo modo não gera evento');
+  assert(events.every((item) => item.payload.actor === 'user'));
+});
