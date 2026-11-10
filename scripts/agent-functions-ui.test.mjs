@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { describeChoice, pendingConfiguration, pickRecommendation } from '../src/agent-functions.js';
+import { describeChoice, pendingConfiguration, pickRecommendation, sameAiWorkers } from '../src/agent-functions.js';
 
 const adapters = [
   { id: 'kimi-code', name: 'Kimi Code', status: 'missing' },
@@ -33,4 +33,19 @@ test('descrição da escolha salva', () => {
   assert.equal(describeChoice({ adapterId: 'opencode', model: 'o/x' }, adapters), 'OpenCode · o/x');
   assert.equal(describeChoice({ adapterId: 'kimi-code', model: null }, adapters), 'Kimi Code · modelo da configuração do CLI');
   assert.equal(describeChoice({ adapterId: 'outro', model: 'm' }, adapters), 'outro · m');
+});
+
+test('mesma IA: mesmo CLI e modelo, de outra função; sem modelo de um lado, basta o CLI', () => {
+  const workedBy = [
+    { adapter: 'claude-code', model: 'Claude-Opus-5-5 ', function: 'implementar' },
+    { adapter: 'opencode', model: null, function: 'implementar' },
+    { adapter: 'codex', model: 'gpt-a', function: 'revisar' },
+  ];
+  assert.deepEqual(sameAiWorkers(workedBy, { adapterId: 'claude-code', model: 'claude-opus-5-5' }, 'revisar').map((item) => item.adapter), ['claude-code'], 'maiúsculas e espaços não contam');
+  assert.deepEqual(sameAiWorkers(workedBy, { adapterId: 'claude-code', model: 'opus' }, 'revisar'), [], 'apelidos não são reconhecidos como o mesmo modelo');
+  assert.deepEqual(sameAiWorkers(workedBy, { adapterId: 'opencode', model: 'x/y' }, 'revisar').map((item) => item.adapter), ['opencode'], 'modelo não registrado: basta o CLI');
+  assert.deepEqual(sameAiWorkers(workedBy, { adapterId: 'claude-code', model: '' }, 'revisar').map((item) => item.adapter), ['claude-code'], 'modelo da configuração do CLI: basta o CLI');
+  assert.deepEqual(sameAiWorkers(workedBy, { adapterId: 'codex', model: 'gpt-a' }, 'revisar'), [], 'a mesma função não acusa o revisor anterior');
+  assert.deepEqual(sameAiWorkers(undefined, { adapterId: 'codex' }, 'revisar'), []);
+  assert.deepEqual(sameAiWorkers(workedBy, { adapterId: '' }, 'revisar'), [], 'sem CLI escolhido, sem aviso');
 });

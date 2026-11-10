@@ -238,3 +238,26 @@ test('regressão: textos com quebra de linha CRLF são aceitos e normalizados', 
   assert.equal(handoff.nextSteps, 'Passo 1\nPasso 2');
   assert.throws(() => offer({ taskId: task('project-a', 'Outra').id, objective: 'Sozinho\rretorno' }), /Objetivo: remova/);
 });
+
+test('revisão cruzada: workedBy vem do registro do ATLAS, na ordem, por tarefa e por projeto', (t) => {
+  const { store, task, offer, accept } = harness(t);
+  const created = task();
+  assert.deepEqual(store.listTaskWorkers('project-a'), {}, 'sem claim, ninguém trabalhou');
+  accept(offer({ taskId: created.id }));
+  store.releaseTask({ projectId: 'project-a', taskId: created.id, actor: 'user' });
+  const reviewer = store.startSession({ id: 'revisor', projectId: 'project-a', name: 'revisor', adapterId: 'claude-code', model: 'opus', functionSlug: 'revisar', functionOverridden: false, cli: 'Claude Code', version: '2.1.319', cwd: '/fixture/project-a', origin: 'orchestrator', createdAt: '2026-10-27T11:00:00.000Z' });
+  // O modelo informado na troca (/model) vale no lugar do inicial.
+  store.declareRunModel({ runId: reviewer.id, model: 'claude-opus-5-5' });
+  store.acceptHandoff({ projectId: 'project-a', handoffId: offer({ taskId: created.id, toSessionId: 'revisor' }).id, sessionId: 'revisor', runId: reviewer.id });
+  assert.deepEqual(store.listTaskWorkers('project-a'), { [created.id]: [
+    { adapter: 'kimi-code', model: null, function: null },
+    { adapter: 'claude-code', model: 'claude-opus-5-5', function: 'revisar' },
+  ] });
+  assert.deepEqual(store.listTaskWorkers('project-b'), {}, 'outro projeto não vê');
+  // O cartão do pedido de agente da tarefa recebe a mesma lista.
+  store.releaseTask({ projectId: 'project-a', taskId: created.id, actor: 'user' });
+  const request = store.requestAgent({ projectId: 'project-a', requestedBy: 'principal', name: 'revisor-2', purpose: 'Revisar a correção.', taskId: created.id, idempotencyKey: 'revisao-cruzada-1' });
+  assert.deepEqual(store.listAgentRequests('project-a').find((item) => item.id === request.id).taskWorkedBy.map((item) => item.adapter), ['kimi-code', 'claude-code']);
+  const free = store.requestAgent({ projectId: 'project-a', requestedBy: 'principal', name: 'explorador', purpose: 'Explorar.', idempotencyKey: 'revisao-cruzada-2' });
+  assert.equal(store.listAgentRequests('project-a').find((item) => item.id === free.id).taskWorkedBy, undefined, 'pedido sem tarefa não traz lista');
+});

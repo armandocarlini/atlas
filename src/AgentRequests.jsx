@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AgentChoice } from './AgentChoice.jsx';
-import { choiceFromFunction, pickRecommendation } from './agent-functions.js';
+import { choiceFromFunction, pickRecommendation, sameAiWorkers } from './agent-functions.js';
 
 function formatTime(iso) {
   const date = new Date(iso);
@@ -32,6 +32,10 @@ function AgentRequestCard({ request, policy, requesterName, adapters, functions,
   }
   const pending = request.state === 'pending';
   const titleId = `agent-request-${request.id}`;
+  // Revisão cruzada: só avisa, não bloqueia; o usuário pode aprovar a mesma IA.
+  const sameAi = pending && choice.ready ? sameAiWorkers(request.taskWorkedBy, choice, functionSlug) : [];
+  const nameOfFunction = (slug) => (functions?.items || []).find((item) => item.slug === slug)?.name || (slug ? slug : 'sem função');
+  const nameOfAdapter = (id) => (adapters || []).find((item) => item.id === id)?.name || id;
 
   async function run(kind, action) {
     if (busy) return;
@@ -79,6 +83,9 @@ function AgentRequestCard({ request, policy, requesterName, adapters, functions,
       {(functionChanged || choiceChanged) && <p className="agent-choice-note">Alterado em relação {functionChanged ? 'à função escolhida pela principal' : 'ao que está salvo na função'}.</p>}
     </div>}
     {pending && <AgentChoice key={functionSlug || 'none'} adapters={adapters} value={choice} onChange={setChoice} disabled={Boolean(busy)} recommendation={pickRecommendation(functions?.recommendations, functionSlug, adapters)} />}
+    {sameAi.length > 0 && <p className="agent-choice-note agent-request-same-ai" role="note">
+      Mesma IA que já trabalhou nesta tarefa como {[...new Set(sameAi.map((worker) => nameOfFunction(worker.function)))].join(', ')}: {nameOfAdapter(sameAi[0].adapter)}{sameAi[0].model ? ` · ${sameAi[0].model}` : ' (modelo não registrado)'}. Para um segundo olhar, escolha outro CLI ou modelo; se preferir, aprove assim mesmo.
+    </p>}
     {error && <p className="agent-request-error" role="alert">{error}</p>}
     <div className="agent-request-actions">
       {pending ? <>

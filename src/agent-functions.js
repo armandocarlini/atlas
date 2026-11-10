@@ -26,3 +26,13 @@ export function describeChoice(item, adapters) {
 export function choiceFromFunction(item) {
   return item?.adapterId ? { adapterId: item.adapterId, model: item.model || '', ready: false } : { adapterId: '', model: '', ready: false };
 }
+
+// Mesma IA: mesmo CLI e mesmo modelo, sem diferença de maiúsculas e espaços. Sem
+// modelo registrado de um dos lados, basta o mesmo CLI (o modelo fica desconhecido).
+const normalizeModel = (model) => (typeof model === 'string' && model.trim() ? model.trim().toLowerCase() : null);
+export function sameAiWorkers(workedBy, choice, functionSlug) {
+  if (!choice?.adapterId || !Array.isArray(workedBy)) return [];
+  const chosen = normalizeModel(choice.model);
+  return workedBy.filter((worker) => worker.adapter === choice.adapterId && (worker.function || '') !== (functionSlug || '')
+    && (chosen === null || normalizeModel(worker.model) === null || normalizeModel(worker.model) === chosen));
+}
