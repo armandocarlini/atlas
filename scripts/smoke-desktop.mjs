@@ -708,6 +708,99 @@ try {
   await focus('smoke-dois');
   console.log('PASS colunas redimensionáveis: arraste, teclado, encaixes, modos compacto e só ícones, flyouts, PTY e persistência');
 
+  // Terminais redimensionáveis: trilhas compartilhadas na Grade e em Principal + agentes.
+  async function dragBy(selector, dx, dy) {
+    const start = await main.evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x, y: start.y });
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: start.x, y: start.y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 8; step += 1) await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + dx * step / 8, y: start.y + dy * step / 8, button: 'left', buttons: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: start.x + dx, y: start.y + dy, button: 'left', buttons: 0, clickCount: 1 });
+    await delay(200);
+  }
+  const cardBoxes = () => main.evaluate(`[...document.querySelectorAll('.session-grid .session-card')].map(item => { const rect = item.getBoundingClientRect(); return { name: item.dataset.sessionName, width: Math.round(rect.width), height: Math.round(rect.height), left: Math.round(rect.left), top: Math.round(rect.top) }; })`);
+  const savedTracks = () => main.evaluate(`JSON.parse(localStorage.getItem('atlas-terminal-workspace')).tracks`);
+  const verticalTrack = '.track-resizer.vertical';
+  const horizontalTrack = '.track-resizer.horizontal';
+  await chooseTerminalLayout(main, 'grid');
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await main.evaluate(`(() => { const button = document.querySelector('.workspace-panel-toggle[data-panel=right]'); if (button.getAttribute('aria-expanded') === 'true') button.click(); })()`);
+  await until(() => main.evaluate(`document.querySelectorAll(${JSON.stringify(verticalTrack)}).length === 1 && !document.querySelector(${JSON.stringify(horizontalTrack)})`), 'Grade larga: dois terminais lado a lado com uma divisória vertical');
+  const gridBefore = await cardBoxes();
+  assert(Math.abs(gridBefore[0].width - gridBefore[1].width) <= 2 && gridBefore[0].top === gridBefore[1].top, `trilhas iguais lado a lado: ${JSON.stringify(gridBefore)}`);
+  const trackSizeBefore = await ptySize('TRACK_A');
+  await dragBy(verticalTrack, 200, 0);
+  const gridDragged = await cardBoxes();
+  assert(Math.abs(gridDragged[0].width - (gridBefore[0].width + 200)) <= 2 && Math.abs(gridDragged[1].width - (gridBefore[1].width - 200)) <= 2, `fronteira acompanha o ponteiro: ${JSON.stringify(gridDragged)}`);
+  assert(gridDragged[1].left - (gridDragged[0].left + gridDragged[0].width) <= 1, 'terminais continuam contíguos');
+  assert.notEqual(await ptySize('TRACK_B'), trackSizeBefore, 'PTY recebe o tamanho final ao soltar a divisória');
+  await dragBy(verticalTrack, 4000, 0);
+  const gridLimit = await cardBoxes();
+  assert(gridLimit[1].width >= 318, `mínimo de ~40 colunas no terminal que cede: ${JSON.stringify(gridLimit)}`);
+  assert.equal(Object.keys((await savedTracks()).grid || {}).join(), '2x1', 'tamanhos salvos por layout e forma');
+  await main.evaluate(`document.querySelector(${JSON.stringify(verticalTrack)}).focus()`);
+  await key(main, 'ArrowLeft', { code: 'ArrowLeft', windowsVirtualKeyCode: 37 });
+  const gridKeyboard = await cardBoxes();
+  assert(Math.abs(gridKeyboard[0].width - (gridLimit[0].width - 16)) <= 2, `seta move a fronteira 16px: ${JSON.stringify(gridKeyboard)}`);
+  assert.equal(await main.evaluate(`document.querySelector(${JSON.stringify(verticalTrack)}).getAttribute('aria-valuenow')`), String(gridKeyboard[0].width));
+  await screenshot(main, 'tracks-grid');
+  // Ocultar um terminal muda a forma; restaurar devolve os tamanhos salvos daquela forma.
+  // As trilhas são proporcionais: com a Navegação de volta, a proporção se mantém.
+  const share = (boxes) => boxes[0].width / (boxes[0].width + boxes[1].width);
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await until(async () => (await cardBoxes()).length === 2 && Math.abs(share(await cardBoxes()) - share(gridKeyboard)) < 0.01, 'proporção mantida ao mostrar a Navegação');
+  await sessionAction(main, card('smoke-dois'), 'hide');
+  await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 1 && !document.querySelector('.track-resizer')`), 'um terminal: sem divisórias e ocupando tudo');
+  await main.evaluate(`[...document.querySelectorAll('.tree-session')].find(item => item.dataset.state === 'oculta' && item.innerText.includes('smoke-dois')).click()`);
+  await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 2`), 'terminal restaurado');
+  const gridRestored = await cardBoxes();
+  assert(Math.abs(share(gridRestored) - share(gridKeyboard)) < 0.01, `forma 2x1 volta com os tamanhos salvos: ${JSON.stringify(gridRestored)}`);
+  await main.evaluate(`document.querySelector(${JSON.stringify(verticalTrack)}).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+  await until(async () => { const boxes = await cardBoxes(); return Math.abs(boxes[0].width - boxes[1].width) <= 2; }, 'duplo clique divide igualmente');
+  // Linhas: com Navegação e Painéis visíveis em 1180px, a Grade empilha os terminais.
+  await ensurePanels(main);
+  await native('resize', { width: 1180, height: 780 });
+  // Espera o layout de 1180px assentar (em 1440px a Grade já estava empilhada).
+  await until(async () => (await columnWidth('left')) === 220 && (await columnWidth('right')) === 260, 'colunas no padrão de 1180px');
+  await until(() => main.evaluate(`document.querySelectorAll(${JSON.stringify(horizontalTrack)}).length === 1 && !document.querySelector(${JSON.stringify(verticalTrack)})`), 'Grade estreita: terminais empilhados com divisória horizontal');
+  await until(async () => { const boxes = await cardBoxes(); return boxes[0].width === (await main.evaluate(`document.querySelector('.session-grid').clientWidth`)) && Math.abs(boxes[1].top - (boxes[0].top + boxes[0].height)) <= 1; }, 'Grade assentada em 1180px');
+  const rowsBefore = await cardBoxes();
+  await dragBy(horizontalTrack, 0, 80);
+  const rowsDragged = await cardBoxes();
+  const rowsGrid = await main.evaluate(`(() => { const grid = document.querySelector('.session-grid'); const separator = document.querySelector(${JSON.stringify(horizontalTrack)}).getBoundingClientRect(); return { height: grid.clientHeight, rows: getComputedStyle(grid).gridTemplateRows, separatorTop: separator.top }; })()`);
+  assert(Math.abs(rowsDragged[0].height - (rowsBefore[0].height + 80)) <= 2 && Math.abs(rowsDragged[1].top - (rowsDragged[0].top + rowsDragged[0].height)) <= 1, `linhas acompanham o ponteiro e se tocam: ${JSON.stringify({ rowsBefore, rowsDragged, rowsGrid })}`);
+  await dragBy(horizontalTrack, 0, 4000);
+  assert((await cardBoxes())[1].height >= 168, 'mínimo de ~8 linhas no terminal que cede');
+  // Principal + agentes: divisória entre o principal e a pilha.
+  await native('resize', { width: 1440, height: 900 });
+  await click(main, '.workspace-panel-toggle[data-panel=right]');
+  await chooseTerminalLayout(main, 'sidebar');
+  await until(() => main.evaluate(`document.querySelectorAll(${JSON.stringify(verticalTrack)}).length === 1`), 'divisória entre o principal e os agentes');
+  assert.equal(await main.evaluate(`document.querySelector(${JSON.stringify(verticalTrack)}).getAttribute('aria-label')`), 'Divisão entre a principal e os agentes');
+  const sidebarBefore = await cardBoxes();
+  assert(sidebarBefore[0].width > sidebarBefore[1].width * 1.8, `principal começa com ~2/3: ${JSON.stringify(sidebarBefore)}`);
+  await dragBy(verticalTrack, -150, 0);
+  const sidebarDragged = await cardBoxes();
+  assert(Math.abs(sidebarDragged[0].width - (sidebarBefore[0].width - 150)) <= 2, `principal cede para a pilha: ${JSON.stringify(sidebarDragged)}`);
+  assert((await savedTracks()).sidebar?.stack1, 'Principal + agentes salvo à parte');
+  await screenshot(main, 'tracks-sidebar');
+  for (const layout of ['spotlight', 'tabs']) {
+    await chooseTerminalLayout(main, layout);
+    assert.equal(await main.evaluate(`document.querySelectorAll('.track-resizer').length`), 0, `${layout} não tem divisórias`);
+  }
+  await chooseTerminalLayout(main, 'sidebar');
+  await until(async () => Math.abs((await cardBoxes())[0].width - sidebarDragged[0].width) <= 2, 'tamanhos de Principal + agentes preservados ao voltar');
+  await main.evaluate(`document.querySelector('.cockpit').focus()`);
+  await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+  await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette input'))`), 'paleta aberta');
+  for (const char of 'layout padrao') await key(main, char, { text: char });
+  await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão selecionado na paleta');
+  await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+  await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'paleta fechada');
+  assert.deepEqual(await savedTracks(), {}, 'Restaurar layout zera os tamanhos dos terminais');
+  await ensurePanels(main);
+  await focus('smoke-dois');
+  console.log('PASS terminais redimensionáveis: Grade em colunas e linhas, Principal + agentes, mínimos, teclado, reajuste ao ocultar, PTY e persistência');
+
   // Paleta de comandos: abre com o foco dentro do terminal (o xterm não pode engolir o atalho),
   // filtra, leva ao terminal escolhido e fecha com Esc.
   await main.evaluate(`document.querySelector(${JSON.stringify(input)}).focus()`);

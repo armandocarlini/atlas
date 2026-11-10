@@ -104,13 +104,29 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .toolbar-overflow-field { min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px 0 8px; color: var(--muted); font-size: 11px; }
 .toolbar-overflow-field .terminal-layout-select { max-width: 150px; }
 
-.session-grid.layout-grid { grid-template-columns: minmax(0, 1fr); }
-.session-grid.layout-grid .session-card:first-child { grid-column: auto; }
-@container terminals (min-width: 1120px) {
-  .session-grid.layout-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .session-grid.layout-grid .session-card:first-child { grid-column: 1 / -1; }
+/* ---------- Trilhas dos terminais (Grade e Principal + agentes) ---------- */
+/* Colunas, linhas e posição de cada terminal vêm de useTerminalTracks (inline); as divisórias
+   ficam por cima das fronteiras, sem gap nem filete entre os terminais. */
+.session-grid.has-tracks { position: relative; }
+.track-resizer { position: absolute; z-index: 6; touch-action: none; outline: none; }
+.track-resizer.vertical { width: 0; cursor: col-resize; }
+.track-resizer.horizontal { height: 0; cursor: row-resize; }
+.track-resizer::before { content: ""; position: absolute; }
+.track-resizer.vertical::before { inset: 0 -4px; }
+.track-resizer.horizontal::before { inset: -4px 0; }
+.track-resizer::after { content: ""; position: absolute; background: var(--accent); opacity: 0; transition: opacity 150ms ease; pointer-events: none; }
+.track-resizer.vertical::after { top: 0; bottom: 0; left: -1px; width: 2px; }
+.track-resizer.horizontal::after { left: 0; right: 0; top: -1px; height: 2px; }
+.track-resizer:hover::after { opacity: .5; transition-delay: 100ms; }
+.track-resizer:focus-visible::after, .track-resizer:active::after { opacity: 1; transition-delay: 0ms; }
+@media (forced-colors: active) {
+  .track-resizer::after { background: Highlight; }
+  .track-resizer:hover::after, .track-resizer:focus-visible::after { opacity: 1; }
 }
-@container terminals (min-width: 1680px) {
-  .session-grid.layout-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .session-grid.layout-grid .session-card:first-child { grid-column: span 2; }
+
+/* Cabeçalho compacto em terminais estreitos: o que sai da linha continua no title do cabeçalho. */
+@container (max-width: 400px) {
+  .session-header { gap: 4px; padding-inline: 6px 2px; }
+  .session-identity { gap: 5px; }
+  .session-identity h3 { max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }

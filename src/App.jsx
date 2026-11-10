@@ -74,6 +74,9 @@ import PanelsRail, { PANEL_ICONS, panelAccessibleName } from './PanelsRail.jsx';
 import ToolbarOverflow from './ToolbarOverflow.jsx';
 import useColumnLayout from './useColumnLayout.js';
 import { defaultColumnWidth, normalizeColumnWidths } from './column-layout.js';
+import TrackResizers from './TrackResizers.jsx';
+import useTerminalTracks from './useTerminalTracks.js';
+import { normalizeTrackSizes } from './track-layout.js';
 
 // Mensagem de erro do processo principal sem o prefixo técnico do IPC do Electron.
 function cleanIpcError(error) {
@@ -163,9 +166,10 @@ function getInitialTerminalWorkspace() {
     return {
       layout: normalizeTerminalLayout(saved?.layout),
       hiddenSessionIds: Array.isArray(saved?.hiddenSessionIds) ? saved.hiddenSessionIds.filter((id) => typeof id === 'string') : [],
+      tracks: normalizeTrackSizes(saved?.tracks),
     };
   } catch {
-    return { layout: 'grid', hiddenSessionIds: [] };
+    return { layout: 'grid', hiddenSessionIds: [], tracks: {} };
   }
 }
 
@@ -413,7 +417,7 @@ function SessionActions({ session, onFocus, onPopup, onHide, onRestart, onSendDi
   </div>;
 }
 
-function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, onStop, onRemove, tabbed = false }) {
+function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, onStop, onRemove, tabbed = false, placement }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
@@ -440,7 +444,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
       data-session-id={session.id}
       data-session-name={session.name}
       className={`session-card ${selected ? 'selected' : ''} ${focused ? 'focused' : ''} ${detached ? 'terminal-detached' : ''} ${popup ? 'terminal-popup-card' : ''}`}
-      style={{ '--session-color': session.color }}
+      style={{ '--session-color': session.color, ...placement }}
       onClick={() => onSelect(session.id)}
     >
       <header className="session-header" title={headerDetails}>
@@ -770,6 +774,7 @@ export default function App() {
   const [terminalLayout, setTerminalLayout] = useState(initialTerminalWorkspace.layout);
   const LayoutIcon = LAYOUT_ICONS[terminalLayout];
   const [hiddenSessionIds, setHiddenSessionIds] = useState(initialTerminalWorkspace.hiddenSessionIds);
+  const [trackSizes, setTrackSizes] = useState(initialTerminalWorkspace.tracks);
   const [statusOpen, setStatusOpen] = useState(false);
   const [activeProject, setActiveProject] = useState('ATLAS');
   const [projects, setProjects] = useState([]);
@@ -862,6 +867,7 @@ export default function App() {
   const openSessions = useMemo(() => workspaceSessions(projectSessions, revealedHistoryIds), [projectSessions, revealedHistoryIds]);
   const unhiddenSessions = useMemo(() => visibleWorkspaceSessions(openSessions, hiddenSessionIds), [openSessions, hiddenSessionIds]);
   const visibleSessions = useMemo(() => sessionsInLayout(openSessions, { layout: terminalLayout, selectedId, focusId, hiddenSessionIds }), [openSessions, terminalLayout, selectedId, focusId, hiddenSessionIds]);
+  const terminalTracks = useTerminalTracks({ layout: terminalLayout, count: visibleSessions.length, saved: trackSizes, onSave: setTrackSizes });
   const navigationProjects = useMemo(() => desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((id) => ({ id, name: id, path: '', repositories: [] })), [projects, desktop?.isDesktop]);
   const navigationSessions = useMemo(() => desktop?.isDesktop ? sessions : sessions.map((session) => ({ ...session, projectId: 'ATLAS' })), [sessions, desktop?.isDesktop]);
   const projectDecisions = atlasDecisions({
@@ -1379,8 +1385,8 @@ export default function App() {
   }, [docks, columnOrder, hiddenColumns, columnLayout.widths]);
 
   useEffect(() => {
-    if (!isSecondaryWindow) localStorage.setItem('atlas-terminal-workspace', JSON.stringify({ layout: terminalLayout, hiddenSessionIds }));
-  }, [terminalLayout, hiddenSessionIds, isSecondaryWindow]);
+    if (!isSecondaryWindow) localStorage.setItem('atlas-terminal-workspace', JSON.stringify({ layout: terminalLayout, hiddenSessionIds, tracks: trackSizes }));
+  }, [terminalLayout, hiddenSessionIds, trackSizes, isSecondaryWindow]);
 
   useEffect(() => {
     function handleKey(event) {
@@ -1849,6 +1855,7 @@ export default function App() {
     setColumnOrder(DEFAULT_COLUMN_ORDER);
     setHiddenColumns({ left: false, right: true });
     columnLayout.reset();
+    setTrackSizes({});
     setDetachedTerminals([]);
     setPanelsDetached(false);
     setInspectorTab('task');
@@ -2151,7 +2158,7 @@ export default function App() {
             >{session.roleKind === 'orchestrator' ? 'Principal' : session.name}</button>)}
           </div>}
 
-          <div className={`session-grid layout-${terminalLayout} ${terminalLayout === 'spotlight' ? 'focus-mode' : ''} ${!visibleSessions.length ? 'is-empty' : ''}`} style={{ '--sidebar-rows': Math.max(1, unhiddenSessions.length - 1) }}>
+          <div ref={terminalTracks.gridRef} className={`session-grid layout-${terminalLayout} ${terminalLayout === 'spotlight' ? 'focus-mode' : ''} ${!visibleSessions.length ? 'is-empty' : ''} ${terminalTracks.tracks ? 'has-tracks' : ''}`} style={{ '--sidebar-rows': Math.max(1, unhiddenSessions.length - 1), ...terminalTracks.style }}>
             {!visibleSessions.length && (unhiddenSessions.length === 0 && openSessions.length > 0
               ? <div className="sessions-hidden-empty" role="status"><SquareTerminal size={24} /><h2>Todos os terminais estão ocultos</h2><p>Os processos continuam em execução. Restaure as sessões sem iniciar novos processos.</p><button id="restore-hidden-sessions" className="button primary" onClick={restoreProjectSessions}>Restaurar sessões</button></div>
               : <AtlasWelcome
@@ -2165,9 +2172,10 @@ export default function App() {
                   onTerminal={() => setModal('terminal')}
                 />}
               />)}
-            {visibleSessions.map((session) => <SessionCard
+            {visibleSessions.map((session, index) => <SessionCard
               key={session.id}
               session={session}
+              placement={terminalTracks.placement(index)}
               tabbed={terminalLayout === 'tabs' || terminalLayout === 'spotlight'}
               selected={selectedId === session.id}
               focused={terminalLayout === 'spotlight' && focusId === session.id}
@@ -2189,6 +2197,7 @@ export default function App() {
               onSwitchModel={desktop?.isDesktop && desktop.declareAgentModel ? setModelSwitch : undefined}
               onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
             />)}
+            <TrackResizers layout={terminalLayout} count={visibleSessions.length} terminalTracks={terminalTracks} />
           </div>
         </main>
 
