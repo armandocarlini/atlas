@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import TerminalView from './TerminalView.jsx';
 import WorkspaceTree from './WorkspaceTree.jsx';
+import SessionGlyph from './SessionGlyph.jsx';
 import { appearanceTokens, contrastInk, isPreviousDefaultTheme, visibleAccent } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
 import CommandPalette from './CommandPalette.jsx';
@@ -414,7 +415,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
     >
       <header className="session-header" title={headerDetails}>
         <div className="session-identity">
-          <StatusDot color={session.color} pulse={session.status === 'trabalhando'} />
+          <SessionGlyph session={session} />
           {onSetFunction && session.roleKind === 'agent' && !session.exited && agentFunctions.length
             ? <select className="session-function" aria-label={`Função de ${session.name}`} value={session.functionSlug || ''} onClick={(event) => event.stopPropagation()} onChange={(event) => onSetFunction(session, event.target.value)}>
               <option value="">Sem função</option>

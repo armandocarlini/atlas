@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Folder, FolderOpen, GitBranch } from 'lucide-react';
 import { buildWorkspaceTree, sameWorkspacePath } from './workspace-layout.js';
+import SessionGlyph from './SessionGlyph.jsx';
 
 function changeSummary(worktree) {
   const status = worktree.status;
@@ -30,7 +31,7 @@ function TreeSession({ session, selected, hidden, onSelect, onFocus }) {
         onClick={() => onSelect(session.id)}
         onDoubleClick={() => onFocus(session.id)}
       >
-        <span className="tree-status" aria-hidden="true" />
+        <SessionGlyph session={session} hidden={hidden} size={14} announce={false} />
         <span className="tree-label"><strong>{lead ? 'Principal' : session.name}</strong><small>{session.cli || 'Terminal'}{model ? ` · ${model}` : ''}</small></span>
         <span className="tree-state">{state}</span>
       </button>

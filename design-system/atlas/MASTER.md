@@ -108,7 +108,9 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 
 - O terminal real ocupa quase todo o card; o ATLAS fornece apenas identidade e ações essenciais.
 - A interface interna pertence ao harness/PTY: não adicionar composer paralelo, introdução sintética ou statusbar falsa.
-- O cabeçalho de 32px mostra estado, função (ou nome, quando não houver função) e um menu discreto. CLI, modelo e conexão ficam na descrição do cabeçalho; Pop-up, Foco, modelo, descoberta, ocultação e nova execução ficam no menu conforme o estado da sessão.
+- **Ícone da sessão** (`src/SessionGlyph.jsx`, `src/cli-marks.js`): no cabeçalho e na árvore, a sessão de agente mostra a marca oficial do CLI (Claude Code, Gemini, Kimi, OpenCode), publicada pelo Simple Icons em CC0, na cor oficial e sem esmaecer; marcas monocromáticas seguem a tinta do tema. O Codex não tem marca publicada lá e usa um ícone neutro; o terminal sem agente usa o ícone de terminal. As marcas pertencem aos donos e só identificam o CLI.
+- O estado é um selo no canto do ícone, como presença de avatar: verde para ativa, âmbar para oculta e nenhum para encerrada ou histórico. O texto do estado continua ao lado (árvore) ou para leitores de tela (cabeçalho).
+- O cabeçalho de 32px mostra o ícone da sessão, função (ou nome, quando não houver função) e um menu discreto. CLI, modelo e conexão ficam na descrição do cabeçalho; Pop-up, Foco, modelo, descoberta, ocultação e nova execução ficam no menu conforme o estado da sessão.
 - O menu mantém o gatilho no mesmo lugar, devolve o foco ao fechar e não deixa Escape atravessar para os painéis ao fundo.
 - Seleção, foco e estado não dependem apenas de cor.
 - A linha da grade define a altura do cartão: piso de 300px, crescendo com a área disponível. Cartões não têm altura mínima própria, para nunca se sobreporem. No Foco, o cartão ocupa toda a área.

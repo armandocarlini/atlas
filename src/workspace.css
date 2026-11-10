@@ -69,14 +69,11 @@
 .tree-label small { color: var(--muted); font: 9px var(--mono); }
 .tree-change { flex: 0 0 auto; color: var(--muted); font: 9px var(--mono); }
 .tree-sessions { margin: 0 0 3px 16px !important; }
-.tree-session { width: 100%; min-height: 30px; display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 3px 6px; text-align: left; }
+.tree-session { width: 100%; min-height: 30px; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 3px 6px; text-align: left; }
 .tree-session:hover, .tree-project-name:hover, .tree-worktree:hover, .tree-repository-title:hover, .tree-expander:hover { background: var(--surface-hover); }
 .tree-session.active { background: var(--surface-hover); }
 .tree-session.active .tree-label strong { color: var(--text); font-weight: 650; }
 .tree-session.lead .tree-label strong { color: var(--accent-text); }
-.tree-status { width: 6px; height: 6px; border: 1px solid var(--success); border-radius: 50%; background: var(--success); }
-.tree-session[data-state="encerrada"] .tree-status, .tree-session[data-state="histórico"] .tree-status { border-color: var(--muted); background: transparent; }
-.tree-session[data-state="oculta"] .tree-status { border-color: var(--warning); background: transparent; }
 .tree-state { color: var(--muted); font-size: 9px; }
 .tree-session[data-state="oculta"] .tree-state { color: var(--warning); }
 .tree-decisions { margin: 3px 5px 6px 0; padding: 3px 5px; background: color-mix(in srgb, var(--warning) 5%, transparent); }
@@ -227,3 +224,22 @@
   .start-choice > small { grid-column: 1; grid-row: 2; max-width: none; text-align: left; }
   .start-choice > svg { grid-column: 2; grid-row: 1 / span 2; }
 }
+
+/* ---------- Identidade da sessão: ícone do CLI com selo de estado ---------- */
+/* Marca oficial do CLI na cor dela, sem esmaecer (monocromáticas na tinta do tema); terminal
+   sem agente usa o ícone de terminal. O selo no canto marca ativa (verde) ou oculta (âmbar). */
+.session-glyph { position: relative; flex: 0 0 auto; width: var(--glyph-size, 16px); height: var(--glyph-size, 16px); display: inline-grid; place-items: center; color: var(--mark-color, var(--text)); }
+.session-glyph > svg { display: block !important; width: 100%; height: 100%; fill: currentColor; transition: opacity 150ms ease; }
+.session-glyph[data-cli="terminal"], .session-glyph[data-cli="codex"], .session-glyph[data-cli="agent"] { color: var(--muted); }
+.session-glyph[data-cli="terminal"] > svg, .session-glyph[data-cli="codex"] > svg, .session-glyph[data-cli="agent"] > svg { fill: none; }
+.session-glyph-badge {
+  position: absolute; right: -2px; bottom: -2px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--success); box-shadow: 0 0 0 2px var(--glyph-ring, var(--surface));
+}
+.session-glyph.tone-hidden .session-glyph-badge { background: var(--warning); }
+/* Encerrada ou histórico: como presença de avatar, sem selo; o texto do estado fica ao lado. */
+.session-glyph.tone-ended .session-glyph-badge { display: none; }
+.session-card.selected .session-glyph { --glyph-ring: var(--surface-raised); }
+.tree-session .session-glyph { --glyph-ring: var(--surface); }
+.tree-session:hover .session-glyph, .tree-session.active .session-glyph { --glyph-ring: var(--surface-hover); }
+.tree-session .session-glyph-badge { width: 6px; height: 6px; }
