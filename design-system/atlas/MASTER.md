@@ -118,6 +118,14 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 - **Abertura:** a área de trabalho mostra só sessões vivas. Uma run sem processo (histórico, inclusive "resultado incerto") não reabre como card; continua na árvore e só vira card, somente leitura, quando o usuário a abre por ela. Ocultar um histórico aberto fecha o card.
 - **Projeto sem sessões vivas:** a tela do Atlas pergunta "Como começar?" e lista a sessão principal (com o estado dela) e as funções de agente na ordem salva, cada uma com descrição em uma linha e CLI · modelo à direita ("Não configurada" quando faltar). Escolher só abre o diálogo preenchido pela função; nada inicia sem confirmação. "Agente sem função" e "Terminal" ficam como ações secundárias. O aviso da principal não aparece em cima dessa tela, para não duplicar.
 - A barra de status inferior foi retirada para dar altura aos terminais; projeto e diretório continuam na árvore e no contexto da área de trabalho.
+- **Copiar e colar** (`src/TerminalView.jsx`, `src/terminal-clipboard.js`, `src/terminal-clipboard.css`), como no Windows Terminal:
+  - Soltar o mouse com seleção copia. O aviso "N caracteres copiados" aparece no canto inferior direito, some sozinho em menos de 2s e é anunciado por `role="status"`.
+  - Ctrl+C com seleção copia e não interrompe; sem seleção, interrompe. Ctrl+Shift+C sempre copia. Ctrl+V e Ctrl+Shift+V colam em colagem protegida (bracketed paste) quando o programa a liga.
+  - Arquivos (arrastados ou copiados no Explorer) entram como caminhos entre aspas. Só imagem no clipboard repassa ao CLI o atalho de colar imagem (no Windows, Alt+V, o do Claude Code), e o CLI anexa a imagem.
+  - **Barra de seleção:** pílula pequena no material elevado (superfície, borda, raio de 8px), acima do ponto onde o mouse soltou e sempre dentro do terminal. Ações: Responder (citação com "> "), Reescrever (trecho cru) e Enviar para (outra sessão viva). Nada é enviado: o trecho fica na entrada, sem Enter. Some ao limpar a seleção, ao rolar ou ao digitar.
+  - **Menu de contexto:** botão direito, Shift+F10 ou a tecla Menu. Copiar, Colar e Selecionar tudo, mais as ações da barra quando há seleção. Setas, Home/End, Escape e Tab; o foco entra no primeiro item habilitado e volta ao terminal ao fechar. O botão direito não troca a seleção por uma palavra.
+  - Sem colagem protegida no destino, um trecho de várias linhas não é colado pela barra ou pelo menu, porque cada linha seria executada; o aviso explica e indica o Ctrl+V.
+  - Movimento: entram em 160ms (opacidade e 4px), sem bounce; com movimento reduzido, só opacidade. Com contraste alto, borda em `--text` e sem sombra.
 
 ### Navegação e painéis
 

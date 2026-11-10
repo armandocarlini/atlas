@@ -40,6 +40,7 @@ import {
   X,
 } from 'lucide-react';
 import TerminalView from './TerminalView.jsx';
+import { pasteTargets as sessionPasteTargets } from './terminal-clipboard.js';
 import WorkspaceTree from './WorkspaceTree.jsx';
 import SessionGlyph from './SessionGlyph.jsx';
 import { OVERLAY_BARS, effectiveBackground } from './window-overlay.js';
@@ -404,7 +405,7 @@ function SessionActions({ session, onFocus, onPopup, onHide, onRestart, onSendDi
   </div>;
 }
 
-function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, onStop, onRemove, tabbed = false }) {
+function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, onStop, onRemove, tabbed = false, pasteTargets }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
@@ -457,7 +458,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
             <p>{session.status}. Nenhum processo está conectado.</p>
             <p>O conteúdo do terminal não foi salvo. Abra uma nova sessão para continuar o trabalho.</p>
             <dl><dt>Diretório</dt><dd>{session.worktree}</dd><dt>Início</dt><dd>{session.createdAt}</dd><dt>Fim registrado</dt><dd>{session.endedAt || 'sem confirmação'}</dd></dl>
-          </div> : session.ptyId ? <TerminalView terminalId={session.ptyId} desktop={desktop} theme={{ ...theme, color: visibleAccent(theme.color, theme.background), ink: getAccentInk(theme.background) }} onExit={(exit) => onExit(session.id, { ...exit, ptyId: session.ptyId })} /> : <>
+          </div> : session.ptyId ? <TerminalView terminalId={session.ptyId} desktop={desktop} theme={{ ...theme, color: visibleAccent(theme.color, theme.background), ink: getAccentInk(theme.background) }} onExit={(exit) => onExit(session.id, { ...exit, ptyId: session.ptyId })} pasteTargets={pasteTargets} /> : <>
             <div className="terminal-lines">
               <HarnessIntro harness={harness} session={session} />
               {[...session.lines, ...localLines].map((line, index) => (
@@ -844,6 +845,8 @@ export default function App() {
   const unhiddenSessions = useMemo(() => visibleWorkspaceSessions(openSessions, hiddenSessionIds), [openSessions, hiddenSessionIds]);
   const visibleSessions = useMemo(() => sessionsInLayout(openSessions, { layout: terminalLayout, selectedId, focusId, hiddenSessionIds }), [openSessions, terminalLayout, selectedId, focusId, hiddenSessionIds]);
   const navigationProjects = useMemo(() => desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((id) => ({ id, name: id, path: '', repositories: [] })), [projects, desktop?.isDesktop]);
+  // Destinos de "Enviar para" na barra de seleção do terminal: as sessões vivas do projeto.
+  const pasteTargets = useMemo(() => sessionPasteTargets(projectSessions, agentFunctions), [projectSessions, agentFunctions]);
   const navigationSessions = useMemo(() => desktop?.isDesktop ? sessions : sessions.map((session) => ({ ...session, projectId: 'ATLAS' })), [sessions, desktop?.isDesktop]);
   const projectDecisions = atlasDecisions({
     requests: desktop?.isDesktop ? agentRequestState.items : [],
@@ -2137,6 +2140,7 @@ export default function App() {
               onSetFunction={desktop?.isDesktop && desktop.setAgentFunction ? setSessionFunction : undefined}
               onSwitchModel={desktop?.isDesktop && desktop.declareAgentModel ? setModelSwitch : undefined}
               onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
+              pasteTargets={desktop?.isDesktop ? pasteTargets : undefined}
             />)}
           </div>
         </main>
