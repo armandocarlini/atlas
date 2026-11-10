@@ -1,6 +1,13 @@
 # Plano v0.2: equipe com várias IAs (Claude Code, Codex, Gemini e revisão cruzada)
 
-Situação: **aprovado pelo mantenedor em 08/11/2026.** A fase 1 (investigação de Claude Code e Codex) está registrada em `docs/diagnosticos/CLAUDE_CODEX_FASE1.md`. A revisão cruzada (fase 6) está em `tasks_list` (`workedBy`), em `agent_functions_list` e no cartão de pedido. A chave "Principal só coordena" (fase 5) está no diálogo de iniciar a principal; no Kimi, o modo auto é recusado até ser verificado. O Gemini foi investigado em 09/11/2026 (`docs/diagnosticos/GEMINI_FASE4.md`): a ponte não entra por run, e o mantenedor decidiu que ela entra com consentimento, como no Kimi.
+Situação: **aprovado pelo mantenedor em 08/11/2026 e entregue** nas fases 1 a 7 (PRs #60, #63, #65, #66, #67, #69 e o PR desta documentação).
+
+- **Investigações:** `docs/diagnosticos/CLAUDE_CODEX_FASE1.md` (Claude Code e Codex) e `docs/diagnosticos/GEMINI_FASE4.md` (Gemini).
+- **Desvios aprovados no caminho:**
+  - o Codex é só agente até haver prova de somente leitura;
+  - a ponte do Gemini entra com consentimento, decisão do mantenedor em 09/11/2026;
+  - o Kimi recusa o modo auto da principal até ser verificado;
+  - no modo auto, o `.env` fica negado só nas ferramentas de arquivo.
 
 Substitui o antigo item 4 da v0.2 no `docs/ROADMAP.md`. Os playbooks saem da v0.2 e vão para "Possíveis ideias". O mantenedor considerou que eles duplicam o que a principal já faz.
 
