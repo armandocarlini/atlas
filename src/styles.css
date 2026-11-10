@@ -918,3 +918,6 @@ body { transition: background-color .18s ease, color .18s ease; }
 
 /* Chave "Principal só coordena": desligada, o aviso usa o tom de atenção do design system. */
 .agent-choice-note.orchestrator-mode-warning { color: var(--warning); }
+
+/* Revisão cruzada: aviso de mesma IA no cartão de pedido, sem bloquear. */
+.agent-choice-note.agent-request-same-ai { color: var(--warning); }

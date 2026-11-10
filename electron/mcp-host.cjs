@@ -232,11 +232,13 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
       if (!request) throw new Error('Pedido de agente não encontrado neste projeto.');
       return { requestId: request.id, name: request.name, state: request.state, expiresAt: request.expiresAt, sessionId: request.sessionId, error: request.error, taskId: request.taskId, worktree: request.worktree, function: request.functionSlug };
     },
-    // Sem CLI nem modelo: a principal escolhe pelo trabalho, e a configuração local fica com o usuário.
+    // CLI e modelo de cada função (v0.2, revisão cruzada): a principal escolhe a função
+    // pelo trabalho e pode evitar a IA que já trabalhou na tarefa; quem decide é o usuário.
     agent_functions_list() {
       return {
         functions: store.listFunctions().filter((item) => item.kind !== 'orchestrator').map((item) => ({
           slug: item.slug, name: item.name, description: item.description, kind: item.kind === 'builtin' ? 'padrão' : 'do usuário', configured: Boolean(item.adapterId),
+          adapter: item.adapterId || null, model: item.model || null,
         })),
         note: 'A função só preenche o cartão de aprovação; o usuário confirma ou troca a função, o CLI e o modelo.',
       };
@@ -261,6 +263,7 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
       const regression = new Map(store.listRegressionRuns(grant.projectId).map((run) => [run.reviewId, run.state]));
       const open = new Map(handoffs.filter((handoff) => handoff.state === 'offered').map((handoff) => [handoff.taskId, handoff]));
       const closed = new Map(handoffs.filter((handoff) => handoff.state !== 'offered').map((handoff) => [handoff.taskId, handoff]));
+      const workers = store.listTaskWorkers(grant.projectId);
       return {
         notice: UNTRUSTED_NOTICE,
         tasks: store.listTasks(grant.projectId).map(({ id, title, description, acceptance, state, createdAt, assignedSessionId, assigneeName, claimRunId, blockedReason }) => ({
@@ -271,6 +274,8 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
           lastClosedHandoff: closed.has(id) ? { id: closed.get(id).id, toSessionId: closed.get(id).toSessionId, state: closed.get(id).state, reason: closed.get(id).reason } : null,
           mine: assignedSessionId === grant.sessionId,
           lastReview: reviews.has(id) ? { id: reviews.get(id).id, state: reviews.get(id).state, note: reviews.get(id).note, regression: regression.get(reviews.get(id).id) ?? null } : null,
+          // Registro do sistema: CLI, modelo e função de cada run que pegou a tarefa.
+          workedBy: workers[id] || [],
         })),
       };
     },
