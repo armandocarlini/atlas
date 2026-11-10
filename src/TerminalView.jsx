@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
+import { createPtyResizer, isLayoutResizing, onLayoutResizing } from './pty-resize.js';
 
 export default function TerminalView({ terminalId, desktop, theme, onExit }) {
   const containerRef = useRef(null);
@@ -47,13 +48,22 @@ export default function TerminalView({ terminalId, desktop, theme, onExit }) {
     const inputDisposable = terminal.onData((data) => {
       if (attached) desktop.writeTerminal(terminalId, data);
     });
+    // Durante o arraste de uma divisória, o xterm acompanha cada quadro e o PTY recebe o tamanho
+    // com throttle; ao soltar, o fit final envia o tamanho definitivo na hora.
+    const ptyResizer = createPtyResizer({ send: (cols, rows) => desktop.resizeTerminal(terminalId, cols, rows) });
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
-      if (cols >= 20 && rows >= 5) desktop.resizeTerminal(terminalId, cols, rows);
+      if (cols >= 20 && rows >= 5) ptyResizer.request(cols, rows, { throttle: isLayoutResizing() });
     });
     const fit = () => {
       if (disposed || !container.clientWidth || !container.clientHeight) return;
       try { fitAddon.fit(); } catch { /* O viewport pode estar em transição. */ }
     };
+    const unsubscribeLayout = onLayoutResizing((active) => {
+      if (active || disposed) return;
+      cancelAnimationFrame(frame);
+      fit();
+      ptyResizer.flush();
+    });
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(fit);
@@ -79,6 +89,8 @@ export default function TerminalView({ terminalId, desktop, theme, onExit }) {
       disposed = true;
       cancelAnimationFrame(frame);
       observer.disconnect();
+      unsubscribeLayout();
+      ptyResizer.dispose();
       unsubscribeData();
       unsubscribeExit();
       inputDisposable.dispose();

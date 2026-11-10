@@ -168,6 +168,12 @@ async function choose(cdp, scope, name, value) {
   await delay(120);
 }
 async function chooseTerminalLayout(cdp, value) {
+  // Na barra compacta (coluna de Terminais estreita), o layout fica no menu ⋯.
+  await until(() => cdp.evaluate(`Boolean(document.querySelector('[aria-label="Layout dos terminais"], .toolbar-overflow-trigger'))`), 'controle de layout');
+  if (await cdp.evaluate(`!document.querySelector('[aria-label="Layout dos terminais"]')`)) {
+    await cdp.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
+    await until(() => cdp.evaluate(`Boolean(document.querySelector('[aria-label="Layout dos terminais"]'))`), 'layout no menu ⋯');
+  }
   assert(await cdp.evaluate(`(() => { const select = document.querySelector('[aria-label="Layout dos terminais"]'); if (!select) return false; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(value)}); select.dispatchEvent(new Event('change', { bubbles: true })); return select.value === ${JSON.stringify(value)}; })()`), `Missing terminal layout ${value}`);
   await delay(200);
 }
@@ -447,7 +453,10 @@ try {
   assert.deepEqual(integrationFile(), { mcpServers: { github: { command: 'gh-mcp', args: ['--fixture'] } } }, 'Removal deletes only the ATLAS entry');
   assert.equal(await main.evaluate(`document.querySelectorAll('.integration-notice').length`), 0, 'Removing does not nag the user again');
   console.log('PASS consentimento da integração MCP: conteúdo exato, foco, cancelar, conectar e remover sem tocar outros servidores');
-  const target = `.tree-worktree[title=${JSON.stringify(worktree)}]`;
+  const target = `.tree-worktree[data-worktree-path=${JSON.stringify(worktree)}]`;
+  // Na Navegação estreita, branch e alterações saem da linha e ficam no title.
+  const worktreeTitle = await main.evaluate(`document.querySelector(${JSON.stringify(target)})?.title`);
+  assert(worktreeTitle.includes('feature/revisao') && worktreeTitle.includes('3 alterações') && worktreeTitle.includes(worktree), `title completo da worktree: ${worktreeTitle}`);
   await click(main, target);
   await until(() => main.evaluate(`document.querySelector('.persistent-tasks').innerText.includes('Nenhuma tarefa criada')`), 'task scope changed');
   assert(!(await main.evaluate(`document.querySelector('.persistent-tasks').innerText`)).includes('Tarefa real · smoke'));
@@ -591,6 +600,113 @@ try {
   assert.equal(Number((await raw(second.id)).match(/PID:(\d+)/g).at(-1).slice(4)), secondPid);
   await focus('smoke-dois');
   console.log('PASS layouts, subtabs por teclado e ocultação com mesmo PID e scrollback');
+
+  // Colunas redimensionáveis: ponteiro 1:1, teclado, encaixes, modos estreitos, PTY e persistência.
+  await native('resize', { width: 1440, height: 900 });
+  await ensurePanels(main);
+  // O passo anterior deixou smoke-dois em Destaque: volta à Grade para achar smoke-um.
+  await chooseTerminalLayout(main, 'grid');
+  await until(() => main.evaluate(`Boolean(${card('smoke-um')})`), 'smoke-um na Grade');
+  await focus('smoke-um');
+  const navSeparator = '.column-resizer[aria-label="Largura de Navegação"]';
+  const panelSeparator = '.column-resizer[aria-label="Largura de Painéis"]';
+  const columnWidth = (column) => main.evaluate(`Math.round(document.querySelector('[data-column-id=${column}]').getBoundingClientRect().width)`);
+  const plain = (text) => text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trimEnd();
+  const ptySize = async (marker) => {
+    await until(async () => plain(await raw(first.id)).endsWith('>'), `prompt antes de ${marker}`);
+    await command(main, input, `Write-Output ('${marker}:' + $Host.UI.RawUI.WindowSize.Width + 'x' + $Host.UI.RawUI.WindowSize.Height)`);
+    return until(async () => (await raw(first.id)).match(new RegExp(`${marker}:(\\d+x\\d+)`))?.[1], marker);
+  };
+  async function drag(selector, dx) {
+    const start = await main.evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x, y: start.y });
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: start.x, y: start.y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 8; step += 1) await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + dx * step / 8, y: start.y, button: 'left', buttons: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: start.x + dx, y: start.y, button: 'left', buttons: 0, clickCount: 1 });
+    await delay(200);
+  }
+  const doubleClick = (selector) => main.evaluate(`document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+  assert.equal(await main.evaluate(`document.querySelectorAll('.column-resizer[role=separator]').length`), 2, 'uma divisória entre cada par de colunas visíveis');
+  const navStart = await columnWidth('left');
+  const panelStart = await columnWidth('right');
+  assert.deepEqual([navStart, panelStart], [248, 292], 'larguras padrão em 1440px');
+  const sizeBefore = await ptySize('COLS_A');
+  await drag(navSeparator, 120);
+  assert(Math.abs(await columnWidth('left') - (navStart + 120)) <= 1, 'arraste acompanha o ponteiro');
+  assert.equal(await columnWidth('right'), panelStart, 'entre lateral e Terminais, só a lateral muda');
+  const sizeDragged = await ptySize('COLS_B');
+  assert.notEqual(sizeDragged, sizeBefore, `o PTY recebe o tamanho final ao soltar (${sizeBefore} → ${sizeDragged})`);
+  await main.evaluate(`document.querySelector(${JSON.stringify(navSeparator)}).focus()`);
+  await key(main, 'ArrowLeft', { code: 'ArrowLeft', windowsVirtualKeyCode: 37 });
+  const navKeyboard = await columnWidth('left');
+  assert(Math.abs(navKeyboard - (navStart + 104)) <= 1, `seta move 16px: ${navKeyboard}`);
+  assert.equal(await main.evaluate(`document.querySelector(${JSON.stringify(navSeparator)}).getAttribute('aria-valuenow')`), String(navKeyboard));
+  await drag(navSeparator, 160 - navKeyboard);
+  assert.equal(await main.evaluate(`document.querySelector('[data-column-id=left]').dataset.mode`), 'compact');
+  const compactTree = await main.evaluate(`(() => { const item = [...document.querySelectorAll('.tree-session')].find(node => node.innerText.includes('smoke-um')); return { small: getComputedStyle(item.querySelector('.tree-label small')).display, title: item.title, count: getComputedStyle(document.querySelector('.tree-project-name small')).display }; })()`);
+  assert.equal(compactTree.small, 'none', 'linha secundária sai da Navegação compacta');
+  assert(compactTree.title.includes('PowerShell') && compactTree.title.includes('ativa') && compactTree.title.includes('feature/revisao'), `title completo na compacta: ${compactTree.title}`);
+  assert.notEqual(compactTree.count, 'none', 'contadores continuam visíveis');
+  await screenshot(main, 'columns-nav-compact');
+  await drag(navSeparator, -60);
+  assert.equal(await columnWidth('left'), 56, 'abaixo de ~130px a Navegação encaixa no trilho de ícones');
+  const rail = await main.evaluate(`(() => { const project = document.querySelector('.rail-project.active'); const sessions = [...document.querySelectorAll('.rail-session')]; return { project: project?.getAttribute('aria-label'), sessions: sessions.map(item => item.getAttribute('aria-label')), hide: document.querySelector('[data-column-id=left] .detach-control')?.getBoundingClientRect().width }; })()`);
+  assert(rail.project?.includes('sessões'), `projeto com selo de sessões: ${rail.project}`);
+  assert(rail.sessions.some((label) => label.includes('smoke-um') && label.includes('PowerShell') &&label.includes('feature/revisao')), `sessões com nome, CLI e worktree: ${rail.sessions}`);
+  assert(rail.hide > 0, 'ocultar a Navegação continua acessível no trilho');
+  await main.evaluate(`document.querySelector('.rail-project.active').focus(); document.querySelector('.rail-project.active').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('#navigation-flyout .tree-worktree')) && document.querySelector('#navigation-flyout').contains(document.activeElement)`), 'flyout com a árvore completa e foco dentro');
+  await until(() => main.evaluate(`document.querySelector('#navigation-flyout').getAnimations().every(item => item.playState === 'finished')`), 'entrada do flyout concluída');
+  await screenshot(main, 'columns-nav-icons');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('#navigation-flyout') && document.activeElement?.classList.contains('rail-project')`), 'Esc fecha o flyout e devolve o foco');
+  await doubleClick(navSeparator);
+  await until(async () => (await columnWidth('left')) === navStart, 'duplo clique volta ao padrão');
+  assert.equal(await ptySize('COLS_C'), sizeBefore, 'PTY volta ao tamanho original com a largura padrão');
+  await drag(panelSeparator, panelStart - 280);
+  assert.equal(await main.evaluate(`document.querySelector('[data-column-id=right]').dataset.mode`), 'narrow');
+  const narrowTabs = await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].map(item => ({ icon: getComputedStyle(item.querySelector('.inspector-tab-icon')).display, label: item.querySelector('.inspector-tab-label').getBoundingClientRect().width, name: item.getAttribute('aria-label') }))`);
+  assert(narrowTabs.every((tab) => tab.icon !== 'none' && tab.label <= 1 && tab.name), `abas viram ícones com nome acessível: ${JSON.stringify(narrowTabs)}`);
+  await screenshot(main, 'columns-panels-narrow');
+  await drag(panelSeparator, 120);
+  assert.equal(await columnWidth('right'), 56, 'Painéis abaixo do mínimo viram trilho');
+  assert(await main.evaluate(`Boolean(document.querySelector('[data-column-id=right] .detach-control[aria-label="Ocultar painéis"]'))`), 'ocultar Painéis continua no trilho');
+  await main.evaluate(`document.querySelector('.rail-panel[data-panel=task]').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('#panels-overlay .overlay-inspector .persistent-tasks')) && document.querySelector('#panels-overlay').contains(document.activeElement)`), 'painel sobreposto aos terminais');
+  // A entrada anima opacidade e translateX; mede e captura depois que a animação termina.
+  await until(() => main.evaluate(`document.querySelector('#panels-overlay').getAnimations().every(item => item.playState === 'finished')`), 'entrada do painel concluída');
+  await screenshot(main, 'columns-panels-icons');
+  const overlayBox = await main.evaluate(`(() => { const box = document.querySelector('#panels-overlay').getBoundingClientRect(); const rail = document.querySelector('[data-column-id=right]').getBoundingClientRect(); return { right: box.right, railLeft: rail.left }; })()`);
+  assert(Math.abs(overlayBox.right - overlayBox.railLeft) <= 1, `o painel abre encostado no trilho, sobre os terminais: ${JSON.stringify(overlayBox)}`);
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('#panels-overlay')`), 'Esc fecha o painel sobreposto');
+  assert.deepEqual(await main.evaluate(`JSON.parse(localStorage.getItem('atlas-docks')).widths`), { left: null, right: 56 }, 'larguras salvas em atlas-docks');
+  await doubleClick(panelSeparator);
+  await until(async () => (await columnWidth('right')) === panelStart, 'Painéis voltam ao padrão');
+  await native('resize', { width: 940, height: 700 });
+  await until(() => main.evaluate(`document.querySelector('.cockpit-toolbar').dataset.mode === 'compact'`), 'barra compacta em coluna estreita');
+  const narrowDefaults = { left: await columnWidth('left'), right: await columnWidth('right'), viewport: await main.evaluate('window.innerWidth') };
+  assert(narrowDefaults.left >= 200 && narrowDefaults.right >= 250, `padrões estreitos mantêm Navegação e Painéis completos: ${JSON.stringify(narrowDefaults)}`);
+  await main.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
+  await until(() => main.evaluate(`document.querySelectorAll('#toolbar-overflow-popover :is(button, select)').length === 5`), 'controles no menu ⋯');
+  await screenshot(main, 'columns-terminals-compact');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('#toolbar-overflow-popover') && document.activeElement?.classList.contains('toolbar-overflow-trigger')`), 'Esc fecha o menu ⋯ e devolve o foco');
+  await native('resize', { width: 1440, height: 900 });
+  await drag(navSeparator, 40);
+  await main.evaluate(`document.querySelector('.cockpit').focus()`);
+  await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+  await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette input'))`), 'paleta aberta');
+  // "restaurar layout" também casa com "Restaurar sessões ocultas" (grupo Layout).
+  for (const char of 'layout padrao') await key(main, char, { text: char });
+  await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão selecionado na paleta');
+  await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+  await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'paleta fechada');
+  assert.deepEqual(await main.evaluate(`JSON.parse(localStorage.getItem('atlas-docks')).widths`), { left: null, right: null }, 'Restaurar layout zera as larguras');
+  assert.equal(await columnWidth('left'), navStart);
+  await ensurePanels(main);
+  await focus('smoke-dois');
+  console.log('PASS colunas redimensionáveis: arraste, teclado, encaixes, modos compacto e só ícones, flyouts, PTY e persistência');
 
   // Paleta de comandos: abre com o foco dentro do terminal (o xterm não pode engolir o atalho),
   // filtra, leva ao terminal escolhido e fecha com Esc.
@@ -1201,16 +1317,25 @@ try {
   await native('resize', { width: 940, height: 700 });
   await delay(250);
   const canHideNavigationAtMinimumWidth = await main.evaluate(`document.querySelector('[data-column-id=left] .detach-control').getBoundingClientRect().width > 0`);
-  const visibleGlyphs = await main.evaluate(`['.palette-trigger svg', '.workspace-layout-control svg'].map(selector => document.querySelector(selector)?.getBoundingClientRect().width)`);
+  // Coluna de Terminais estreita: os controles de visualização ficam no menu ⋯.
+  const visibleGlyphs = await main.evaluate(`['.palette-trigger svg', document.querySelector('.toolbar-overflow-trigger') ? '.toolbar-overflow-trigger svg' : '.workspace-layout-control svg'].map(selector => document.querySelector(selector)?.getBoundingClientRect().width)`);
   const panelSeams = await main.evaluate(`[
     ['.sidebar', 'borderRightWidth'], ['.inspector.dock-right', 'borderLeftWidth'],
     ['.cockpit-toolbar', 'borderBottomWidth'], ['.inspector-dockbar', 'borderBottomWidth'],
     ...[...document.querySelectorAll('.workspace-body .column-drag-bar')].map(item => [item, 'borderBottomWidth'])
   ].map(([target, property]) => getComputedStyle(typeof target === 'string' ? document.querySelector(target) : target)[property])`);
-  const reachableControls = await main.evaluate(`[...document.querySelectorAll('.toolbar-actions :is(button, select)')].filter(item => {
+  const reachable = (scope) => main.evaluate(`[...document.querySelectorAll(${JSON.stringify(`${scope} :is(button, select)`)})].filter(item => {
     const { left, top, width, height } = item.getBoundingClientRect();
     return width >= 24 && height >= 24 && item.contains(document.elementFromPoint(left + width / 2, top + height / 2));
   }).length`);
+  let reachableControls = await reachable('.toolbar-actions');
+  if (await main.evaluate(`Boolean(document.querySelector('.toolbar-overflow-trigger'))`)) {
+    await main.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
+    await until(() => main.evaluate(`Boolean(document.querySelector('#toolbar-overflow-popover'))`), 'menu ⋯ aberto');
+    // O gatilho do menu não é um controle da barra completa: conta o que ele guarda.
+    reachableControls = reachableControls - 1 + await reachable('#toolbar-overflow-popover');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  }
   await screenshot(main, 'cockpit-compact');
   await native('resize', { width: 1440, height: 900 });
   await chooseTerminalLayout(main, 'grid');

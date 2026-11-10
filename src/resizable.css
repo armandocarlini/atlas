@@ -1,0 +1,116 @@
+/* ---------- Colunas redimensionáveis ---------- */
+/* Cada coluna é um contêiner: o conteúdo responde à própria largura, não à da janela. */
+.left-dock-zone { container: nav / inline-size; }
+.workspace-body > .cockpit { container: terminals / inline-size; }
+.inspector.dock-right { container: panels / inline-size; }
+
+/* Divisória: sem filete; a junção continua sendo a troca de superfícies. A área de captura tem
+   8px e a linha de ouro só aparece ao passar, focar ou arrastar. */
+.column-resizer { position: relative; z-index: 20; flex: 0 0 0; width: 0; align-self: stretch; cursor: col-resize; touch-action: none; outline: none; }
+.column-resizer::before { content: ""; position: absolute; inset: 0 -4px; }
+.column-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: var(--accent); opacity: 0; transition: opacity 150ms ease; pointer-events: none; }
+.column-resizer:hover::after { opacity: .5; transition-delay: 100ms; }
+.column-resizer.is-dragging::after, .column-resizer:focus-visible::after { opacity: 1; transition-delay: 0ms; }
+body.is-resizing-columns, body.is-resizing-columns * { cursor: col-resize !important; user-select: none; }
+body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; user-select: none; }
+@media (forced-colors: active) {
+  .column-resizer::after { background: Highlight; }
+  .column-resizer:hover::after, .column-resizer:focus-visible::after { opacity: 1; }
+}
+
+/* ---------- Navegação: completa, compacta e só ícones ---------- */
+@container nav (max-width: 199px) {
+  .tree-label small, .tree-state, .tree-change { display: none; }
+  .tree-session { grid-template-columns: 16px minmax(0, 1fr); }
+  .tree-project-content { padding-left: 6px; }
+  .tree-sessions { margin-left: 6px !important; }
+  .tree-worktrees { margin-left: 0 !important; }
+  .workspace-tree-heading { padding-left: 8px; }
+}
+.left-dock-zone[data-mode="icons"] > .column-drag-bar, .panels-rail > .column-drag-bar { justify-content: center; padding: 0; }
+.left-dock-zone[data-mode="icons"] > .column-drag-bar > strong { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.navigation-rail { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 2px 0 10px; overflow: hidden auto; scrollbar-width: none; }
+.rail-actions, .rail-panels, .rail-footer { display: grid; gap: 2px; justify-items: center; }
+.rail-projects, .rail-sessions { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; justify-items: center; }
+.rail-project-item { display: grid; gap: 2px; justify-items: center; }
+.rail-button { position: relative; width: 40px; height: 40px; min-height: 0; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--muted); transition: background-color 150ms ease, color 150ms ease; }
+.rail-button svg { display: block; }
+.rail-button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+.rail-button:active:not(:disabled) { transform: scale(.96); transition-duration: 80ms; }
+.rail-button.active, .rail-button[aria-expanded="true"] { background: var(--surface-raised); color: var(--text); }
+.rail-button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
+.rail-button:disabled { opacity: .55; cursor: wait; }
+.rail-project.active { color: var(--accent-text); }
+.rail-sessions { padding: 3px 0; border-radius: 10px; background: color-mix(in srgb, var(--surface-raised) 55%, transparent); }
+.rail-session { width: 36px; height: 34px; }
+.rail-session .session-glyph { --glyph-ring: var(--surface); }
+.rail-session.active .session-glyph, .rail-session:hover .session-glyph { --glyph-ring: var(--surface-hover); }
+.rail-badge, .rail-attention {
+  position: absolute; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  font: 600 9.5px/15px var(--mono); text-align: center; pointer-events: none;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.rail-badge { right: 1px; bottom: 2px; background: var(--surface-raised); color: var(--text); }
+.rail-badge.attention { top: 2px; bottom: auto; background: var(--accent); color: var(--accent-ink); }
+.rail-attention { right: 1px; top: 1px; background: var(--warning); color: #17120a; }
+
+/* Painel que sai do trilho: ao lado dele, sobre os terminais, sem escurecer o resto. */
+.rail-flyout {
+  position: fixed; z-index: 70; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .55);
+  animation: rail-flyout-in 160ms cubic-bezier(.2, .8, .2, 1);
+}
+.navigation-flyout { border-radius: 0 10px 10px 0; }
+.navigation-flyout[data-opens="left"] { border-radius: 10px 0 0 10px; }
+.navigation-flyout .workspace-tree { flex: 1 1 auto; min-height: 0; max-height: inherit; }
+.panels-overlay { border-radius: 10px 0 0 0; }
+.panels-overlay[data-opens="right"] { border-radius: 0 10px 0 0; }
+.overlay-inspector { width: 100%; height: 100%; min-height: 0; grid-template-rows: var(--workspace-bar-height, 38px) 44px minmax(0, 1fr); border: 0; background: var(--surface); }
+.overlay-inspector > .overlay-bar { cursor: default; padding: 0 6px 0 12px; }
+.overlay-inspector > .overlay-bar .column-bar-actions { display: flex; gap: 2px; }
+@keyframes rail-flyout-in { from { opacity: 0; transform: translateX(var(--flyout-from, -6px)); } }
+.rail-flyout[data-opens="left"] { --flyout-from: 6px; }
+
+/* ---------- Painéis: abas com ícones e trilho ---------- */
+.inspector-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+/* Mais específico que `.app-shell svg { display: none }` (styles.css). */
+.inspector-tabs .inspector-tab-icon { display: none; flex: 0 0 auto; }
+@container panels (max-width: 319px) {
+  .inspector-tabs .inspector-tab-icon { display: block; }
+  .inspector-tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .inspector-tabs button { position: relative; }
+  .inspector-tabs .tab-badge { position: absolute; top: 3px; right: calc(50% - 20px); }
+}
+.inspector.dock-right.panels-rail { display: flex; flex-direction: column; align-items: center; }
+.panels-rail > .column-drag-bar { width: 100%; }
+.panels-rail .rail-panels { padding-top: 4px; }
+.panels-rail .rail-footer { margin-top: auto; padding-bottom: 8px; }
+
+/* ---------- Terminais: barra compacta e Grade pela largura do contêiner ---------- */
+@container terminals (max-width: 650px) {
+  .terminal-project-title > small { display: none; }
+}
+.cockpit-toolbar[data-mode="compact"] { overflow: visible; position: relative; z-index: 31; }
+.cockpit-toolbar[data-mode="compact"] .terminal-project-title { min-width: 0; }
+.toolbar-overflow { position: relative; display: flex; }
+.toolbar-overflow-trigger { width: 32px; height: 32px; }
+.toolbar-overflow-trigger[aria-expanded="true"] { background: var(--surface-hover); color: var(--text); }
+.toolbar-overflow-popover { top: calc(100% + 4px); width: 228px; display: grid; gap: 1px; }
+.toolbar-overflow-popover .session-menu-item { display: flex; align-items: center; gap: 8px; }
+.toolbar-overflow-popover .session-menu-item svg { display: block; flex: 0 0 auto; color: var(--muted); }
+.toolbar-overflow-popover .session-menu-item[aria-pressed="true"] svg { color: var(--text); }
+.toolbar-overflow-field { min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px 0 8px; color: var(--muted); font-size: 11px; }
+.toolbar-overflow-field .terminal-layout-select { max-width: 150px; }
+
+.session-grid.layout-grid { grid-template-columns: minmax(0, 1fr); }
+.session-grid.layout-grid .session-card:first-child { grid-column: auto; }
+@container terminals (min-width: 1120px) {
+  .session-grid.layout-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .session-grid.layout-grid .session-card:first-child { grid-column: 1 / -1; }
+}
+@container terminals (min-width: 1680px) {
+  .session-grid.layout-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .session-grid.layout-grid .session-card:first-child { grid-column: span 2; }
+}

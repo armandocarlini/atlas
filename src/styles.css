@@ -271,26 +271,12 @@ button.message-card strong { display: block; font-size: 11px; font-weight: 550; 
 .toast { position: fixed; z-index: 30; left: 50%; bottom: 40px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; color: #d7c6a8; background: #1a1914; border: 1px solid #4b402c; border-radius: 6px; padding: 10px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.4); font-size: 10px; animation: toast-in .18s ease-out; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px); } }
 
-@media (min-width: 1600px) {
-  .workspace-body { grid-template-columns: 220px minmax(0, 1fr) 320px; }
-  .session-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .session-card:first-child { grid-column: span 2; }
-  .terminal-lines { font-size: 9px; }
-}
-
 @media (max-width: 1180px) {
-  .workspace-body { grid-template-columns: 180px minmax(0, 1fr) 260px; }
   .workspace-path { display: none; }
-  .session-grid { grid-template-columns: 1fr; }
-  .session-card:first-child { grid-column: auto; }
-  .session-card { min-height: 250px; }
-  .session-grid.focus-mode { grid-auto-rows: calc(100vh - 204px); }
-  .token-count { display: none; }
   .mission-subbar > div span:nth-of-type(2) { display: none; }
 }
 
 @media (max-width: 940px) {
-  .workspace-body { grid-template-columns: 58px minmax(0, 1fr) 250px; }
   .titlebar { grid-template-columns: 200px 1fr auto; }
   .titlebar-center { display: none; }
   .project-tab { min-width: 112px; }
@@ -504,10 +490,6 @@ button.message-card strong { display: block; font-size: 11px; font-weight: 550; 
 .session-grid.focus-mode .terminal-lines { min-height: 0; }
 .empty-session { min-height: 220px; }
 
-@media (max-width: 1180px) {
-  .session-cli, .token-count > span { display: none; }
-}
-
 @media (max-width: 940px) {
   .title-actions .text-control:first-child { display: none; }
 }
@@ -554,25 +536,6 @@ button.message-card strong { display: block; font-size: 11px; font-weight: 550; 
 .atlas-drag-preview { position: fixed; z-index: 9999; top: -200px; left: -200px; width: 190px; display: grid; gap: 5px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 65%, var(--border)); border-left: 3px solid var(--accent); border-radius: 6px; background: #111315; box-shadow: 0 12px 36px rgba(0,0,0,.45); pointer-events: none; }
 .atlas-drag-preview strong { color: var(--text); font-size: 12px; font-weight: 550; }
 .atlas-drag-preview span { color: var(--muted); font: 10px var(--mono); }
-
-@media (min-width: 1600px) {
-  .left-dock-zone { width: 220px; }
-  .inspector.dock-right { width: 320px; flex-basis: 320px; }
-}
-
-@media (max-width: 1180px) {
-  .left-dock-zone { width: 180px; }
-  .inspector.dock-right { width: 260px; flex-basis: 260px; }
-}
-
-@media (max-width: 940px) {
-  .left-dock-zone { width: 58px; }
-  .inspector.dock-right { width: 250px; flex-basis: 250px; }
-  .left-dock-zone .column-drag-bar { padding: 0 4px; justify-content: center; }
-  .left-dock-zone .column-drag-bar strong { display: none; }
-  .left-dock-zone .column-drag-bar span { font-size: 0; }
-  .left-dock-zone .column-drag-bar span::after { content: "Arraste"; font-size: 9px; }
-}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
@@ -685,11 +648,6 @@ body { transition: background-color .18s ease, color .18s ease; }
 .origin-badge.demo { border-style: dashed; }
 .toast { color: var(--text); background: var(--surface-raised); border-color: var(--border); }
 
-@media (max-width: 940px) {
-  .git-discovery { display: none; }
-  .left-dock-zone .column-drag-bar .detach-control { display: none; }
-  .toolbar-actions { flex-wrap: wrap; }
-}
 
 @media (max-width: 600px) {
   .background-presets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -733,13 +691,6 @@ body { transition: background-color .18s ease, color .18s ease; }
   .cockpit-toolbar { padding-inline: 10px; }
 }
 
-@media (max-width: 940px) {
-  .left-dock-zone { width: 180px; }
-  .left-dock-zone .column-drag-bar { justify-content: space-between; padding: 0 8px; }
-  .left-dock-zone .column-drag-bar strong { display: block; }
-  .left-dock-zone .column-drag-bar .detach-control { display: inline-flex; align-items: center; }
-  .git-discovery { display: block; }
-}
 .session-history { padding: 20px; color: var(--text); line-height: 1.6; overflow: auto; }
 .session-history p { color: var(--muted); }
 .session-history dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; }
