@@ -100,13 +100,15 @@ delete env.ELECTRON_RUN_AS_NODE;
 delete env.VITE_DEV_SERVER_URL;
 // Codex can inject its bundled PowerShell modules; exercise Windows' own modules.
 for (const key of Object.keys(env)) if (key.toLowerCase() === 'psmodulepath') delete env[key];
-const child = spawn(electron, [path.join(root, 'scripts/smoke-app.cjs'), `--remote-debugging-port=${port}`], { cwd: fixture, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+const launchApp = () => spawn(electron, [path.join(root, 'scripts/smoke-app.cjs'), `--remote-debugging-port=${port}`], { cwd: fixture, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+const child = launchApp();
 const childExit = new Promise((resolve) => child.once('exit', resolve));
 const connections = [];
 const pids = [];
 let createdTaskId = null;
 let offeredTaskId = null;
 let blockedTaskId = null;
+let terminalBeforeRestart;
 let stderr = '';
 child.stderr.on('data', (data) => { stderr = (stderr + data).slice(-12000); });
 child.stdout.resume();
@@ -655,7 +657,8 @@ try {
   await until(() => main.evaluate(`Boolean(document.querySelector('.app-shell')) && document.querySelectorAll('.session-history').length === 0 && document.querySelectorAll('#tree-session-history-fixture').length <= 1 && window.atlasDesktop.listAgents().then(items => new Set(items.map(item => item.id)).size === items.length)`), 'project history restored once after reload');
   await until(() => main.evaluate(`document.querySelector('.app-shell') && document.querySelectorAll('[data-column-id]').length === 1 && getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#18222b'`), 'layout and custom background persisted after reload');
   await until(() => main.evaluate(`window.atlasDesktop.listProjects().then(items => items.some(item => item.path === ${JSON.stringify(extraProject)}))`), 'authorized project restored');
-  // UI sessions are intentionally not persisted yet; PTYs are still closed below by id.
+  await until(() => main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'smoke-dois')`), 'terminal continua conectado após recarregar a interface');
+  assert.equal(await main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(second.id)}).then(item => item.exit)`), null);
   await main.evaluate(`window.atlasDesktop.closePty(${JSON.stringify(first.id)}); window.atlasDesktop.closePty(${JSON.stringify(second.id)})`);
   await screenshot(main, 'terminals-focused');
   await click(main, '.toolbar-actions button', 'Navegação');
@@ -1163,6 +1166,10 @@ try {
   assert(canHideNavigationAtMinimumWidth, 'Navigation must be collapsible at minimum window width');
   assert(canCreateAndReopenAtMinimumWidth, 'Terminal controls must remain available at minimum window width');
   assert.equal([...modalAudit, ...lightAudit, ...darkAudit].filter((item) => item.ratio < 4.5).length, 0, 'Low contrast text: inspect audit JSON files');
+  terminalBeforeRestart = await createTerminal('PowerShell a retomar');
+  await main.evaluate(`window.atlasDesktop.writeTerminal(${JSON.stringify(terminalBeforeRestart.id)}, "Write-Output ('PID:' + $PID)\\r")`);
+  await output('PID:', terminalBeforeRestart.id);
+  pids.push(await until(async () => Number((await raw(terminalBeforeRestart.id)).match(/PID:(\d+)/)?.[1]), 'PID do PowerShell antes de fechar'));
 } catch (error) {
   fs.writeFileSync(path.join(resultsDir, 'result.json'), JSON.stringify({ passed: false, fixture, error: error.message, checkedAt: new Date().toISOString() }, null, 2));
   for (const connection of connections.filter((item) => item.ws.readyState === WebSocket.OPEN)) {
@@ -1180,8 +1187,11 @@ try {
   try { execFileSync('reg.exe', ['delete', explorerRoot, '/f'], { stdio: 'ignore', windowsHide: true }); } catch { /* chave de fixture já ausente */ }
 }
 await until(() => pids.every((pid) => { try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; } }), 'child PowerShell processes stopped');
-let exitTimer;
-await Promise.race([childExit, new Promise((_, reject) => { exitTimer = setTimeout(() => reject(new Error('Electron test process did not exit')), 15000); })]).finally(() => clearTimeout(exitTimer));
+async function waitForExit(exited) {
+  let timer;
+  await Promise.race([exited, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Electron test process did not exit')), 15000); })]).finally(() => clearTimeout(timer));
+}
+await waitForExit(childExit);
 assert(!stderr.includes('AttachConsole failed'), 'Closing an exited PTY must not kill the same console again');
 const persisted = new DatabaseSync(path.join(profile, 'atlas.sqlite'), { readOnly: true });
 try {
@@ -1213,6 +1223,36 @@ try {
   persisted.close();
 }
 console.log('PASS projetos persistidos pelo processo principal em SQLite íntegro');
+
+const reopened = launchApp();
+const reopenedExit = new Promise((resolve) => reopened.once('exit', resolve));
+reopened.stdout.resume();
+reopened.stderr.resume();
+try {
+  const page = await until(async () => (await pages()).find((item) => item.type === 'page' && !item.url.includes('window=')), 'janela principal reaberta');
+  const main = await connect(page);
+  await until(() => main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'PowerShell a retomar')`), 'card do PowerShell reaberto');
+  const { terminals, failed } = await main.evaluate('window.atlasDesktop.listTerminals()');
+  assert.deepEqual(failed, []);
+  assert.equal(terminals.length, 1, 'PowerShell encerrado pelo usuário não reabre');
+  const [terminal] = terminals;
+  assert.equal(terminal.sessionId, terminalBeforeRestart.sessionId);
+  assert.notEqual(terminal.id, terminalBeforeRestart.id, 'reabre em um novo PTY');
+  assert.equal(terminal.cwd, worktree);
+  await main.evaluate(`window.atlasDesktop.writeTerminal(${JSON.stringify(terminal.id)}, "Write-Output ('CWD:' + (Get-Location).Path); Write-Output ('PID:' + $PID)\\r")`);
+  const buffer = await until(async () => {
+    const { scrollback } = await main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(terminal.id)})`);
+    return scrollback.includes(`CWD:${worktree}`) && /PID:\d+/.test(scrollback) ? scrollback : null;
+  }, 'PowerShell executa na mesma pasta');
+  pids.push(Number(buffer.match(/PID:(\d+)/)[1]));
+  console.log('PASS PowerShell reabre sozinho na mesma worktree após fechar e abrir o ATLAS');
+} finally {
+  connections.forEach((item) => item.ws.close());
+  await native('quit').catch(() => reopened.kill());
+  reopened.stdin.end();
+  await waitForExit(reopenedExit);
+}
+await until(() => pids.every((pid) => { try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; } }), 'PowerShell reaberto foi encerrado');
 // Only remove this run's freshly created directory, after verifying its exact parent.
 const fixtureReal = fs.realpathSync(fixture);
 const tempReal = fs.realpathSync(os.tmpdir());

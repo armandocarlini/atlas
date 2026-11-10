@@ -9,7 +9,11 @@ function getPowerShellPath() {
   return executable;
 }
 
-function createTerminalHost({ ipcMain, getMainWindow, projectHost, transport }) {
+function createTerminalHost({ ipcMain, getMainWindow, projectHost, transport, getShellPath = getPowerShellPath }) {
+  const terminals = new Map();
+  let shuttingDown = false;
+  let restoration = Promise.resolve([]);
+
   function isMainSender(event) {
     const window = getMainWindow();
     return Boolean(window && !window.isDestroyed() && event.sender === window.webContents);
@@ -21,14 +25,16 @@ function createTerminalHost({ ipcMain, getMainWindow, projectHost, transport }) 
     return { cwd: projectHost.getDefaultCwd(), shell: 'Windows PowerShell' };
   });
 
-  ipcMain.handle('terminal:create', async (event, request = {}) => {
-    if (!isMainSender(event)) throw new Error('Janela não autorizada a criar terminais.');
+  async function startTerminal(request, sessionId) {
     await waitForCwd(projectHost, request.cwd);
+    if (shuttingDown) throw new Error('O ATLAS está fechando.');
     const cwd = request.cwd || projectHost.getDefaultCwd();
     if (!projectHost.isAllowedCwd(cwd)) throw new Error('Selecione uma pasta autorizada ou uma worktree descoberta.');
+    const project = projectHost.getProjectForCwd(cwd);
+    if (!project) throw new Error('Projeto não encontrado para a pasta autorizada.');
     const cols = Number.isInteger(request.cols) ? Math.min(500, Math.max(20, request.cols)) : 100;
     const rows = Number.isInteger(request.rows) ? Math.min(200, Math.max(5, request.rows)) : 30;
-    const shell = getPowerShellPath();
+    const shell = getShellPath();
     const record = transport.spawn({
       file: shell,
       args: ['-NoLogo'],
@@ -37,10 +43,55 @@ function createTerminalHost({ ipcMain, getMainWindow, projectHost, transport }) 
       rows,
       meta: { kind: 'shell', shell },
     });
-    return { id: record.id, cwd, shell: 'Windows PowerShell' };
+    const details = {
+      id: record.id, sessionId: sessionId ?? record.id, projectId: project.id, cwd,
+      name: typeof request.name === 'string' ? request.name.trim() || 'terminal-local' : 'terminal-local',
+      shell: 'Windows PowerShell',
+    };
+    terminals.set(details.sessionId, { details, record });
+    return details;
+  }
+
+  ipcMain.handle('terminal:create', (event, request = {}) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a criar terminais.');
+    return startTerminal(request);
   });
 
-  return { isMainSender };
+  ipcMain.handle('terminal:list', async (event) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a listar terminais.');
+    const failed = await restoration;
+    return {
+      terminals: [...terminals.values()].map(({ details, record }) => ({ ...details, exit: record.exit })),
+      failed,
+    };
+  });
+
+  return {
+    isMainSender,
+    snapshotForQuit() {
+      shuttingDown = true;
+      const snapshot = [];
+      for (const { details: { sessionId, cwd, name }, record } of terminals.values()) {
+        if (!record.exit && !record.closing) snapshot.push({ sessionId, cwd, name });
+      }
+      terminals.clear();
+      return snapshot;
+    },
+    restoreTerminals(saved) {
+      shuttingDown = false;
+      restoration = (async () => {
+        const failed = [];
+        for (const { sessionId, name, cwd } of saved) {
+          try {
+            await startTerminal({ name, cwd }, sessionId);
+          } catch (error) {
+            failed.push({ name, error: error.message });
+          }
+        }
+        return failed;
+      })();
+    },
+  };
 }
 
 module.exports = { createTerminalHost };

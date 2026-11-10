@@ -720,13 +720,19 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     },
     // Fechamento do app: grava a lista exata e marca as runs ativas como fechadas pelo app,
     // antes de os processos morrerem, para a saída forçada não virar "falhou".
-    markAppClosed() {
+    markAppClosed(terminals = []) {
       return transaction(db, () => {
         const active = db.prepare("SELECT id FROM agent_runs WHERE state = 'running'").all();
         db.prepare(`INSERT INTO app_state (key, value) VALUES ('last_closed_runs', ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify(active.map(({ id }) => id)));
+        db.prepare(`INSERT INTO app_state (key, value) VALUES ('last_closed_terminals', ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify(terminals));
         return reconcileActive('application_closed');
       });
+    },
+    takeRestorableTerminals() {
+      const saved = db.prepare("DELETE FROM app_state WHERE key = 'last_closed_terminals' RETURNING value").get();
+      return saved ? JSON.parse(saved.value) : [];
     },
     // Runs a retomar na abertura: a última de cada sessão, fechada pelo app no último
     // fechamento e ainda sem tentativa. Sem lista gravada (banco anterior), vale o
