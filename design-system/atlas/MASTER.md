@@ -112,6 +112,8 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 - O menu mantém o gatilho no mesmo lugar, devolve o foco ao fechar e não deixa Escape atravessar para os painéis ao fundo.
 - Seleção, foco e estado não dependem apenas de cor.
 - A linha da grade define a altura do cartão: piso de 300px, crescendo com a área disponível. Cartões não têm altura mínima própria, para nunca se sobreporem. No Foco, o cartão ocupa toda a área.
+- **Abertura:** a área de trabalho mostra só sessões vivas. Uma run sem processo (histórico, inclusive "resultado incerto") não reabre como card; continua na árvore e só vira card, somente leitura, quando o usuário a abre por ela. Ocultar um histórico aberto fecha o card.
+- **Projeto sem sessões vivas:** a tela do Atlas pergunta "Como começar?" e lista a sessão principal (com o estado dela) e as funções de agente na ordem salva, cada uma com descrição em uma linha e CLI · modelo à direita ("Não configurada" quando faltar). Escolher só abre o diálogo preenchido pela função; nada inicia sem confirmação. "Agente sem função" e "Terminal" ficam como ações secundárias. O aviso da principal não aparece em cima dessa tela, para não duplicar.
 - A barra de status inferior foi retirada para dar altura aos terminais; projeto e diretório continuam na árvore e no contexto da área de trabalho.
 
 ### Navegação e painéis

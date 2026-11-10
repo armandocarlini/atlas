@@ -241,10 +241,40 @@ try {
   await until(() => main.evaluate(`!document.querySelector('.terminal-layout-select').matches(':open') && document.activeElement === document.querySelector('.terminal-layout-select')`), 'Escape fecha a lista e devolve o foco');
   assert.equal(await main.evaluate(`document.querySelector('.terminal-layout-select').value`), layoutBefore, 'Escape não troca o layout');
   console.log('PASS seleções com lista do ATLAS, teclado e Escape');
-  await until(() => main.evaluate(`Boolean(document.querySelector('.session-history'))`), 'persisted session restored');
+  // Abertura: histórico sem processo não reabre como terminal; o projeto sem sessões vivas
+  // mostra a escolha de função, e o histórico continua na árvore.
+  await until(() => main.evaluate(`Boolean(document.querySelector('.start-launcher')) && Boolean(document.getElementById('tree-session-history-fixture'))`), 'tela inicial com escolha de função');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.session-card').length`), 0, 'histórico não abre como card na abertura');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 0, 'nenhum "resultado incerto" na abertura');
+  assert.equal(await main.evaluate(`document.querySelector('.titlebar-context small').textContent`), 'Nenhuma sessão aberta');
   assert.equal(await main.evaluate(`document.querySelectorAll('.origin-badge.demo').length`), 0, 'Desktop must not show illustrative agent cards');
   // Sem CLI padrão: a principal só inicia depois de o usuário escolher CLI e modelo.
-  await until(() => main.evaluate(`document.querySelector('.orchestrator-choice-note')?.innerText.includes('ainda não foi iniciada')`), 'principal aguarda a escolha do agente');
+  await until(() => main.evaluate(`document.querySelector('.start-choice.principal')?.innerText.includes('ainda não iniciada')`), 'principal aguarda a escolha do agente');
+  assert.equal(await main.evaluate(`Boolean(document.querySelector('.orchestrator-choice-note'))`), false, 'aviso da principal não duplica a tela inicial');
+  await until(() => main.evaluate(`document.querySelectorAll('.start-choice:not(.principal)').length === 5`), 'cinco funções padrão na tela inicial');
+  assert.deepEqual(await main.evaluate(`[...document.querySelectorAll('.start-choice:not(.principal) strong')].map(item => item.textContent)`), ['Planejar', 'Explorar', 'Implementar', 'Revisar', 'Testes']);
+  await screenshot(main, 'start-launcher');
+  const launcherAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(launcherAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in start launcher');
+  // Cada função só abre o diálogo com ela escolhida; nada inicia sem confirmação.
+  await click(main, '.start-choice[data-function=planejar]');
+  await until(() => main.evaluate(`document.querySelector('.modal select[name=function]')?.value === 'planejar'`), 'diálogo aberto com a função escolhida');
+  assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]')?.value ?? ''`), '', 'função não configurada não escolhe CLI');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'diálogo da função fechado');
+  await click(main, '.toolbar-actions button', 'Sessão');
+  await until(() => main.evaluate(`document.querySelector('.modal select[name=function]')?.value === ''`), 'botão Sessão não herda a função anterior');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'diálogo de sessão fechado');
+  await click(main, '.start-launcher-secondary button', 'Terminal');
+  await until(() => main.evaluate(`document.querySelector('#new-session-title')?.textContent === 'Abrir terminal'`), 'terminal pela tela inicial');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'diálogo do terminal fechado');
+  assert.equal((await native('terminals')).length, 0, 'tela inicial não inicia processo');
+  console.log('PASS abertura sem histórico como terminal: escolha de função, principal e terminal sob confirmação');
+  // O histórico abre pela árvore, só para leitura.
+  await main.evaluate(`document.getElementById('tree-session-history-fixture').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('.session-history'))`), 'histórico aberto pela árvore');
   // A árvore coloca a principal parada em "Espera você".
   await until(() => main.evaluate(`[...document.querySelectorAll('.tree-decision.principal')].some(item => item.innerText.includes('Iniciar a sessão principal'))`), 'árvore mostra a principal parada');
   // Regressão: sem sessão Kimi no projeto, nada de aviso do Kimi (só o indicador discreto).
@@ -276,6 +306,9 @@ try {
   assert(await main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]').closest('.tree-project-row').querySelector('.tree-expander').getAttribute('aria-expanded') === 'true'`), 'Selecting a project must reveal its repositories and sessions');
   assert(await main.evaluate(`document.querySelector('.workspace-path span').textContent === ${JSON.stringify(extraProject)}`), 'Initial hydration overwrote the selected directory');
   console.log('PASS seleção do projeto preservada durante inicialização tardia');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.session-card').length`), 0, 'histórico do projeto adicional não abre sozinho');
+  await main.evaluate(`document.getElementById('tree-session-reauthorized-fixture').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('[data-session-id=reauthorized-fixture]'))`), 'histórico do projeto adicional aberto pela árvore');
   await chooseTerminalLayout(main, 'spotlight');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-card').length`), 1, 'Focus must select a session in the current project');
   assert((await main.evaluate(`document.querySelector('.session-history').innerText`)).includes(extraProject));
@@ -487,7 +520,10 @@ try {
   const hiddenExits = await main.evaluate(`Promise.all(${JSON.stringify([first.id, second.id])}.map(id => window.atlasDesktop.attachTerminal(id).then(item => item.exit)))`);
   assert.deepEqual(hiddenExits, [null, null], 'All PTYs survive hiding every card');
   await click(main, '.sessions-hidden-empty button', 'Restaurar sessões');
-  await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 3`), 'restore all sessions');
+  // Restaurar traz os terminais vivos; o histórico ocultado foi fechado e continua só na árvore.
+  await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 2`), 'restore all sessions');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 0, 'histórico fechado não volta com Restaurar');
+  assert.equal(await main.evaluate(`Boolean(document.getElementById('tree-session-history-fixture'))`), true, 'histórico fechado continua na árvore');
   assert.equal(Number((await raw(first.id)).match(/PID:(\d+)/g).at(-1).slice(4)), firstPid);
   assert.equal(Number((await raw(second.id)).match(/PID:(\d+)/g).at(-1).slice(4)), secondPid);
   await focus('smoke-dois');
@@ -567,7 +603,8 @@ try {
   await main.evaluate(`window.atlasDesktop.closePty(${JSON.stringify(first.id)})`);
   await until(() => main.evaluate(`[...document.querySelectorAll('.session-header')].some(item => item.title.includes('encerrado'))`), 'exit status in session details');
   await main.call('Page.reload');
-  await until(() => main.evaluate(`document.querySelectorAll('.session-history').length === 1`), 'project history restored once after reload');
+  // Depois de recarregar, nenhum histórico volta aberto e cada sessão aparece uma vez na árvore.
+  await until(() => main.evaluate(`Boolean(document.querySelector('.app-shell')) && document.querySelectorAll('.session-history').length === 0 && document.querySelectorAll('#tree-session-history-fixture').length <= 1 && window.atlasDesktop.listAgents().then(items => new Set(items.map(item => item.id)).size === items.length)`), 'project history restored once after reload');
   await until(() => main.evaluate(`document.querySelector('.app-shell') && document.querySelectorAll('[data-column-id]').length === 1 && getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#18222b'`), 'layout and custom background persisted after reload');
   await until(() => main.evaluate(`window.atlasDesktop.listProjects().then(items => items.some(item => item.path === ${JSON.stringify(extraProject)}))`), 'authorized project restored');
   // UI sessions are intentionally not persisted yet; PTYs are still closed below by id.
@@ -640,7 +677,7 @@ try {
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'session modal closed');
   // Principal: mesma escolha explícita; a falha de início fica no modal, sem sessão fictícia.
-  await click(main, '.orchestrator-choice-note button', 'Escolher agente');
+  await main.evaluate(`(document.querySelector('.orchestrator-choice-note button') || document.querySelector('.start-choice.principal')).click()`);
   await until(() => main.evaluate(`Boolean(document.querySelector('#orchestrator-choice-title'))`), 'escolha da principal aberta');
   assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]').value`), '', 'principal sem CLI pré-selecionado');
   // Chave "Principal só coordena": ligada por padrão; desligada, o aviso explica o que muda.
@@ -752,6 +789,20 @@ try {
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'sessão manual fechada');
   console.log('PASS sessão manual usa função só para preencher CLI e modelo');
+  // Tela inicial: a função configurada chega ao diálogo com CLI e modelo preenchidos, sem iniciar.
+  // O projeto adicional só tem histórico: depois de recarregar, ele abre na tela inicial.
+  await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('.start-choice[data-function=revisar]'))`), 'tela inicial no projeto só com histórico');
+  {
+    assert((await main.evaluate(`document.querySelector('.start-choice[data-function=revisar]').innerText`)).includes('OpenCode · fixture/modelo-forte'), 'tela inicial mostra CLI e modelo da função');
+    const before = (await native('terminals')).length;
+    await click(main, '.start-choice[data-function=revisar]');
+    await until(() => main.evaluate(`document.querySelector('.modal select[name=function]')?.value === 'revisar' && document.querySelector('.modal select[name=model]')?.value === 'fixture/modelo-forte'`), 'diálogo preenchido pela função da tela inicial');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'diálogo da função configurada fechado');
+    assert.equal((await native('terminals')).length, before, 'escolher a função não inicia o agente');
+    console.log('PASS tela inicial preenche CLI e modelo pela função, sem iniciar');
+  }
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'session modal closed');
   console.log('PASS modal de sessão lista somente adaptadores detectados');
   // Pedidos de agente semeados pela principal da fixture com o app aberto; o CLI
@@ -834,6 +885,10 @@ try {
   const offerText = await main.evaluate(`document.querySelector('.task-assignment').innerText`);
   assert(offerText.includes('Segunda linha do objetivo.') && offerText.includes('Escrever a regressão primeiro.') && offerText.includes('Aguardando o agente aceitar'), 'Offer shows objective, next steps and pending state');
   // Regressão: avisos do workspace eram espremidos na linha 1fr da grade e se sobrepunham.
+  // Com uma sessão aberta (o histórico, pela árvore), o aviso da principal volta a aparecer
+  // em vez da tela inicial, e os dois avisos precisam empilhar sem se cobrir.
+  await main.evaluate(`document.getElementById('tree-session-reauthorized-fixture').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('[data-session-id=reauthorized-fixture]')) && Boolean(document.querySelector('.workspace-notices .orchestrator-choice-note')) && !document.querySelector('.start-launcher')`), 'aviso da principal com sessão aberta');
   const notices = await main.evaluate(`[...document.querySelectorAll('.workspace-notices > *')].map(item => { const rect = item.getBoundingClientRect(); return { name: item.className, top: rect.top, bottom: rect.bottom, height: rect.height, scroll: item.scrollHeight }; })`);
   assert(notices.length >= 2, `Expected stacked workspace notices, got ${JSON.stringify(notices)}`);
   for (const [index, notice] of notices.entries()) {

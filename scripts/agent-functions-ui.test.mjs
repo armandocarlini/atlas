@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { describeChoice, pendingConfiguration, pickRecommendation, sameAiWorkers } from '../src/agent-functions.js';
+import { describeChoice, pendingConfiguration, pickRecommendation, sameAiWorkers, startChoices } from '../src/agent-functions.js';
 
 const adapters = [
   { id: 'kimi-code', name: 'Kimi Code', status: 'missing' },
@@ -48,4 +48,22 @@ test('mesma IA: mesmo CLI e modelo, de outra função; sem modelo de um lado, ba
   assert.deepEqual(sameAiWorkers(workedBy, { adapterId: 'codex', model: 'gpt-a' }, 'revisar'), [], 'a mesma função não acusa o revisor anterior');
   assert.deepEqual(sameAiWorkers(undefined, { adapterId: 'codex' }, 'revisar'), []);
   assert.deepEqual(sameAiWorkers(workedBy, { adapterId: '' }, 'revisar'), [], 'sem CLI escolhido, sem aviso');
+});
+
+test('tela inicial: a principal separada e as funções de agente na ordem salva', () => {
+  const items = [
+    { slug: 'revisar', kind: 'builtin', position: 4 },
+    { slug: 'minha', kind: 'custom', position: 7 },
+    { slug: 'orquestrador', kind: 'orchestrator', position: 0 },
+    { slug: 'planejar', kind: 'builtin', position: 1 },
+  ];
+  const { principal, agents } = startChoices(items);
+  assert.equal(principal.slug, 'orquestrador');
+  assert.deepEqual(agents.map((item) => item.slug), ['planejar', 'revisar', 'minha']);
+  assert.equal(items[0].slug, 'revisar', 'a lista original não é reordenada');
+});
+
+test('tela inicial sem funções carregadas não oferece principal nem agentes', () => {
+  assert.deepEqual(startChoices(null), { principal: null, agents: [] });
+  assert.deepEqual(startChoices([]), { principal: null, agents: [] });
 });

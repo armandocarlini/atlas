@@ -4,6 +4,16 @@ export const KIND_LABELS = { orchestrator: 'Sessão principal', builtin: 'Padrã
 
 export const isConfigured = (item) => Boolean(item?.adapterId);
 
+// Escolhas da tela inicial do projeto: a principal (Orquestrador) e as funções de
+// agente na ordem salva. Nenhuma é pré-selecionada; cada uma só preenche o diálogo.
+export function startChoices(items) {
+  const ordered = [...(items || [])].sort((left, right) => (left.position ?? 0) - (right.position ?? 0));
+  return {
+    principal: ordered.find((item) => item.kind === 'orchestrator') || null,
+    agents: ordered.filter((item) => item.kind !== 'orchestrator'),
+  };
+}
+
 // Funções que ainda pedem configuração (o Orquestrador e as padrão nascem vazios).
 export function pendingConfiguration(items) {
   return (items || []).filter((item) => item.kind !== 'custom' && !isConfigured(item)).length;

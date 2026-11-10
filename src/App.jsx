@@ -36,7 +36,7 @@ import { appearanceTokens, contrastInk, isPreviousDefaultTheme, visibleAccent } 
 import useModalFocus from './useModalFocus.js';
 import CommandPalette from './CommandPalette.jsx';
 import { atlasDecisions } from './atlas-panel.js';
-import { nextVisibleSessionId, normalizeTerminalLayout, sessionsInLayout, visibleWorkspaceSessions } from './workspace-layout.js';
+import { nextVisibleSessionId, normalizeTerminalLayout, sessionsInLayout, visibleWorkspaceSessions, workspaceSessions } from './workspace-layout.js';
 import { agentSession, mergeAgentSessions, sessionExit, usesGemini, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
@@ -53,7 +53,7 @@ import { RegressionSuiteModal, RegressionSuiteStatus } from './RegressionSuite.j
 import { AgentFunctionsModal } from './AgentFunctions.jsx';
 import { ModelSwitchModal } from './ModelSwitch.jsx';
 import { canSwitch, modelLabel } from './model-switch.js';
-import { choiceFromFunction, pendingConfiguration, pickRecommendation } from './agent-functions.js';
+import { choiceFromFunction, describeChoice, pendingConfiguration, pickRecommendation, startChoices } from './agent-functions.js';
 import { OpenFolderModal, ExplorerIntegrationSection } from './OpenFolder.jsx';
 
 // Mensagem de erro do processo principal sem o prefixo técnico do IPC do Electron.
@@ -267,17 +267,52 @@ function AtlasMark() {
 
 const ORBIT_PATH = 'M0 332a320 92 0 1 0 640 0a320 92 0 1 0-640 0';
 // Projeto sem sessões: o Atlas recebe o usuário. O movimento respeita "reduzir movimento" pelo CSS.
-function AtlasWelcome({ projectName }) {
+function AtlasWelcome({ projectName, launcher = null }) {
   return (
-    <div className="atlas-welcome">
+    <div className={`atlas-welcome ${launcher ? 'with-launcher' : ''}`}>
       <div className="atlas-welcome-stage" aria-hidden="true">
         <span className="atlas-statue" />
         <svg viewBox="0 0 640 955"><g transform="rotate(-14 320 332)"><path d={ORBIT_PATH} /><path d="M70 332a250 66 0 1 0 500 0a250 66 0 1 0-500 0" transform="rotate(36 320 332)" /></g></svg>
       </div>
       <div className="atlas-welcome-wordmark" aria-hidden="true">ATLAS</div>
-      <h2>Nenhuma sessão em {projectName}</h2>
-      <p>Abra um terminal ou uma sessão de agente. Nenhum agente começa sem a sua confirmação, e é você quem escolhe o CLI e o modelo.</p>
+      <h2 id="atlas-welcome-title">{launcher ? `Como começar em ${projectName}?` : `Nenhuma sessão em ${projectName}`}</h2>
+      <p>{launcher ? 'Escolha a função. O CLI e o modelo vêm dela, e você confirma antes de qualquer agente iniciar.' : 'Abra um terminal ou uma sessão de agente. Nenhum agente começa sem a sua confirmação, e é você quem escolhe o CLI e o modelo.'}</p>
+      {launcher}
     </div>
+  );
+}
+
+// Projeto sem sessões vivas: em vez de reabrir terminais, o usuário escolhe a função.
+// Cada opção só abre o diálogo preenchido; nenhuma sessão inicia sem confirmação.
+function StartLauncher({ functions, adapters, principalWaiting, onPrincipal, onFunction, onTerminal }) {
+  const { principal, agents } = startChoices(functions?.items);
+  const meta = (item) => item?.adapterId ? describeChoice(item, adapters) : 'Não configurada';
+  const row = ({ slug, name, description, item, onClick, lead = false, state = null }) => (
+    <li key={slug}>
+      <button type="button" className={`start-choice ${lead ? 'principal' : ''}`} data-function={slug} title={description || undefined} onClick={onClick}>
+        <span className="start-choice-text">
+          <strong>{name}{state && <span className="start-choice-state">{state}</span>}</strong>
+          {description && <span>{description}</span>}
+        </span>
+        <small className={item?.adapterId ? '' : 'pending'}>{meta(item)}</small>
+        <ChevronRight size={15} aria-hidden="true" />
+      </button>
+    </li>
+  );
+  return (
+    <nav className="start-launcher" aria-labelledby="atlas-welcome-title">
+      <ul>{row({ slug: 'orquestrador', name: 'Sessão principal', description: 'Planeja e delega; pede agentes com a sua aprovação.', item: principal, onClick: onPrincipal, lead: true, state: principalWaiting ? 'ainda não iniciada' : null })}</ul>
+      {agents.length > 0 && <>
+        <h3 className="start-launcher-label" id="start-agents-label">Agente com função</h3>
+        <ul aria-labelledby="start-agents-label">
+          {agents.map((item) => row({ slug: item.slug, name: item.name, description: item.description, item, onClick: () => onFunction(item.slug) }))}
+        </ul>
+      </>}
+      <div className="start-launcher-secondary">
+        <button type="button" className="text-control" data-function="" onClick={() => onFunction('')}><Plus size={14} />Agente sem função</button>
+        <button type="button" className="text-control" onClick={onTerminal}><SquareTerminal size={14} />Terminal</button>
+      </div>
+    </nav>
   );
 }
 
@@ -420,15 +455,17 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
   );
 }
 
-function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees, onDirectoryChange, busy, adapters = null, loadingAdapters = false, functions = null }) {
+function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees, onDirectoryChange, busy, adapters = null, loadingAdapters = false, functions = null, initialFunction = '' }) {
   const dialogRef = useModalFocus();
   const [error, setError] = useState('');
   const isTerminal = kind === 'terminal';
   const realAdapters = !isTerminal && Array.isArray(adapters);
-  const [choice, setChoice] = useState({ adapterId: '', model: '', ready: false });
-  // Função opcional: só preenche CLI e modelo com o que o usuário salvou nela.
+  // Função opcional: só preenche CLI e modelo com o que o usuário salvou nela. Vinda da
+  // tela inicial, já chega escolhida; o usuário ainda confirma ou troca tudo.
   const agentFunctions = (functions?.items || []).filter((item) => item.kind !== 'orchestrator');
-  const [functionSlug, setFunctionSlug] = useState('');
+  const startFunction = !isTerminal && agentFunctions.some((item) => item.slug === initialFunction) ? initialFunction : '';
+  const [choice, setChoice] = useState(() => choiceFromFunction(agentFunctions.find((item) => item.slug === startFunction) || null));
+  const [functionSlug, setFunctionSlug] = useState(startFunction);
   function selectFunction(slug) {
     setFunctionSlug(slug);
     setChoice(choiceFromFunction(agentFunctions.find((item) => item.slug === slug) || null));
@@ -698,6 +735,9 @@ export default function App() {
   const [popupPosition, setPopupPosition] = useState({ x: Math.max(16, window.innerWidth - 388), y: 96 });
   const popupDragRef = useRef(null);
   const [modal, setModal] = useState(null);
+  const [modalFunction, setModalFunction] = useState('');
+  // Histórico aberto pela árvore nesta execução; na abertura, só sessões vivas aparecem.
+  const [revealedHistoryIds, setRevealedHistoryIds] = useState([]);
   const [toast, setToast] = useState('');
   const [theme, setTheme] = useState(getInitialTheme);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
@@ -724,8 +764,9 @@ export default function App() {
     const scoped = desktop?.isDesktop ? sessions.filter((session) => session.projectId === currentProject?.id) : sessions;
     return scoped.sort((left, right) => Number(right.roleKind === 'orchestrator') - Number(left.roleKind === 'orchestrator'));
   }, [sessions, currentProject?.id]);
-  const unhiddenSessions = useMemo(() => visibleWorkspaceSessions(projectSessions, hiddenSessionIds), [projectSessions, hiddenSessionIds]);
-  const visibleSessions = useMemo(() => sessionsInLayout(projectSessions, { layout: terminalLayout, selectedId, focusId, hiddenSessionIds }), [projectSessions, terminalLayout, selectedId, focusId, hiddenSessionIds]);
+  const openSessions = useMemo(() => workspaceSessions(projectSessions, revealedHistoryIds), [projectSessions, revealedHistoryIds]);
+  const unhiddenSessions = useMemo(() => visibleWorkspaceSessions(openSessions, hiddenSessionIds), [openSessions, hiddenSessionIds]);
+  const visibleSessions = useMemo(() => sessionsInLayout(openSessions, { layout: terminalLayout, selectedId, focusId, hiddenSessionIds }), [openSessions, terminalLayout, selectedId, focusId, hiddenSessionIds]);
   const navigationProjects = useMemo(() => desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((id) => ({ id, name: id, path: '', repositories: [] })), [projects, desktop?.isDesktop]);
   const navigationSessions = useMemo(() => desktop?.isDesktop ? sessions : sessions.map((session) => ({ ...session, projectId: 'ATLAS' })), [sessions, desktop?.isDesktop]);
   const projectDecisions = atlasDecisions({
@@ -1515,11 +1556,17 @@ export default function App() {
     if (project.path) setWorkingDirectory(project.path);
   }
 
+  function openSessionModal(functionSlug = '') {
+    setModalFunction(functionSlug || '');
+    setModal('session');
+  }
+
   function selectSessionTerminal(id) {
     const session = sessions.find((item) => item.id === id);
     const project = navigationProjects.find((item) => item.id === session?.projectId);
     if (project && project.id !== currentProject?.id) selectProject(project);
     setStatusOpen(false);
+    if (session?.archived) setRevealedHistoryIds((current) => current.includes(id) ? current : [...current, id]);
     setHiddenSessionIds((current) => current.filter((sessionId) => sessionId !== id));
     if (terminalLayout === 'spotlight') setFocusId(id);
     setSelectedId(id);
@@ -1546,8 +1593,19 @@ export default function App() {
   }
 
   function hideSession(id) {
+    if (sessions.find((item) => item.id === id)?.archived) {
+      // Histórico não tem processo: ocultar fecha o card, e ele continua na árvore.
+      const nextOpen = revealedHistoryIds.filter((sessionId) => sessionId !== id);
+      const nextId = nextVisibleSessionId(workspaceSessions(projectSessions, nextOpen), hiddenSessionIds);
+      setRevealedHistoryIds(nextOpen);
+      if (selectedId === id) setSelectedId(nextId);
+      if (focusId === id) setFocusId(nextId);
+      window.setTimeout(() => document.getElementById(`tree-session-${id}`)?.focus(), 0);
+      notify('Histórico fechado; ele continua na árvore');
+      return;
+    }
     const nextHidden = [...new Set([...hiddenSessionIds, id])];
-    const nextId = nextVisibleSessionId(projectSessions, nextHidden);
+    const nextId = nextVisibleSessionId(openSessions, nextHidden);
     setHiddenSessionIds(nextHidden);
     window.setTimeout(() => document.getElementById(nextId ? `tree-session-${nextId}` : 'restore-hidden-sessions')?.focus(), 0);
     if (selectedId === id) setSelectedId(nextId);
@@ -1556,7 +1614,7 @@ export default function App() {
   }
 
   function restoreProjectSessions() {
-    const ids = new Set(projectSessions.map((session) => session.id));
+    const ids = new Set(openSessions.map((session) => session.id));
     setHiddenSessionIds((current) => current.filter((id) => !ids.has(id)));
   }
 
@@ -1569,7 +1627,7 @@ export default function App() {
   // Comandos da paleta: as mesmas ações dos botões, sem ocupar a tela.
   function paletteCommands() {
     const commands = [
-      { id: 'new-session', group: 'Sessões', label: 'Nova sessão de agente', keywords: 'agente cli modelo', run: () => setModal('session') },
+      { id: 'new-session', group: 'Sessões', label: 'Nova sessão de agente', keywords: 'agente cli modelo', run: () => openSessionModal() },
       { id: 'new-terminal', group: 'Sessões', label: 'Novo terminal', keywords: 'powershell shell', run: () => setModal('terminal') },
     ];
     if (desktop?.isDesktop && !isSecondaryWindow) commands.push({ id: 'new-task', group: 'Sessões', label: 'Nova tarefa', keywords: 'backlog', run: () => setTaskModalOpen(true) });
@@ -1774,7 +1832,7 @@ export default function App() {
       <a className="skip-link" href="#terminal-workspace">Ir para os terminais</a>
       <header className="titlebar">
         <div className="brand" title="ATLAS 0.1 · local"><AtlasMark /><strong>ATLAS</strong></div>
-        <div className="titlebar-context"><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{unhiddenSessions.length} de {projectSessions.length} sessões visíveis</small></div>
+        <div className="titlebar-context"><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{openSessions.length ? `${unhiddenSessions.length} de ${openSessions.length} sessões visíveis` : 'Nenhuma sessão aberta'}</small></div>
         <div className="title-actions">
           <div className="workspace-path" title={workingDirectory}><span>{workingDirectory}</span></div>
           {!desktop?.isDesktop && <div className="demo-label">AGENTES ILUSTRATIVOS</div>}
@@ -1845,7 +1903,7 @@ export default function App() {
               </select>
               <button className="button secondary compact" aria-expanded={statusOpen} aria-controls="workspace-status" onClick={() => setStatusOpen((current) => !current)}>Estado</button>
               <button className="button secondary compact" onClick={() => setModal('terminal')}><SquareTerminal size={14} />Terminal</button>
-              <button className="button primary compact" onClick={() => setModal('session')}><Plus size={14} />Sessão</button>
+              <button className="button primary compact" onClick={() => openSessionModal()}><Plus size={14} />Sessão</button>
             </div>
           </div>
           {statusOpen && <section id="workspace-status" className="workspace-status-popover" aria-label="Estado do projeto">
@@ -1866,7 +1924,7 @@ export default function App() {
 
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.loading && <p className="scope-note" role="status">Abrindo sessão principal…</p>}
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.error && <div className="scope-note error-note" role="alert"><span>{orchestratorStatus.error}</span><button className="button secondary compact" onClick={() => openOrchestratorChoice()}>Tentar novamente</button></div>}
-          {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice && <div className="scope-note orchestrator-choice-note" role="status"><span>A sessão principal deste projeto ainda não foi iniciada. Escolha o CLI e o modelo que vão planejar e delegar.</span><button className="button primary compact" onClick={() => openOrchestratorChoice()}>Escolher agente</button></div>}
+          {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice && openSessions.length > 0 && <div className="scope-note orchestrator-choice-note" role="status"><span>A sessão principal deste projeto ainda não foi iniciada. Escolha o CLI e o modelo que vão planejar e delegar.</span><button className="button primary compact" onClick={() => openOrchestratorChoice()}>Escolher agente</button></div>}
           </div>
 
           {(terminalLayout === 'spotlight' || terminalLayout === 'tabs') && unhiddenSessions.length > 0 && <div className="terminal-subtabs" role="tablist" aria-label="Sessões visíveis">
@@ -1885,9 +1943,19 @@ export default function App() {
           </div>}
 
           <div className={`session-grid layout-${terminalLayout} ${terminalLayout === 'spotlight' ? 'focus-mode' : ''} ${!visibleSessions.length ? 'is-empty' : ''}`} style={{ '--sidebar-rows': Math.max(1, unhiddenSessions.length - 1) }}>
-            {!visibleSessions.length && (unhiddenSessions.length === 0 && projectSessions.length > 0
+            {!visibleSessions.length && (unhiddenSessions.length === 0 && openSessions.length > 0
               ? <div className="sessions-hidden-empty" role="status"><SquareTerminal size={24} /><h2>Todos os terminais estão ocultos</h2><p>Os processos continuam em execução. Restaure as sessões sem iniciar novos processos.</p><button id="restore-hidden-sessions" className="button primary" onClick={restoreProjectSessions}>Restaurar sessões</button></div>
-              : <AtlasWelcome projectName={desktop?.isDesktop ? currentProject?.name || activeProject : activeMission} />)}
+              : <AtlasWelcome
+                projectName={desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}
+                launcher={<StartLauncher
+                  functions={desktop?.isDesktop ? agentFunctions : null}
+                  adapters={adapters}
+                  principalWaiting={Boolean(desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice)}
+                  onPrincipal={() => desktop?.isDesktop ? openOrchestratorChoice() : openSessionModal('')}
+                  onFunction={openSessionModal}
+                  onTerminal={() => setModal('terminal')}
+                />}
+              />)}
             {visibleSessions.map((session) => <SessionCard
               key={session.id}
               session={session}
@@ -1910,7 +1978,6 @@ export default function App() {
               onSwitchModel={desktop?.isDesktop && desktop.declareAgentModel ? setModelSwitch : undefined}
               onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
             />)}
-            {projectSessions.length === 0 && <button className="empty-session" onClick={() => setModal('session')}><span><Plus size={19} /></span><strong>Nova sessão de agente</strong><small>Manual, no diretório selecionado</small></button>}
           </div>
         </main>
 
@@ -1951,7 +2018,7 @@ export default function App() {
       })}
 
       {orchestratorChoice && <OrchestratorChoiceModal adapters={adapters} functions={agentFunctions} previousCli={orchestratorChoice.previousCli} busy={orchestratorChoice.busy} error={orchestratorChoice.error} mode={orchestratorChoice.mode} onClose={() => { if (!orchestratorChoice.busy) setOrchestratorChoice(null); }} onStart={startOrchestrator} />}
-      {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} functions={desktop?.isDesktop ? agentFunctions : null} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
+      {modal && <NewSessionModal key={`${modal}:${modalFunction}`} kind={modal} initialFunction={modal === 'session' ? modalFunction : ''} onClose={() => { setModal(null); setModalFunction(''); }} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} functions={desktop?.isDesktop ? agentFunctions : null} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
       {modelSwitch && <ModelSwitchModal session={modelSwitch} desktop={desktop} onClose={() => setModelSwitch(null)}
         onGoToTerminal={() => {
           const id = modelSwitch.id;

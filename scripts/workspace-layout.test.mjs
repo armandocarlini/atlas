@@ -7,6 +7,7 @@ import {
   sameWorkspacePath,
   sessionsInLayout,
   visibleWorkspaceSessions,
+  workspaceSessions,
 } from '../src/workspace-layout.js';
 
 const projects = [{
@@ -72,4 +73,16 @@ test('layout lateral prioriza principal visível, ou seleção quando não há p
   assert.deepEqual(sessionsInLayout(items, { layout: 'sidebar', selectedId: 'agent' }).map(item => item.id), ['lead', 'history', 'agent']);
   assert.deepEqual(sessionsInLayout(items, { layout: 'sidebar', selectedId: 'agent', hiddenSessionIds: ['lead'] }).map(item => item.id), ['agent', 'history']);
   assert.deepEqual(sessionsInLayout([], { layout: 'sidebar' }), []);
+});
+
+test('abertura: histórico fica fora da área de trabalho até ser aberto pela árvore', () => {
+  const sessions = [
+    { id: 'viva', archived: false },
+    { id: 'antiga', archived: true },
+    { id: 'encerrada-agora', archived: false, exited: true },
+  ];
+  assert.deepEqual(workspaceSessions(sessions).map((item) => item.id), ['viva', 'encerrada-agora']);
+  assert.deepEqual(workspaceSessions(sessions, ['antiga']).map((item) => item.id), ['viva', 'antiga', 'encerrada-agora']);
+  assert.deepEqual(workspaceSessions(sessions, new Set(['antiga'])).map((item) => item.id), ['viva', 'antiga', 'encerrada-agora']);
+  assert.deepEqual(workspaceSessions([{ id: 'só-histórico', archived: true }]), [], 'só histórico: área vazia, com a escolha de função');
 });
