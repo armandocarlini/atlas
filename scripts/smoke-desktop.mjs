@@ -275,6 +275,8 @@ try {
   // O histórico abre pela árvore, só para leitura.
   await main.evaluate(`document.getElementById('tree-session-history-fixture').click()`);
   await until(() => main.evaluate(`Boolean(document.querySelector('.session-history'))`), 'histórico aberto pela árvore');
+  // Ícone da sessão: CLI desconhecido não ganha marca inventada; histórico tem selo de encerrada.
+  assert.deepEqual(await main.evaluate(`(() => { const glyph = document.querySelector('[data-session-id=history-fixture] .session-header .session-glyph'); return [glyph?.dataset.cli, glyph?.classList.contains('tone-ended'), glyph?.innerText.trim()]; })()`), ['agent', true, 'Agente, encerrada']);
   // A árvore coloca a principal parada em "Espera você".
   await until(() => main.evaluate(`[...document.querySelectorAll('.tree-decision.principal')].some(item => item.innerText.includes('Iniciar a sessão principal'))`), 'árvore mostra a principal parada');
   // Regressão: sem sessão Kimi no projeto, nada de aviso do Kimi (só o indicador discreto).
@@ -309,6 +311,8 @@ try {
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-card').length`), 0, 'histórico do projeto adicional não abre sozinho');
   await main.evaluate(`document.getElementById('tree-session-reauthorized-fixture').click()`);
   await until(() => main.evaluate(`Boolean(document.querySelector('[data-session-id=reauthorized-fixture]'))`), 'histórico do projeto adicional aberto pela árvore');
+  // Histórico de um CLI com marca publicada: a árvore mostra o ícone oficial, com selo de encerrada.
+  assert.deepEqual(await main.evaluate(`(() => { const glyph = document.querySelector('#tree-session-reauthorized-fixture-2 .session-glyph'); return [glyph?.dataset.cli, Boolean(glyph?.querySelector('svg path[d]')), glyph?.classList.contains('tone-ended')]; })()`), ['kimi-code', true, true]);
   await chooseTerminalLayout(main, 'spotlight');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-card').length`), 1, 'Focus must select a session in the current project');
   assert((await main.evaluate(`document.querySelector('.session-history').innerText`)).includes(extraProject));
@@ -458,6 +462,12 @@ try {
   assert(secondPid > 0 && secondPid !== firstPid);
   assert(!(await raw(first.id)).includes('ATLAS_SECOND_OK'));
   assert(!(await raw(second.id)).includes('ATLAS_UNICODE_OK'));
+  // Terminal sem agente: ícone de terminal com selo de ativa, no cabeçalho e na árvore.
+  const terminalGlyph = await main.evaluate(`(() => { const glyph = ${card('smoke-dois')}.querySelector('.session-header .session-glyph'); const badge = getComputedStyle(glyph.querySelector('.session-glyph-badge')); return { cli: glyph.dataset.cli, active: glyph.classList.contains('tone-active'), svg: getComputedStyle(glyph.querySelector('svg')).display, badge: badge.backgroundColor, success: getComputedStyle(document.documentElement).getPropertyValue('--success').trim(), tree: document.querySelector('.tree-session[data-state="ativa"] .session-glyph')?.dataset.cli }; })()`);
+  assert.equal(terminalGlyph.cli, 'terminal');
+  assert.equal(terminalGlyph.active, true);
+  assert.notEqual(terminalGlyph.svg, 'none', 'ícone visível');
+  assert.equal(terminalGlyph.tree, 'terminal', 'árvore usa o mesmo ícone');
   console.log('PASS dois terminais com processos e streams independentes');
 
   await chooseTerminalLayout(main, 'grid');
@@ -486,6 +496,7 @@ try {
   assert.deepEqual(await controlOrder(), controlsBefore, 'Panel toggles must not insert, remove or reorder toolbar controls');
   await sessionAction(main, card('smoke-um'), 'hide');
   await until(() => main.evaluate(`!${card('smoke-um')} && [...document.querySelectorAll('.tree-session')].some(item => item.dataset.state === 'oculta' && item.innerText.includes('smoke-um'))`), 'hidden terminal remains in tree');
+  assert.equal(await main.evaluate(`[...document.querySelectorAll('.tree-session')].find(item => item.dataset.state === 'oculta' && item.innerText.includes('smoke-um')).querySelector('.session-glyph').classList.contains('tone-hidden')`), true, 'selo de oculta na árvore');
   assert.equal(await main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(first.id)}).then(item => item.exit)`), null, 'Hiding must not close the PTY');
   await main.evaluate(`[...document.querySelectorAll('.tree-session')].find(item => item.dataset.state === 'oculta' && item.innerText.includes('smoke-um')).click()`);
   await until(() => main.evaluate(`Boolean(${card('smoke-um')}?.querySelector('.terminal-view'))`), 'terminal restored from tree');
