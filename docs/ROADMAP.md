@@ -1,6 +1,6 @@
 # Roadmap do ATLAS
 
-Última revisão: 03/11/2026.
+Última revisão: 09/11/2026.
 
 Este arquivo diz **o que vem depois e em que ordem**. O estado atual está em `docs/CONTEXTO.md`. A visão completa e os requisitos de longo prazo estão em `ATLAS_PLANEJAMENTO_ARQUITETURA.md`. Quando os dois divergirem sobre ordem ou escopo, vale este arquivo.
 
@@ -87,7 +87,7 @@ Previstos na arquitetura e retirados da v0.2 em 04/11/2026. O mantenedor conside
 
 ### Redesign visual do ATLAS
 
-Em andamento, a pedido do mantenedor (06/11/2026). A direção está definida: mármore, marfim e ouro, com a estátua do logo como personagem. Plano em `docs/planos/PLANO_IDENTIDADE_VISUAL.md`. A fase 1 (identidade) foi entregue. As fases 2 e 3 só mudam a interface. As fases 4 (modo Conversa) e 5 (várias equipes por repositório) estão marcadas **[decidir]**.
+Em andamento, a pedido do mantenedor (06/11/2026). A direção está definida: mármore, marfim e ouro, com a estátua do logo como personagem. Plano em `docs/planos/PLANO_IDENTIDADE_VISUAL.md`. As fases 1 a 3 da identidade foram entregues. Em 09/11/2026 foi aprovada a evolução terminal-first, com o Alethe como referência: densidade, árvore lateral, quatro layouts e ocultação sem encerrar processos. Plano em `docs/planos/PLANO_WORKSPACE_TERMINAL_FIRST.md`. Continuidade e persistência ficam fora desse marco. As fases 4 (modo Conversa) e 5 (várias equipes por repositório) estão marcadas **[decidir]**.
 
 Pontos observados em 27/10/2026 que continuam valendo:
 

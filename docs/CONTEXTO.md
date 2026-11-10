@@ -1,6 +1,6 @@
 # Contexto atual do ATLAS
 
-Última revisão: 08/11/2026, com as fases 2 e 3 da identidade visual (barra única, paleta de comandos e Painel do Atlas).
+Última revisão: 09/11/2026, com o workspace terminal-first (fases 1 e 2), a partir da base `a346e55`.
 
 Este arquivo descreve **o que existe hoje**. Ele é reescrito a cada marco: não acrescente diário aqui. A história de como chegamos até este ponto fica em `docs/historico/`. O que vem depois fica em `docs/ROADMAP.md`.
 
@@ -18,7 +18,7 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 
 | Área | Comportamento | Onde |
 |---|---|---|
-| Terminais | PowerShell real por node-pty/ConPTY e xterm.js, com grid, foco, pop-up nativo e reintegração sem matar o PTY | `electron/terminal-host.cjs`, `electron/pty-transport.cjs`, `src/TerminalView.jsx` |
+| Terminais | PowerShell real por node-pty/ConPTY e xterm.js. Grade, Destaque, Principal + agentes e Abas; ocultação, restauração e pop-up sem matar o PTY. Scrollback só em memória | `electron/terminal-host.cjs`, `electron/pty-transport.cjs`, `src/TerminalView.jsx` |
 | Projetos e Git | Pastas autorizadas e descoberta Git **somente leitura** (repositórios, branches, worktrees) | `electron/project-host.cjs`, `electron/git-discovery.cjs` |
 | Adaptadores | Kimi Code, OpenCode, Claude Code e Codex, detectados no `PATH`. O Claude Code não lista modelos: o cartão aceita o modelo digitado, ou vazio para o da configuração dele. O Codex lista os modelos por `codex debug models` e, nesta versão, é só agente. O Gemini lista por `gemini --list-models` e recebe a ponte pelo `settings.json`, com consentimento (como o Kimi). Não existe CLI nem modelo padrão do ATLAS: o usuário escolhe em **toda** sessão, partindo do que salvou na função quando há uma | `electron/agent-adapters.cjs`, `electron/agent-host.cjs`, `src/AgentChoice.jsx` |
 | Principal | Uma identidade por projeto, perfil somente leitura (`--agent-file` no Kimi, `atlas-orchestrator` no OpenCode, `--restricted` com Read, Grep e Glob no Claude Code, `--policy` do ATLAS no Gemini) e nova run explícita após a saída | `electron/orchestrator-profile.cjs` |
@@ -33,7 +33,7 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 | Revisão | O agente pede revisão com evidência declarada, e o ATLAS anexa um retrato Git somente leitura e endurecido. Só o usuário conclui (`done`) | `electron/task-review.cjs`, `electron/git-evidence.cjs` |
 | Reinício | Runs ativas viram `lost`, claims caem e aprovações interrompidas viram `failed`. Nada é reaberto sozinho | `electron/operational-store.cjs` |
 | Abrir no ATLAS | `--atlas-open=<pasta>` com instância única. A entrada do Explorador (HKCU) só é gravada com consentimento | `electron/open-path-host.cjs`, `electron/explorer-integration.cjs`, `src/OpenFolder.jsx` |
-| Interface | Identidade mármore, marfim e ouro, com a estátua do logo na barra de título e no projeto sem sessões. Uma barra só em cima (marca, abas de projeto e ações) e paleta de comandos (Ctrl Shift P ou F1), que vale com o foco no terminal sem enviar nada ao PTY. Painel do Atlas no topo da navegação: estado da principal, "Espera você" (principal parada, pedidos e revisões) e equipe por tarefa. Marfim sobre Obsidiana é o padrão; o usuário troca destaque e fundo, e `--gold`, o texto e o preenchimento do destaque se ajustam para continuar legíveis. Jost empacotada, sem rede. A grade de terminais não se sobrepõe: a linha define a altura do cartão. Sem barra de status; rolagem visível só ao rolar. Regras em `design-system/atlas/MASTER.md`; próximas fases em `docs/planos/PLANO_IDENTIDADE_VISUAL.md` | `src/identity.css`, `src/appearance.js`, `src/scrollbars.js`, `src/CommandPalette.jsx`, `src/AtlasPanel.jsx`, `src/assets/atlas-statue.webp` |
+| Interface | Identidade mármore, marfim e ouro, com estátua na marca e no projeto vazio. Barra superior compacta, árvore lateral de projetos/repositórios/worktrees/sessões e quatro layouts. "Espera você" leva à principal parada, aos pedidos e às revisões. Painéis começam recolhidos em instalações novas; estado e integrações ficam sob demanda. Sessões ocultas continuam na árvore e podem ser restauradas sem novo processo; preferências de layout persistem localmente. Paleta (Ctrl Shift P ou F1) funciona com foco no terminal sem enviar texto ao PTY. Temas preservam contraste, Jost é local e a grade usa intervalos de 3px. Plano em `docs/planos/PLANO_WORKSPACE_TERMINAL_FIRST.md` | `src/WorkspaceTree.jsx`, `src/workspace-layout.js`, `src/workspace.css`, `src/identity.css`, `src/CommandPalette.jsx` |
 | Instalador | NSIS por usuário (`npm run dist:win`), pergunta antes de gravar a entrada do Explorador | `electron-builder.yml`, `scripts/smoke-installer.mjs` |
 
 Ferramentas MCP da ponte: `sessions_list`, `tasks_list`, `messages_unread`, `messages_mark_read`, `messages_send`, `agents_request`, `agents_request_status`, `agent_functions_list`, `tasks_delegate`, `handoffs_cancel`, `handoffs_pending`, `handoffs_accept`, `handoffs_reject`, `tasks_update`, `tasks_release` e `tasks_request_review`. A lista exposta depende do papel da sessão.
@@ -99,7 +99,6 @@ A CI (`.github/workflows/ci.yml`) roda Verify em Ubuntu e Windows, mais o job Pa
 - **Kimi Code 2.4.0/2.4.1: integração oficial pendente, contenção implementada.** O SDK perde o perfil explícito e vincula o padrão com ferramentas de escrita; conexões MCP anteriores à criação da sessão também são transitórias. O candidato temporário `2.4.1+atlas-profile-fix.1`, com patch do SDK, passou no diagnóstico nativo e no smoke completo: perfil de leitura e ferramentas ATLAS, troca de modelo na mesma sessão/run/PTY, pedidos, worktree, revogação e reinício, sem API. O painel de informar modelo também foi exercitado numa sessão manual em execução. O patch e sua regressão estão em `docs/diagnosticos/patches/`; o candidato não foi instalado no CLI do usuário. As versões oficiais afetadas continuam recusadas para novas runs da principal antes de token/PTY/persistência; histórico e agentes manuais permanecem disponíveis. Uma distribuição oficial corrigida ainda precisa ser validada antes de liberar a principal Kimi e seu botão de troca. Reprodução e limites: `docs/diagnosticos/KIMI_2_4_MCP.md`. O OpenCode não é afetado.
 - O token MCP fica no ambiente do processo do agente: a fronteira de confiança é o usuário local.
 - O agente não é avisado de ofertas fora das ferramentas e precisa consultar `handoffs_pending`.
-- O modo Foco não desconta a altura dos avisos do workspace.
 - `node:sqlite` emite aviso experimental no Node 24.
 - O patch local do `node-pty` 1.1.0 (`scripts/patch-node-pty.cjs`) precisa ser revisto a cada atualização dessa dependência.
 - Sem assinatura de código e sem ícone próprio no instalador.

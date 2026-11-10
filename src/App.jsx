@@ -5,7 +5,6 @@ import {
   Bot,
   Check,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   Circle,
   Clock3,
@@ -13,10 +12,8 @@ import {
   Focus,
   FolderGit2,
   GitBranch,
-  Grid2X2,
   Layers3,
   ListTodo,
-  Maximize2,
   MessageSquare,
   MoreHorizontal,
   Palette,
@@ -32,14 +29,14 @@ import {
   User,
   Workflow,
   X,
-  Zap,
 } from 'lucide-react';
 import TerminalView from './TerminalView.jsx';
-import GitDiscovery from './GitDiscovery.jsx';
+import WorkspaceTree from './WorkspaceTree.jsx';
 import { appearanceTokens, contrastInk, isPreviousDefaultTheme, visibleAccent } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
 import CommandPalette from './CommandPalette.jsx';
-import AtlasPanel from './AtlasPanel.jsx';
+import { atlasDecisions } from './atlas-panel.js';
+import { nextVisibleSessionId, normalizeTerminalLayout, sessionsInLayout, visibleWorkspaceSessions } from './workspace-layout.js';
 import { agentSession, mergeAgentSessions, sessionExit, usesGemini, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
@@ -137,7 +134,19 @@ function getInitialDockLayout() {
       };
     }
   } catch { /* Layout inválido: restaura o padrão. */ }
-  return { docks: DEFAULT_DOCKS, order: DEFAULT_COLUMN_ORDER, hidden: { left: false, right: false } };
+  return { docks: DEFAULT_DOCKS, order: DEFAULT_COLUMN_ORDER, hidden: { left: false, right: true } };
+}
+
+function getInitialTerminalWorkspace() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('atlas-terminal-workspace'));
+    return {
+      layout: normalizeTerminalLayout(saved?.layout),
+      hiddenSessionIds: Array.isArray(saved?.hiddenSessionIds) ? saved.hiddenSessionIds.filter((id) => typeof id === 'string') : [],
+    };
+  } catch {
+    return { layout: 'grid', hiddenSessionIds: [] };
+  }
 }
 
 const initialSessions = [
@@ -288,7 +297,7 @@ function HarnessIntro({ harness, session }) {
   );
 }
 
-function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel }) {
+function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, tabbed = false }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
@@ -305,6 +314,9 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
 
   return (
     <article
+      id={`terminal-panel-${session.id}`}
+      role={tabbed ? 'tabpanel' : undefined}
+      aria-labelledby={tabbed ? `terminal-tab-${session.id}` : undefined}
       data-session-id={session.id}
       className={`session-card ${selected ? 'selected' : ''} ${focused ? 'focused' : ''} ${detached ? 'terminal-detached' : ''} ${popup ? 'terminal-popup-card' : ''}`}
       style={{ '--session-color': session.color }}
@@ -330,6 +342,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
           {atlasConnected && !session.exited && <span className="origin-badge atlas-tools" title="Ferramentas do ATLAS conectadas a esta sessão pelo MCP">ATLAS conectado</span>}
         </div>
         <div className="session-actions">
+          <span className="session-state" title={session.ptyId || session.archived ? session.worktree : session.task}><span>{session.status}</span></span>
           {!session.ptyId && !session.archived && <span className="token-count">{session.tokens} <span>tokens</span></span>}
           {session.roleKind === 'orchestrator' && session.exited && onRestart && <button className="session-control" onClick={(event) => { event.stopPropagation(); onRestart(session); }}>Nova execução</button>}
           {onSwitchModel && session.ptyId && !session.exited && (() => {
@@ -339,6 +352,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
           {onSendDiscovery && session.roleKind === 'agent' && !session.archived && <button className="session-control" title="Enviar descoberta estruturada à sessão principal" onClick={(event) => { event.stopPropagation(); onSendDiscovery(session); }}>Descoberta</button>}
           {!session.archived && <button className="session-control" onClick={(event) => { event.stopPropagation(); onPopup(session); }}>{detached || popup ? 'Reintegrar' : 'Pop-up'}</button>}
           {!popup && !detached && <button className="session-control" title="Alternar foco" aria-label={`Focar ${session.name}`} onClick={(event) => { event.stopPropagation(); onFocus(session.id); }}>{focused ? 'Grid' : 'Foco'}</button>}
+          {!popup && !detached && onHide && <button className="session-control" title="Ocultar sem encerrar o processo" aria-label={`Ocultar ${session.name} sem encerrar o processo`} onClick={(event) => { event.stopPropagation(); onHide(session.id); }}>Ocultar</button>}
         </div>
       </header>
 
@@ -364,10 +378,6 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
             <div className="harness-statusbar"><span>{session.cli}</span><span>{session.worktree}</span></div>
           </>}
         </div>
-        <footer className="session-footer">
-          <div className="session-state"><StatusDot color={session.color} pulse={session.status === 'trabalhando'} /><span>{session.status}</span></div>
-          <span className="session-task">{session.ptyId || session.archived ? session.worktree : session.task}</span>
-        </footer>
       </>}
     </article>
   );
@@ -587,6 +597,10 @@ export default function App() {
   const [sessions, setSessions] = useState(() => window.atlasDesktop?.isDesktop ? [] : initialSessions);
   const [selectedId, setSelectedId] = useState('orchestrator');
   const [focusId, setFocusId] = useState(null);
+  const [initialTerminalWorkspace] = useState(getInitialTerminalWorkspace);
+  const [terminalLayout, setTerminalLayout] = useState(initialTerminalWorkspace.layout);
+  const [hiddenSessionIds, setHiddenSessionIds] = useState(initialTerminalWorkspace.hiddenSessionIds);
+  const [statusOpen, setStatusOpen] = useState(false);
   const [activeProject, setActiveProject] = useState('ATLAS');
   const [projects, setProjects] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
@@ -612,7 +626,7 @@ export default function App() {
   const [integrations, setIntegrations] = useState({});
   const kimiIntegration = integrations.kimi || null;
   const geminiIntegration = integrations.gemini || null;
-  // O status do Gemini aparece na subbarra com o CLI detectado, com sessão do Gemini
+  // O status do Gemini aparece na área de estado com o CLI detectado, com sessão do Gemini
   // no projeto ou com a integração conectada (para poder removê-la).
   const geminiDetected = Array.isArray(adapters) && adapters.some((adapter) => adapter.id === 'gemini' && adapter.status === 'available');
   const [regressionSuite, setRegressionSuite] = useState(null);
@@ -662,7 +676,16 @@ export default function App() {
     const scoped = desktop?.isDesktop ? sessions.filter((session) => session.projectId === currentProject?.id) : sessions;
     return scoped.sort((left, right) => Number(right.roleKind === 'orchestrator') - Number(left.roleKind === 'orchestrator'));
   }, [sessions, currentProject?.id]);
-  const visibleSessions = useMemo(() => focusId ? projectSessions.filter((session) => session.id === focusId) : projectSessions, [focusId, projectSessions]);
+  const unhiddenSessions = useMemo(() => visibleWorkspaceSessions(projectSessions, hiddenSessionIds), [projectSessions, hiddenSessionIds]);
+  const visibleSessions = useMemo(() => sessionsInLayout(projectSessions, { layout: terminalLayout, selectedId, focusId, hiddenSessionIds }), [projectSessions, terminalLayout, selectedId, focusId, hiddenSessionIds]);
+  const navigationProjects = useMemo(() => desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((id) => ({ id, name: id, path: '', repositories: [] })), [projects, desktop?.isDesktop]);
+  const navigationSessions = useMemo(() => desktop?.isDesktop ? sessions : sessions.map((session) => ({ ...session, projectId: 'ATLAS' })), [sessions, desktop?.isDesktop]);
+  const projectDecisions = atlasDecisions({
+    requests: desktop?.isDesktop ? agentRequestState.items : [],
+    tasks: desktop?.isDesktop ? taskState.items : [],
+    reviews: desktop?.isDesktop ? taskState.reviews || [] : [],
+    needsPrincipal: Boolean(desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice),
+  });
   const displayedColumnOrder = columnDrag?.previewOrder || columnOrder;
   const worktreeOptions = useMemo(() => {
     const options = projects.flatMap((project) => [
@@ -779,7 +802,7 @@ export default function App() {
   }
 
   // Ações do diálogo de consentimento: a confirmação parte só daqui. Após falha,
-  // o estado é relido para que subbarra e diálogo reflitam o arquivo atual.
+  // o estado é relido para que área de estado e diálogo reflitam o arquivo atual.
   async function changeIntegration(cli, method) {
     try {
       return await desktop[INTEGRATION_CLIS[cli][method]]({ confirm: true });
@@ -1043,7 +1066,7 @@ export default function App() {
     }
   }
 
-  // Suíte de regressão do projeto: configuração na subbarra, execução na revisão.
+  // Suíte de regressão do projeto: configuração na área de estado, execução na revisão.
   // Só a janela principal configura, para a suíte ou abre o log.
   useEffect(() => {
     if (!desktop?.isDesktop || isSecondaryWindow || !desktop.getRegressionSuite || !taskState.projectId) {
@@ -1104,9 +1127,15 @@ export default function App() {
   }, [docks, columnOrder, hiddenColumns]);
 
   useEffect(() => {
+    if (!isSecondaryWindow) localStorage.setItem('atlas-terminal-workspace', JSON.stringify({ layout: terminalLayout, hiddenSessionIds }));
+  }, [terminalLayout, hiddenSessionIds, isSecondaryWindow]);
+
+  useEffect(() => {
     function handleKey(event) {
       if (event.key === 'Escape') {
         if (columnDragRef.current) cancelColumnDrag();
+        // Escape fecha primeiro o diálogo, preservando o estado que o abriu.
+        if (!event.composedPath().some((node) => node.getAttribute?.('role') === 'dialog')) setStatusOpen(false);
         setModal(null);
         setAppearanceOpen(false);
         setFunctionsOpen(false);
@@ -1425,10 +1454,54 @@ export default function App() {
   }
 
   function selectSessionTerminal(id) {
-    // Em Foco, ir para outro terminal troca o foco para ele; senão o escolhido ficaria fora da tela.
-    setFocusId((current) => current && current !== id ? id : current);
+    const session = sessions.find((item) => item.id === id);
+    const project = navigationProjects.find((item) => item.id === session?.projectId);
+    if (project && project.id !== currentProject?.id) selectProject(project);
+    setStatusOpen(false);
+    setHiddenSessionIds((current) => current.filter((sessionId) => sessionId !== id));
+    if (terminalLayout === 'spotlight') setFocusId(id);
     setSelectedId(id);
     window.setTimeout(() => document.querySelector(`[data-session-id="${id}"] .xterm-helper-textarea`)?.focus(), 0);
+  }
+
+  function handleTerminalTabKey(event, index) {
+    const last = unhiddenSessions.length - 1;
+    const targets = { ArrowLeft: index === 0 ? last : index - 1, ArrowRight: index === last ? 0 : index + 1, Home: 0, End: last };
+    if (!(event.key in targets)) return;
+    event.preventDefault();
+    const session = unhiddenSessions[targets[event.key]];
+    setHiddenSessionIds((current) => current.filter((id) => id !== session.id));
+    if (terminalLayout === 'spotlight') setFocusId(session.id);
+    setSelectedId(session.id);
+    window.setTimeout(() => document.getElementById(`terminal-tab-${session.id}`)?.focus(), 0);
+  }
+
+  function changeTerminalLayout(layout) {
+    const mode = normalizeTerminalLayout(layout);
+    setTerminalLayout(mode);
+    if (mode === 'spotlight') setFocusId((unhiddenSessions.find((session) => session.id === selectedId) || unhiddenSessions[0])?.id || null);
+    else setFocusId(null);
+  }
+
+  function hideSession(id) {
+    const nextHidden = [...new Set([...hiddenSessionIds, id])];
+    const nextId = nextVisibleSessionId(projectSessions, nextHidden);
+    setHiddenSessionIds(nextHidden);
+    window.setTimeout(() => document.getElementById(nextId ? `tree-session-${nextId}` : 'restore-hidden-sessions')?.focus(), 0);
+    if (selectedId === id) setSelectedId(nextId);
+    if (focusId === id) setFocusId(nextId);
+    notify('Sessão ocultada; o processo continua e pode ser restaurado na árvore');
+  }
+
+  function restoreProjectSessions() {
+    const ids = new Set(projectSessions.map((session) => session.id));
+    setHiddenSessionIds((current) => current.filter((id) => !ids.has(id)));
+  }
+
+  function openDecision(decision) {
+    if (decision.kind === 'request') openAgentRequest(decision.targetId);
+    else if (decision.kind === 'review') openTaskPanel(decision.targetId);
+    else openOrchestratorChoice();
   }
 
   // Comandos da paleta: as mesmas ações dos botões, sem ocupar a tela.
@@ -1439,9 +1512,14 @@ export default function App() {
     ];
     if (desktop?.isDesktop && !isSecondaryWindow) commands.push({ id: 'new-task', group: 'Sessões', label: 'Nova tarefa', keywords: 'backlog', run: () => setTaskModalOpen(true) });
     commands.push(
-      { id: 'focus', group: 'Layout', label: focusId ? 'Voltar à grade' : 'Focar o terminal selecionado', keywords: 'foco grid maximizar', run: () => focusId ? setFocusId(null) : focusSession(selectedId) },
+      { id: 'layout-grid', group: 'Layout', label: 'Layout: grade', keywords: 'grid automatico panes', run: () => changeTerminalLayout('grid') },
+      { id: 'layout-spotlight', group: 'Layout', label: 'Layout: terminal em destaque', keywords: 'foco spotlight maximizar', run: () => changeTerminalLayout('spotlight') },
+      { id: 'layout-sidebar', group: 'Layout', label: 'Layout: principal e agentes', keywords: 'sidebar dividir principal', run: () => changeTerminalLayout('sidebar') },
+      { id: 'layout-tabs', group: 'Layout', label: 'Layout: abas de terminal', keywords: 'subtabs abas', run: () => changeTerminalLayout('tabs') },
+      { id: 'toggle-status', group: 'Layout', label: 'Estado do projeto e integrações', keywords: 'suite regressao mcp status', run: () => setStatusOpen((open) => !open) },
       { id: 'toggle-left', group: 'Layout', label: hiddenColumns.left ? 'Mostrar navegação' : 'Ocultar navegação', keywords: 'coluna esquerda sidebar', run: () => toggleHiddenColumn('left') },
       { id: 'toggle-right', group: 'Layout', label: hiddenColumns.right ? 'Mostrar painéis' : 'Ocultar painéis', keywords: 'coluna direita tarefas mensagens evidencias', run: () => toggleHiddenColumn('right') },
+      { id: 'restore-sessions', group: 'Layout', label: 'Restaurar sessões ocultas', keywords: 'terminais ocultos processos', run: restoreProjectSessions },
       { id: 'reset-layout', group: 'Layout', label: 'Restaurar layout padrão', run: resetLayout },
       { id: 'appearance', group: 'Preferências', label: 'Aparência e configurações', keywords: 'tema cor fundo', shortcut: 'Ctrl ,', run: () => setAppearanceOpen(true) },
     );
@@ -1473,17 +1551,29 @@ export default function App() {
     detachedTerminals.forEach((id) => desktop?.isDesktop && desktop.closeTerminalWindow(id));
     setDocks({ left: [], right: ['task', 'messages', 'evidence'] });
     setColumnOrder(DEFAULT_COLUMN_ORDER);
-    setHiddenColumns({ left: false, right: false });
+    setHiddenColumns({ left: false, right: true });
     setDetachedTerminals([]);
     setPanelsDetached(false);
     setInspectorTab('task');
+    setTerminalLayout('grid');
+    setHiddenSessionIds([]);
+    setFocusId(null);
+    setStatusOpen(false);
     notify('Layout padrão restaurado');
   }
 
   function focusSession(id) {
-    const target = projectSessions.find((session) => session.id === id) || projectSessions[0];
+    const target = sessions.find((session) => session.id === id) || projectSessions[0];
+    const project = navigationProjects.find((item) => item.id === target?.projectId);
+    if (project && project.id !== currentProject?.id) selectProject(project);
     if (!target) { setFocusId(null); return; }
-    setFocusId((current) => current === target.id ? null : target.id);
+    if (terminalLayout === 'spotlight' && focusId === target.id) {
+      changeTerminalLayout('grid');
+      return;
+    }
+    setHiddenSessionIds((current) => current.filter((sessionId) => sessionId !== target.id));
+    setTerminalLayout('spotlight');
+    setFocusId(target.id);
     setSelectedId(target.id);
   }
 
@@ -1619,12 +1709,10 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#terminal-workspace">Ir para os terminais</a>
       <header className="titlebar">
         <div className="brand" title="ATLAS 0.1 · local"><AtlasMark /><strong>ATLAS</strong></div>
-        <nav className="project-tabs" aria-label="Projetos">
-          {(desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((name) => ({ name }))).map((project) => <button key={project.id || project.name} className={`project-tab ${activeProject === project.name ? 'active' : ''}`} title={project.path || project.name} aria-current={activeProject === project.name ? 'page' : undefined} onClick={() => selectProject(project)}><StatusDot color={project.name === activeProject ? 'var(--gold)' : 'var(--faint)'} /><span>{project.name}</span>{project.repositories && <small>{project.repositories.length}</small>}</button>)}
-          <button className="add-project" title="Autorizar pasta de projeto" aria-label="Autorizar pasta de projeto" onClick={addProject}>+</button>
-        </nav>
+        <div className="titlebar-context"><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{unhiddenSessions.length} de {projectSessions.length} sessões visíveis</small></div>
         <div className="title-actions">
           <div className="workspace-path" title={workingDirectory}><span>{workingDirectory}</span></div>
           {!desktop?.isDesktop && <div className="demo-label">AGENTES ILUSTRATIVOS</div>}
@@ -1650,30 +1738,24 @@ export default function App() {
             <button type="button" className="detach-control" onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleHiddenColumn('left')} aria-expanded="true" aria-controls="atlas-navigation">Ocultar</button>
           </div>
           <aside className="sidebar" id="atlas-navigation">
-            <AtlasPanel
-              projectName={desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}
-              sessions={projectSessions.map((session) => session.roleKind ? session : { ...session, roleKind: session.origin === 'principal' ? 'orchestrator' : 'agent' })}
-              tasks={desktop?.isDesktop ? taskState.items : []}
-              reviews={desktop?.isDesktop ? taskState.reviews || [] : []}
-              requests={desktop?.isDesktop && !isSecondaryWindow ? agentRequestState.items : []}
-              needsPrincipal={Boolean(desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice)}
-              functions={agentFunctions.items}
-              selectedId={selectedId}
+            <WorkspaceTree
+              projects={navigationProjects}
+              sessions={navigationSessions}
+              activeProjectId={desktop?.isDesktop ? currentProject?.id : activeProject}
+              workingDirectory={workingDirectory}
+              selectedSessionId={selectedId}
+              hiddenSessionIds={hiddenSessionIds}
+              decisions={projectDecisions}
+              onSelectProject={selectProject}
+              onSelectWorktree={selectWorktree}
               onSelectSession={selectSessionTerminal}
               onFocusSession={focusSession}
-              onOpenRequest={openAgentRequest}
-              onOpenTask={openTaskPanel}
-              onStartPrincipal={() => openOrchestratorChoice()}
+              onDecision={openDecision}
+              onAddProject={addProject}
+              onRefresh={refreshProjects}
+              loading={projectsLoading || projects.some((project) => project.scanning)}
             />
-            {!desktop?.isDesktop && <div className="sidebar-section">
-              <div className="sidebar-heading"><span>MISSÕES</span><button><Plus size={13} /></button></div>
-              <div className="mission-list">
-                {missions.map((mission) => <button key={mission.name} className={activeMission === mission.name ? 'active' : ''} onClick={() => setActiveMission(mission.name)}><StatusDot color={mission.color} pulse={activeMission === mission.name} /><span>{mission.name}</span><small>{mission.count}</small></button>)}
-              </div>
-            </div>}
-            <GitDiscovery projects={projects} selectedWorktree={selectedWorktree} onSelect={selectWorktree} onRefresh={refreshProjects} loading={projectsLoading || projects.some((project) => project.scanning)} />
             <div className="sidebar-bottom">
-              <div className="local-card"><div><ShieldCheck size={15} /><strong>Local e privado</strong></div><p>Git + PTY local<br />Nenhuma telemetria ativa</p><span><StatusDot color="#7dbb91" />Núcleo disponível</span></div>
               <button className="workspace-settings" onClick={resetLayout}><span>Restaurar layout</span></button>
               {desktop?.isDesktop && desktop.listAgentFunctions && <button className="workspace-settings" onClick={() => setFunctionsOpen(true)}><Workflow size={14} /><span>Funções de agente</span>{pendingConfiguration(agentFunctions.items) > 0 && <small className="functions-pending">{pendingConfiguration(agentFunctions.items)} a configurar</small>}<ChevronRight size={13} /></button>}
               <button className="workspace-settings" onClick={() => setAppearanceOpen(true)}><Palette size={14} /><span>Aparência e configurações</span><ChevronRight size={13} /></button>
@@ -1682,37 +1764,40 @@ export default function App() {
         </div>}
 
         <main
+          id="terminal-workspace"
+          tabIndex={-1}
           className={`cockpit ${columnDrag?.target === 'center' ? 'column-drag-over' : ''} ${columnDrag?.moved && columnDrag.column === 'center' ? 'column-drag-source' : ''}`}
           style={getColumnStyle('center')}
           data-column-id="center"
         >
-          <div className="column-drag-bar" onPointerDown={(event) => beginColumnDrag(event, 'center')}>
-            <strong>Terminais</strong><span>Arrastar coluna</span>
-          </div>
           <div className="cockpit-toolbar">
-            <div className="mission-title"><div className="mission-symbol"><Zap size={16} /></div><div><span>{desktop?.isDesktop ? 'PROJETO ATIVO' : 'MISSÃO ATIVA'}</span><h1>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</h1></div><button className="icon-button subtle"><ChevronDown size={15} /></button></div>
+            <button type="button" className="terminal-column-handle" onPointerDown={(event) => beginColumnDrag(event, 'center')} title="Arrastar coluna de terminais">Terminais</button>
+            <div className="terminal-project-title"><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{workingDirectory}</small></div>
             <div className="toolbar-actions">
               {hiddenColumns.left && <button className="button secondary compact" onClick={() => toggleHiddenColumn('left')} aria-expanded="false" aria-controls="atlas-navigation">Navegação</button>}
               {hiddenColumns.right && <button className="button secondary compact" onClick={() => toggleHiddenColumn('right')} aria-expanded="false" aria-controls="atlas-panels">Painéis</button>}
+              <select className="terminal-layout-select" aria-label="Layout dos terminais" value={terminalLayout} onChange={(event) => changeTerminalLayout(event.target.value)}>
+                <option value="grid">Grade</option>
+                <option value="spotlight">Destaque</option>
+                <option value="sidebar">Principal + agentes</option>
+                <option value="tabs">Abas</option>
+              </select>
+              <button className="button secondary compact" aria-expanded={statusOpen} aria-controls="workspace-status" onClick={() => setStatusOpen((current) => !current)}>Estado</button>
               <button className="button secondary compact" onClick={() => setModal('terminal')}><SquareTerminal size={14} />Terminal</button>
               <button className="button primary compact" onClick={() => setModal('session')}><Plus size={14} />Sessão</button>
-              <span className="toolbar-divider" />
-              <button className={`icon-button ${focusId ? 'active' : ''}`} title="Exibir grid" onClick={() => setFocusId(null)}><Grid2X2 size={15} /></button>
-              <button className="icon-button" title="Modo de foco" onClick={() => focusSession(selectedId)}><Maximize2 size={15} /></button>
             </div>
           </div>
-          <div className="mission-subbar">
-            <div><StatusDot color="#f2994a" /><span>{projectSessions.length} sessões neste projeto</span></div>
-            <div className="mission-subbar-status">
+          {statusOpen && <section id="workspace-status" className="workspace-status-popover" aria-label="Estado do projeto">
+            <div className="workspace-status-heading"><strong>{projectSessions.length} sessões neste projeto</strong><button type="button" className="icon-button subtle" aria-label="Fechar estado do projeto" onClick={() => setStatusOpen(false)}><X size={14} /></button></div>
+            <div className="workspace-status-items">
               {regressionSuite?.projectId === currentProject?.id && <RegressionSuiteStatus suite={regressionSuite} onManage={() => setRegressionModalOpen(true)} />}
               {desktop?.isDesktop && !isSecondaryWindow && kimiIntegration
                 ? <KimiIntegrationStatus status={kimiIntegration} onManage={() => setIntegrationModal('kimi')} />
                 : <span>{desktop?.isDesktop ? 'Histórico e sessões locais' : 'Wireframe ilustrativo'}</span>}
               {desktop?.isDesktop && !isSecondaryWindow && geminiIntegration && (geminiDetected || geminiIntegration.state === 'installed' || usesGemini(projectSessions)) && <KimiIntegrationStatus cli="Gemini" status={geminiIntegration} onManage={() => setIntegrationModal('gemini')} />}
             </div>
-          </div>
+          </section>}
 
-          {/* Avisos ocupam uma única linha da grade; a grade de sessões fica com o espaço restante. */}
           <div className="workspace-notices">
           {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed.kimi && usesKimi(projectSessions) && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModal('kimi')} onDismiss={() => setIntegrationNoticeDismissed((current) => ({ ...current, kimi: true }))} />}
           {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed.gemini && usesGemini(projectSessions) && <KimiIntegrationNotice cli="Gemini" status={geminiIntegration} onReview={() => setIntegrationModal('gemini')} onDismiss={() => setIntegrationNoticeDismissed((current) => ({ ...current, gemini: true }))} />}
@@ -1723,18 +1808,37 @@ export default function App() {
           {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice && <div className="scope-note orchestrator-choice-note" role="status"><span>A sessão principal deste projeto ainda não foi iniciada. Escolha o CLI e o modelo que vão planejar e delegar.</span><button className="button primary compact" onClick={() => openOrchestratorChoice()}>Escolher agente</button></div>}
           </div>
 
-          <div className={`session-grid ${focusId ? 'focus-mode' : ''} ${!focusId && !visibleSessions.length ? 'is-empty' : ''}`}>
-            {!focusId && !visibleSessions.length && <AtlasWelcome projectName={desktop?.isDesktop ? currentProject?.name || activeProject : activeMission} />}
+          {(terminalLayout === 'spotlight' || terminalLayout === 'tabs') && unhiddenSessions.length > 0 && <div className="terminal-subtabs" role="tablist" aria-label="Sessões visíveis">
+            {unhiddenSessions.map((session, index) => <button
+              type="button"
+              role="tab"
+              id={`terminal-tab-${session.id}`}
+              aria-controls={`terminal-panel-${session.id}`}
+              aria-selected={visibleSessions[0]?.id === session.id}
+              tabIndex={visibleSessions[0]?.id === session.id ? 0 : -1}
+              className={visibleSessions[0]?.id === session.id ? 'active' : ''}
+              key={session.id}
+              onClick={() => selectSessionTerminal(session.id)}
+              onKeyDown={(event) => handleTerminalTabKey(event, index)}
+            >{session.roleKind === 'orchestrator' ? 'Principal' : session.name}</button>)}
+          </div>}
+
+          <div className={`session-grid layout-${terminalLayout} ${terminalLayout === 'spotlight' ? 'focus-mode' : ''} ${!visibleSessions.length ? 'is-empty' : ''}`} style={{ '--sidebar-rows': Math.max(1, unhiddenSessions.length - 1) }}>
+            {!visibleSessions.length && (unhiddenSessions.length === 0 && projectSessions.length > 0
+              ? <div className="sessions-hidden-empty" role="status"><SquareTerminal size={24} /><h2>Todos os terminais estão ocultos</h2><p>Os processos continuam em execução. Restaure as sessões sem iniciar novos processos.</p><button id="restore-hidden-sessions" className="button primary" onClick={restoreProjectSessions}>Restaurar sessões</button></div>
+              : <AtlasWelcome projectName={desktop?.isDesktop ? currentProject?.name || activeProject : activeMission} />)}
             {visibleSessions.map((session) => <SessionCard
               key={session.id}
               session={session}
+              tabbed={terminalLayout === 'tabs' || terminalLayout === 'spotlight'}
               selected={selectedId === session.id}
-              focused={focusId === session.id}
+              focused={terminalLayout === 'spotlight' && focusId === session.id}
               detached={detachedTerminals.includes(session.id)}
               desktop={desktop}
               theme={theme}
               onSelect={setSelectedId}
               onFocus={focusSession}
+              onHide={hideSession}
               onPopup={toggleTerminalPopup}
               onExit={updateSessionExit}
               onRestart={openOrchestratorChoice}
@@ -1745,7 +1849,7 @@ export default function App() {
               onSwitchModel={desktop?.isDesktop && desktop.declareAgentModel ? setModelSwitch : undefined}
               onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
             />)}
-            {!focusId && <button className="empty-session" onClick={() => setModal('session')}><span><Plus size={19} /></span><strong>Nova sessão de agente</strong><small>Manual, no diretório selecionado</small></button>}
+            {projectSessions.length === 0 && <button className="empty-session" onClick={() => setModal('session')}><span><Plus size={19} /></span><strong>Nova sessão de agente</strong><small>Manual, no diretório selecionado</small></button>}
           </div>
         </main>
 
