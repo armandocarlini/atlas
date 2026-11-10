@@ -123,7 +123,8 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 - Uma barra superior só, de 36px: marca, contexto e ações. Projetos ficam na árvore lateral; não há barra de status permanente.
 - No Windows e no Linux a janela principal não tem barra nativa: minimizar, maximizar e fechar são os controles do sistema desenhados sobre a barra do ATLAS (`titleBarOverlay`, `electron/window-chrome.cjs`), na cor de `--surface` com símbolos em `--text`, e acompanham o tema. Os controles têm 35px para o filete inferior da barra continuar visível.
 - A barra arrasta a janela e maximiza com duplo clique; botões e campos dela são `no-drag`, assim como diálogos, paleta, toasts e o atalho de teclado que a cobrem. A área dos controles é reservada com `env(titlebar-area-*)`; nenhuma ação fica sob eles.
-- No macOS a barra nativa continua. Pop-ups e Acompanhamento mantêm a barra nativa.
+- Pop-ups de terminal e Acompanhamento também têm uma barra só, de 32px, com controles de 31px: no pop-up, o cabeçalho da sessão (ícone, nome e menu); no Acompanhamento, a faixa do painel. Os controles usam a cor calculada da barra de cada janela (`src/window-overlay.js`) e a tinta do tema; o canal só aceita janelas do próprio ATLAS.
+- No macOS a barra nativa continua em todas as janelas.
 - A árvore organiza visualmente projetos, repositórios, worktrees e sessões com chevrons, ícones e indentação. Clicar no nome do projeto também o expande; trocar de projeto não recolhe a árvore anterior. "Espera você" aparece somente quando há decisões e leva à principal parada, aos pedidos e às revisões do projeto ativo. Cada item leva ao lugar da decisão; o painel não duplica aprovações. Estado das sessões por ponto e texto (para leitores de tela, "ativa" fica oculto visualmente).
 - A paleta de comandos (Ctrl Shift P ou F1) reúne as ações, os projetos e os terminais. O atalho vale com o foco no terminal, e o que se digita nela nunca chega ao PTY. Toda ação nova entra também na paleta.
 
@@ -131,7 +132,7 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 - Os mesmos controles permanecem disponíveis na largura desktop mínima de 940px. A navegação mantém rótulos textuais e seu conteúdo rola sem sobreposição.
 - A ordem das colunas e sua visibilidade persistem localmente.
 - Repositórios e worktrees usam uma árvore compacta somente leitura, com branch e alterações locais. Cada sessão pode ser ocultada e restaurada sem encerrar o PTY; o estado oculto aparece em texto.
-- Pop-ups de terminal são janelas normais; a janela de Acompanhamento permanece `always-on-top`.
+- Pop-ups de terminal são janelas normais, sem barra nativa; a janela de Acompanhamento permanece `always-on-top`.
 
 ### Layouts dos terminais
 

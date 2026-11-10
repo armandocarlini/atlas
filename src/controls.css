@@ -7,6 +7,18 @@
   user-select: none;
 }
 .window-overlay .titlebar :is(button, a, input, select, textarea, [tabindex]) { -webkit-app-region: no-drag; }
+/* Pop-up de terminal: o cabeçalho da sessão é a barra. Acompanhamento: a faixa do painel.
+   As duas têm 32px, arrastam a janela e reservam à direita a área dos controles. */
+.window-overlay .native-terminal-shell .session-header,
+.window-overlay .native-inspector > .column-drag-bar {
+  -webkit-app-region: drag;
+  padding-inline-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 6px);
+  user-select: none;
+}
+.window-overlay .native-inspector > .column-drag-bar { height: 32px; flex-basis: 32px; cursor: default; }
+.window-overlay .native-terminal-shell .session-header :is(button, a, input, select, textarea, [tabindex]),
+.window-overlay .native-inspector > .column-drag-bar :is(button, a, input, select, textarea, [tabindex]) { -webkit-app-region: no-drag; }
+.window-overlay .native-terminal-shell :is(.session-menu-popover, .toast) { -webkit-app-region: no-drag; }
 /* Camadas que cobrem a barra continuam clicáveis: diálogo, paleta, aviso e atalho de teclado. */
 .window-overlay :is(.modal-backdrop, .palette-backdrop, .skip-link, .toast) { -webkit-app-region: no-drag; }
 

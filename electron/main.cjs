@@ -17,7 +17,7 @@ const { createExplorerIntegration, createExplorerHost } = require('./explorer-in
 const { ensureOrchestratorProfile, ensureClaudeProfile, ensureGeminiProfile } = require('./orchestrator-profile.cjs');
 const { createRegressionRunner } = require('./regression-runner.cjs');
 const { createRegressionSuiteHost } = require('./regression-suite-host.cjs');
-const { mainWindowChrome, registerWindowChrome } = require('./window-chrome.cjs');
+const { windowChrome, registerWindowChrome } = require('./window-chrome.cjs');
 
 let mainWindow = null;
 let panelWindow = null;
@@ -98,7 +98,7 @@ function getPopupEntry(webContents) {
 
 function createMainWindow() {
   // Uma barra só: no Windows e no Linux os controles da janela ficam sobre a barra do ATLAS.
-  const chrome = mainWindowChrome();
+  const chrome = windowChrome('main');
   mainWindow = createSecureWindow({
     width: 1440,
     height: 900,
@@ -129,6 +129,7 @@ function createPanelWindow() {
     return;
   }
 
+  const chrome = windowChrome('panels');
   panelWindow = createSecureWindow({
     ...readBounds('panels', { width: 380, height: 660, minWidth: 320, minHeight: 420 }),
     minWidth: 320,
@@ -136,7 +137,8 @@ function createPanelWindow() {
     title: 'ATLAS — Acompanhamento',
     alwaysOnTop: true,
     maximizable: false,
-  }, { window: 'panels' });
+    ...chrome.options,
+  }, { window: 'panels', ...chrome.query });
   panelWindow.setAlwaysOnTop(true);
   panelWindow.on('move', () => {
     clearTimeout(boundsSaveTimer);
@@ -163,12 +165,14 @@ function createTerminalWindow(sessionId, ptyId) {
   }
 
   const key = `terminal:${sessionId}`;
+  const chrome = windowChrome('terminal');
   const window = createSecureWindow({
     ...readBounds(key, { width: 920, height: 620, minWidth: 480, minHeight: 320 }),
     minWidth: 480,
     minHeight: 320,
     title: 'ATLAS — Terminal',
-  }, { window: 'terminal', session: sessionId });
+    ...chrome.options,
+  }, { window: 'terminal', session: sessionId, ...chrome.query });
   const entry = { window, ptyId, saveTimer: null };
   terminalWindows.set(sessionId, entry);
 
@@ -243,7 +247,17 @@ app.whenReady().then(async () => {
   operationalStore = createOperationalStore({ filename: path.join(app.getPath('userData'), 'atlas.sqlite') });
   operationalStore.reconcileRuns();
   operationalStore.reconcileRegressionRuns();
-  registerWindowChrome({ ipcMain, getMainWindow });
+  // Cada janela do ATLAS recolore os próprios controles; nenhuma outra é aceita.
+  registerWindowChrome({
+    ipcMain,
+    findWindow: (sender) => {
+      const live = (window) => window && !window.isDestroyed() && window.webContents === sender;
+      if (live(mainWindow)) return { window: mainWindow, kind: 'main' };
+      if (live(panelWindow)) return { window: panelWindow, kind: 'panels' };
+      const popup = getPopupEntry(sender);
+      return popup ? { window: popup.window, kind: 'terminal' } : null;
+    },
+  });
   // Cada projeto avisa a interface quando a varredura dele termina.
   projectHost = createProjectHost({
     app, dialog, ipcMain, getMainWindow, store: operationalStore,

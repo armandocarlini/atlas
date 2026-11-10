@@ -33,6 +33,7 @@ import {
 import TerminalView from './TerminalView.jsx';
 import WorkspaceTree from './WorkspaceTree.jsx';
 import SessionGlyph from './SessionGlyph.jsx';
+import { OVERLAY_BARS, effectiveBackground } from './window-overlay.js';
 import { appearanceTokens, contrastInk, isPreviousDefaultTheme, visibleAccent } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
 import CommandPalette from './CommandPalette.jsx';
@@ -1216,9 +1217,21 @@ export default function App() {
     const tokens = appearanceTokens(theme);
     Object.entries(tokens).forEach(([key, value]) => root.style.setProperty(key, value));
     localStorage.setItem('atlas-appearance', JSON.stringify(theme));
-    // Barra única: os controles da janela acompanham a superfície e a tinta do tema.
-    if (desktop?.windowChrome === 'overlay') desktop.setTitleBarOverlay?.({ color: tokens['--surface'], symbolColor: tokens['--text'] });
   }, [theme]);
+
+  // Barra única em toda janela: os controles do sistema usam a cor real da barra em que
+  // ficam e a tinta do tema. No pop-up, o cabeçalho só existe depois que a sessão chega.
+  const overlayBarReady = !isNativeTerminalWindow || sessions.some((session) => session.id === desktop?.sessionId);
+  useEffect(() => {
+    if (desktop?.windowChrome !== 'overlay') return undefined;
+    const frame = requestAnimationFrame(() => {
+      const tokens = appearanceTokens(theme);
+      const bar = document.querySelector(OVERLAY_BARS[isNativeTerminalWindow ? 'terminal' : isNativePanelWindow ? 'panels' : 'main']);
+      const color = effectiveBackground(bar, (node) => getComputedStyle(node), tokens['--surface']);
+      desktop.setTitleBarOverlay?.({ color, symbolColor: tokens['--text'] });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [theme, overlayBarReady]);
 
   useEffect(() => {
     const overlay = desktop?.windowChrome === 'overlay';
