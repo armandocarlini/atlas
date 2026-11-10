@@ -30,6 +30,13 @@ export function buildWorkspaceTree(projects = [], sessions = []) {
   });
 }
 
+// Na abertura, só sessões vivas ocupam a área de trabalho. O histórico (run sem
+// processo) continua na árvore e só vira card quando o usuário o abre por ela.
+export function workspaceSessions(sessions = [], revealedHistoryIds = []) {
+  const revealed = revealedHistoryIds instanceof Set ? revealedHistoryIds : new Set(revealedHistoryIds);
+  return sessions.filter((session) => !session.archived || revealed.has(session.id));
+}
+
 export function visibleWorkspaceSessions(sessions = [], hiddenSessionIds = []) {
   const hidden = hiddenSessionIds instanceof Set ? hiddenSessionIds : new Set(hiddenSessionIds);
   return sessions.filter((session) => !hidden.has(session.id));
