@@ -1,6 +1,6 @@
 # Plano — identidade visual do ATLAS
 
-Situação: **fase 1 pedida pelo mantenedor em 06/11/2026 e implementada.** As fases 2 e 3 só mudam a interface e seguem quando o mantenedor pedir. As fases 4 e 5 mudam invariantes do produto e estão marcadas **[decidir]**.
+Situação: **fases 1 a 3 da identidade entregues.** Em 09/11/2026 o mantenedor aprovou a evolução terminal-first (fases 1 e 2 do novo marco), descrita em `PLANO_WORKSPACE_TERMINAL_FIRST.md`. Ela substitui as abas superiores e a composição de cartões descritas abaixo, que registram a entrega anterior. As fases 4 e 5 mudam invariantes do produto e estão marcadas **[decidir]**.
 
 ## Referência
 
@@ -17,7 +17,7 @@ O que o mantenedor pediu ao longo da revisão do protótipo:
 - um modo **Conversa** para quem não programa, com chat e uma visão ilustrada do orquestrador e dos agentes;
 - várias equipes num mesmo repositório, que se coordenam para não editar os mesmos arquivos nem fazer commit uma sobre a outra.
 
-## Fase 1 — identidade (este PR)
+## Fase 1 — identidade (entregue)
 
 Só interface, sem mudar dados nem IPC. Para conviver com o trabalho de outros agentes em `App.jsx`, a identidade fica numa folha própria (`src/identity.css`, carregada depois de `src/styles.css`) e mexe pouco no JSX.
 

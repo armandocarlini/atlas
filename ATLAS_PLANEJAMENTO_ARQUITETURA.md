@@ -137,67 +137,21 @@ Esses itens não foram descartados; estão posicionados no roadmap para não imp
 
 ## 4. Experiência desktop [REQ/PROP]
 
-### 4.1 Estrutura visual conceitual
+### 4.1 Estrutura visual — terminal-first
 
-```text
-┌──────────────────────────────────────────────────────────────────────┐
-│ Projeto / Missão / Modo de autonomia / Controles                    │
-├───────────────┬───────────────────────────────────────┬──────────────┤
-│ ORQUESTRADOR  │ Terminal da sessão ativa              │ Tarefas      │
-│ Sessão manual │                                       │ Pendências   │
-│ Agente 1      │ Entrada e saída interativas           │ Mensagens    │
-│ Agente 2      │ ANSI, teclado, resize e scrollback    │ Evidências   │
-│ + Terminal    │                                       │              │
-│ + Sessão      │                                       │              │
-├───────────────┴───────────────────────────────────────┴──────────────┤
-│ Status / CLI / modelo / worktree / eventos / custo quando disponível │
-└──────────────────────────────────────────────────────────────────────┘
-```
+Direção aprovada pelo mantenedor em 09/11/2026: o Alethe passa a ser a referência de organização do workspace. A identidade continua própria: mármore, marfim e ouro, com a estátua na marca e nos estados vazios. O protótipo anterior é contexto histórico.
 
-A disposição final deve ser validada em uso, mas os seguintes comportamentos são requisitos:
+- Barra superior compacta de 42px com marca, contexto e ações; projetos ficam na navegação lateral recolhível.
+- Árvore de projetos, repositórios, worktrees e sessões; "Espera você" leva às aprovações e revisões existentes.
+- Quatro layouts: Grade, Destaque, Principal + agentes e Abas. Os modos de sessão única mantêm as sessões visíveis em uma faixa navegável por teclado.
+- Terminais ocupam o espaço restante, com intervalos e raios de 3px, sem rodapé repetido nem sombras decorativas nos panes.
+- Painéis e estado de integrações ficam sob demanda. Avisos que exigem decisão continuam visíveis.
+- Ocultar uma sessão desmonta sua visualização, sem encerrar ou criar PTY. Restaurar reconecta ao processo e ao scrollback em memória.
+- Layout, sessões ocultas e visibilidade das colunas persistem localmente. Isso não significa persistência de saída de terminal nem sobrevivência do processo ao fechamento do app.
+- Colunas continuam reordenáveis; a paleta oferece restauração, navegação e escolha de layout sem enviar texto aos terminais.
+- Seleção, foco e estado têm identificação textual, foco visível e suporte a movimento reduzido. Os controles do Windows e a aparência interna dos CLIs são preservados.
 
-- o orquestrador é visualmente destacado e sempre fácil de acessar;
-- sessões podem ser abertas em abas ou panes lado a lado;
-- o usuário consegue digitar diretamente em cada terminal;
-- cada sessão informa origem, CLI, estado, diretório/worktree e tarefa vinculada;
-- mensagens e pedidos de atenção são visíveis sem exigir inspeção de todos os terminais;
-- tarefas e evidências complementam os terminais, sem escondê-los;
-- a interface prioriza densidade, legibilidade, atalhos e uso prolongado ao lado do IDE.
-
-#### Direção visual de referência [REQ/PROP]
-
-O usuário aprovou como referência visual a estética do Overclock apresentada no arquivo de trabalho `overclock-referencia-visual.png`. Os elementos desejados são:
-
-- aparência escura de central de comando, sem estética de dashboard genérico;
-- projetos organizados em abas superiores;
-- missões/projetos e indicadores em navegação lateral compacta;
-- sessão principal do orquestrador com hierarquia visual maior;
-- demais sessões em cards ou panes densos, visíveis simultaneamente quando houver espaço;
-- identidade cromática por sessão/agente, sem depender apenas de cor para comunicar estado;
-- tipografia monoespaçada nos terminais e sans-serif legível na navegação;
-- CLI, modelo, esforço, estado e consumo no cabeçalho da sessão quando os dados forem confiáveis;
-- microinterações discretas e sensação de atividade viva, sem animações que prejudiquem leitura ou desempenho.
-
-Adaptação para o ATLAS:
-
-- panes redimensionáveis, abas e modo de foco para trabalhar ao lado do VS Code;
-- as três colunas do workspace — navegação, terminais e painéis — podem ser reordenadas em qualquer sequência por uma faixa “Arrastar coluna” sempre visível no cabeçalho, inclusive posicionando a navegação entre os terminais e os painéis;
-- Tarefas, Mensagens e Evidências permanecem na coluna de painéis: suas abas apenas mudam de ordem dentro dessa coluna e não podem ser arrastadas para fora dela; o arraste nunca começa no conteúdo dos terminais;
-- durante o arraste de uma coluna, a própria coluna acompanha o cursor com todo o seu conteúdo real, sem criar uma cópia visual; um placeholder marca o espaço de destino e as demais colunas se reorganizam ao vivo para pré-visualizar o resultado antes de soltar; Escape cancela o movimento e restaura a ordem anterior;
-- durante o arraste da aba de uma seção, uma prévia visual compacta acompanha o cursor, sem instruções textuais ou mensagens decorativas ocupando áreas vazias;
-- ordem das colunas e ordem das seções dentro da coluna de painéis são persistidas localmente, com comando “Restaurar layout” para voltar ao padrão;
-- indicação explícita de sessão `manual` ou `orquestrador` e sinal de mensagem não lida;
-- painel contextual para tarefa, mensagens, diff, testes e evidências;
-- densidade configurável, tipografia legível e contraste acessível, inclusive com foco visível e suporte a movimento reduzido;
-- base visual neutra em preto profundo/grafite, sem gradientes decorativos, brilho genérico, emojis ou iconografia SVG decorativa; controles priorizam rótulos tipográficos discretos;
-- cabeçalho compacto de sessão em uma única linha, com nome, origem, CLI, tokens e ações essenciais, sem copiar o design do Overclock;
-- área de leitura do terminal tem prioridade sobre a quantidade de sessões visíveis: panes possuem altura útil mínima e o grid rola como um todo, evitando miniaturas de terminal que exigem scroll após poucas linhas;
-- cor de destaque personalizável pelo usuário, com presets vivos e seletor de cor livre; preferência persistida localmente;
-- padrão inicial laranja sobre base escura neutra, usado como destaque principal sem colorir decorativamente projetos, missões ou sessões comuns; verde, âmbar e vermelho ficam reservados a estados significativos, e as cores próprias dos harnesses permanecem contidas no conteúdo dos terminais; vermelho não é a identidade principal;
-- identidade visual própria, sem copiar marca, mascote, ícones ou assets do Overclock;
-- preview web/mobile apenas como painel opcional futuro, não requisito inferido do print.
-
-A imagem é uma referência de trabalho fornecida pelo usuário. Verificar direitos de uso antes de incluí-la em repositório público ou material de divulgação.
+Continuidade entre execuções, persistência de scrollback, busca no buffer e aparência do Windows Terminal ficam para uma fase separada. Não entram nas fases 1 e 2 aprovadas.
 
 ### 4.2 Sessão principal do orquestrador [REQ]
 
@@ -259,28 +213,13 @@ Toda sessão de agente, seja criada pelo usuário ou pelo orquestrador, deve pos
 
 Uma sessão manual não se torna automaticamente subordinada ao orquestrador. Ela pode colaborar diretamente com outras sessões, respeitando escopo e permissões.
 
-### 4.5 Aprendizados das referências oficiais do Overclock [PROP]
+### 4.5 Referência e limites
 
-O site do Overclock foi revisado como referência de produto. Os seguintes padrões são aderentes à visão do ATLAS:
+O [Alethe Agents](https://github.com/Kc1t/alethe-agents) orienta a densidade, a navegação hierárquica e a alternância entre layouts. A implementação do ATLAS é própria: não importa código, assets ou marca da referência.
 
-- modo de uso direto no qual o usuário abre seus próprios panes e conversa com cada CLI;
-- grid dinâmico com sessões lado a lado e maestro em destaque;
-- missões como escopos de panes, status e worktrees;
-- configuração MCP preparada no spawn para o agente nascer conectado às ferramentas;
-- handoffs estruturados e duráveis, acordando o orquestrador por eventos;
-- projetos em abas e retomada de sessões anteriores;
-- busca no buffer do terminal e links de arquivos como melhorias posteriores de usabilidade;
-- reordenação de panes e drag-out para outra janela/monitor como evolução, não requisito da `v0.1`.
+O ATLAS preserva tarefas persistentes, claims, mensagens estruturadas, pedidos aprovados pelo usuário, worktrees vinculadas à aprovação e evidências verificáveis. Somente o usuário conclui tarefas. Ocultar ou selecionar terminais não inicia agentes nem aceita pedidos.
 
-Diferenciais que o ATLAS deve preservar:
-
-- tarefas centrais, editáveis e persistentes, em vez de apenas um placar de marcos controlado pelos agentes;
-- sessões manuais e automáticas com comunicação estruturada entre si, e não apenas execuções subordinadas a uma missão;
-- evidências e revisão necessárias para conclusão, sem inferir `done` de atividade de terminal;
-- uso local e open source, sem assinatura ou serviço central do ATLAS;
-- integração opcional com AI Memory, sem criar outro sistema de memória por padrão.
-
-As páginas públicas descrevem capacidades do produto de referência; sua presença aqui não representa auditoria independente nem promessa de comportamento idêntico no ATLAS.
+Retomada nativa de conversas e persistência de saída exigem investigação e decisão separadas. Não há mudança de privacidade nem de política de aprovação neste marco.
 
 ### 4.6 Painéis destacados e acompanhamento sempre visível [REQ/PROP]
 
@@ -906,7 +845,7 @@ A força do projeto para portfólio deve estar no modelo de sessões, colaboraç
 ## 20. Referências
 
 - **Planejamento anterior:** `ARGOS_PLANEJAMENTO_ARQUITETURA.md`.
-- **Overclock:** <https://overclock.sh/> — referência de produto informada pelo usuário para maestro, sessões e terminais; não presumir compatibilidade interna.
+- **Alethe Agents:** <https://github.com/Kc1t/alethe-agents> — referência de workspace e terminais; padrões adaptados sem copiar código, assets ou marca.
 - **Alethe Orchestrate Skill:** <https://github.com/Kc1t/alethe-orchestrate-skill> — referência de playbooks, delegação, worktrees, limites e relatórios; não é modelo do cockpit de terminais do ATLAS.
 - **Vídeo da Alethe:** <https://www.youtube.com/watch?v=ujW-e6w3NQA&t=1354s>.
 - **AI Memory:** <https://github.com/akitaonrails/ai-memory> — integração futura e desacoplada, por interfaces oficiais.

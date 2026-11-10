@@ -161,6 +161,18 @@ async function choose(cdp, scope, name, value) {
   assert(await cdp.evaluate(`(() => { const select = document.querySelector(${JSON.stringify(`${scope} select[name=${name}]`)}); if (!select) return false; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(value)}); select.dispatchEvent(new Event('change', { bubbles: true })); return select.value === ${JSON.stringify(value)}; })()`), `Missing option ${value} in ${scope} ${name}`);
   await delay(120);
 }
+async function chooseTerminalLayout(cdp, value) {
+  assert(await cdp.evaluate(`(() => { const select = document.querySelector('[aria-label="Layout dos terminais"]'); if (!select) return false; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(value)}); select.dispatchEvent(new Event('change', { bubbles: true })); return select.value === ${JSON.stringify(value)}; })()`), `Missing terminal layout ${value}`);
+  await delay(200);
+}
+async function ensureStatus(cdp) {
+  await cdp.evaluate(`(() => { const button = [...document.querySelectorAll('.toolbar-actions button')].find(item => item.textContent === 'Estado'); if (button?.getAttribute('aria-expanded') === 'false') button.click(); })()`);
+  await until(() => cdp.evaluate(`Boolean(document.querySelector('#workspace-status'))`), 'project status open');
+}
+async function ensurePanels(cdp) {
+  await cdp.evaluate(`(() => { const button = [...document.querySelectorAll('.toolbar-actions button')].find(item => item.textContent === 'Painéis'); button?.click(); })()`);
+  await until(() => cdp.evaluate(`Boolean(document.querySelector('[data-column-id=right]'))`), 'right panels open');
+}
 async function key(cdp, keyName, options = {}) {
   await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: keyName, ...options });
   await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: keyName, ...options, text: undefined });
@@ -190,8 +202,8 @@ try {
   assert.equal(await main.evaluate(`document.querySelectorAll('.origin-badge.demo').length`), 0, 'Desktop must not show illustrative agent cards');
   // Sem CLI padrão: a principal só inicia depois de o usuário escolher CLI e modelo.
   await until(() => main.evaluate(`document.querySelector('.orchestrator-choice-note')?.innerText.includes('ainda não foi iniciada')`), 'principal aguarda a escolha do agente');
-  // Painel do Atlas: a principal parada aparece em "Espera você".
-  await until(() => main.evaluate(`[...document.querySelectorAll('.atlas-decision.principal')].some(item => item.innerText.includes('Iniciar a sessão principal'))`), 'painel mostra a principal parada');
+  // A árvore coloca a principal parada em "Espera você".
+  await until(() => main.evaluate(`[...document.querySelectorAll('.tree-decision.principal')].some(item => item.innerText.includes('Iniciar a sessão principal'))`), 'árvore mostra a principal parada');
   // Regressão: sem sessão Kimi no projeto, nada de aviso do Kimi (só o indicador discreto).
   assert.equal(await main.evaluate(`document.querySelectorAll('.integration-notice').length`), 0, 'Kimi notice only with a Kimi session');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 1, 'Unauthorized project history must remain hidden');
@@ -209,21 +221,27 @@ try {
   await main.evaluate(`document.querySelector('.session-history').closest('.session-card').querySelector('[title="Alternar foco"]').click()`);
   console.log('PASS histórico restaurado como lost, sem PTY, composer ou métricas fictícias');
   await native('focus');
-  await click(main, '.add-project');
+  await click(main, '[aria-label="Autorizar pasta de projeto"]');
   await until(() => main.evaluate(`window.atlasDesktop.listAgents().then(items => items.length === 3)`), 'history loaded after project authorization without reload');
   console.log('PASS autorizar projeto restaura histórico adicional sem recarregar a UI');
-  await until(() => main.evaluate(`document.querySelectorAll('.worktree-item').length >= 2`), 'Git discovery UI');
-  await until(() => main.evaluate(`!document.querySelector('.discovery-heading button').disabled`), 'project loading finished');
-  await main.evaluate(`[...document.querySelectorAll('.project-tab')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
+  await until(() => main.evaluate(`document.querySelectorAll('.tree-worktree').length >= 2`), 'Git discovery UI');
+  await until(() => main.evaluate(`!document.querySelector('[aria-label="Atualizar estado Git"]').disabled`), 'project loading finished');
+  await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
   await until(() => native('defaults-resolved'), 'delayed defaults resolved');
   await delay(150);
-  assert(await main.evaluate(`document.querySelector('.project-tab.active').textContent.startsWith('Projeto adicional')`), 'Initial hydration overwrote the selected project');
+  assert(await main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional')`), 'Initial hydration overwrote the selected project');
   assert(await main.evaluate(`document.querySelector('.workspace-path span').textContent === ${JSON.stringify(extraProject)}`), 'Initial hydration overwrote the selected directory');
   console.log('PASS seleção do projeto preservada durante inicialização tardia');
-  await click(main, '[title="Modo de foco"]');
+  await chooseTerminalLayout(main, 'spotlight');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-card').length`), 1, 'Focus must select a session in the current project');
   assert((await main.evaluate(`document.querySelector('.session-history').innerText`)).includes(extraProject));
-  await click(main, '[title="Exibir grid"]');
+  await chooseTerminalLayout(main, 'grid');
+  // Selecionar uma sessão em outro projeto deve navegar até ela.
+  await main.evaluate(`document.getElementById('tree-session-history-fixture').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('[data-session-id=history-fixture]')) && !document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional')`), 'tree session changes active project');
+  await main.evaluate(`document.getElementById('tree-session-reauthorized-fixture').click()`);
+  await until(() => main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional')`), 'tree session returns to project');
+  await ensurePanels(main);
   await until(() => main.evaluate(`Boolean(document.querySelector('.persistent-tasks button:not(:disabled)'))`), 'task project ready');
   assert(await main.evaluate(`document.querySelector('.persistent-tasks button').getBoundingClientRect().width > 0`), 'New task control must be visible to the user');
   await click(main, '.persistent-tasks button', 'Nova tarefa');
@@ -260,7 +278,8 @@ try {
   await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Tarefas')).click()`);
   console.log('PASS mensagem real listada com rota, badge de não lida e leitura persistida');
   const integrationFile = () => JSON.parse(fs.readFileSync(kimiMcp, 'utf8'));
-  await until(() => main.evaluate(`document.querySelector('.integration-status')?.innerText.includes('não conectadas')`), 'integration status in subbar');
+  await ensureStatus(main);
+  await until(() => main.evaluate(`document.querySelector('.integration-status')?.innerText.includes('não conectadas')`), 'integration status in project status');
   assert(await main.evaluate(`document.querySelector('.integration-notice')?.innerText.includes('não estão conectadas')`), 'Notice explains missing integration');
   await assert.rejects(native('invoke', { channel: 'integration:kimi-mcp-install', args: [{}] }), /Confirme/);
   assert.deepEqual(Object.keys(integrationFile().mcpServers), ['github'], 'Nothing is written without consent');
@@ -283,6 +302,7 @@ try {
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('.integration-modal')`), 'Escape cancels consent');
   assert.deepEqual(Object.keys(integrationFile().mcpServers), ['github'], 'Cancel writes nothing');
+  assert(await main.evaluate(`Boolean(document.querySelector('#workspace-status'))`), 'Escape in consent preserves the underlying status panel');
   await click(main, '.integration-notice button', 'Revisar e conectar');
   await click(main, '.integration-modal .button.primary', 'Conectar');
   await until(() => main.evaluate(`!document.querySelector('.integration-modal') && document.querySelector('.integration-status').innerText.includes('conectadas') && !document.querySelector('.integration-status').innerText.includes('não')`), 'integration installed');
@@ -298,7 +318,7 @@ try {
   assert.deepEqual(integrationFile(), { mcpServers: { github: { command: 'gh-mcp', args: ['--fixture'] } } }, 'Removal deletes only the ATLAS entry');
   assert.equal(await main.evaluate(`document.querySelectorAll('.integration-notice').length`), 0, 'Removing does not nag the user again');
   console.log('PASS consentimento da integração MCP: conteúdo exato, foco, cancelar, conectar e remover sem tocar outros servidores');
-  const target = `.worktree-item[title=${JSON.stringify(worktree)}]`;
+  const target = `.tree-worktree[title=${JSON.stringify(worktree)}]`;
   await click(main, target);
   await until(() => main.evaluate(`document.querySelector('.persistent-tasks').innerText.includes('Nenhuma tarefa criada')`), 'task scope changed');
   assert(!(await main.evaluate(`document.querySelector('.persistent-tasks').innerText`)).includes('Tarefa real · smoke'));
@@ -352,7 +372,7 @@ try {
   await command(main, input, `Write-Output ('ATLAS_' + 'INTERRUPT_OK')`);
   await output('ATLAS_INTERRUPT_OK');
   console.log('PASS PTY: teclado Unicode, diretório da worktree, resize real e Ctrl+C');
-  await click(main, '[title="Exibir grid"]');
+  await chooseTerminalLayout(main, 'grid');
   await focus('smoke-dois');
   await command(main, input, `Write-Output ('ATLAS_' + 'SECOND_OK'); Write-Output ('PID:' + $PID)`);
   await output('ATLAS_SECOND_OK', second.id);
@@ -362,6 +382,54 @@ try {
   assert(!(await raw(first.id)).includes('ATLAS_SECOND_OK'));
   assert(!(await raw(second.id)).includes('ATLAS_UNICODE_OK'));
   console.log('PASS dois terminais com processos e streams independentes');
+
+  await chooseTerminalLayout(main, 'grid');
+  await until(() => main.evaluate(`Boolean(${card('smoke-um')} && ${card('smoke-dois')})`), 'grid restores both terminals');
+  const terminalSpace = await main.evaluate(`(() => { const cockpit = document.querySelector('.cockpit').getBoundingClientRect(); const grid = document.querySelector('.session-grid').getBoundingClientRect(); return { bottom: cockpit.bottom - grid.bottom, height: grid.height, available: cockpit.bottom - grid.top }; })()`);
+  assert(terminalSpace.bottom <= 4 && terminalSpace.height >= terminalSpace.available - 4, 'Grid fills remaining workspace without tabs');
+  await main.evaluate(`${card('smoke-um')}.querySelector('[aria-label="Ocultar smoke-um sem encerrar o processo"]').click()`);
+  await until(() => main.evaluate(`!${card('smoke-um')} && [...document.querySelectorAll('.tree-session')].some(item => item.dataset.state === 'oculta' && item.innerText.includes('smoke-um'))`), 'hidden terminal remains in tree');
+  assert.equal(await main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(first.id)}).then(item => item.exit)`), null, 'Hiding must not close the PTY');
+  await main.evaluate(`[...document.querySelectorAll('.tree-session')].find(item => item.dataset.state === 'oculta' && item.innerText.includes('smoke-um')).click()`);
+  await until(() => main.evaluate(`Boolean(${card('smoke-um')}?.querySelector('.terminal-view'))`), 'terminal restored from tree');
+  await until(async () => (await main.evaluate(`${card('smoke-um')}?.querySelector('.real-terminal')?.innerText`))?.includes('ATLAS_UNICODE_OK'), 'in-memory scrollback restored');
+  assert.equal(Number((await raw(first.id)).match(/PID:(\d+)/g).at(-1).slice(4)), firstPid, 'Restore keeps the same shell PID');
+  assert.equal((await native('terminals')).length, 2, 'Restore must not create another PTY');
+
+  await chooseTerminalLayout(main, 'spotlight');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.session-grid .session-card').length`), 1, 'Spotlight renders one terminal');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.terminal-subtabs [role=tab]').length`), 3, 'Spotlight keeps all visible sessions in subtabs');
+  await click(main, '[data-column-id=right] .detach-control', 'Ocultar');
+  await native('resize', { width: 1440, height: 900 });
+  await chooseTerminalLayout(main, 'sidebar');
+  const sidebarWidths = await main.evaluate(`(() => { const cards = [...document.querySelectorAll('.session-grid .session-card')]; return cards.map(item => item.getBoundingClientRect().width); })()`);
+  assert.equal(sidebarWidths.length, 3, 'Sidebar layout renders all terminals');
+  assert(sidebarWidths[0] > sidebarWidths[1], 'Sidebar layout gives the selected terminal more space');
+  await screenshot(main, 'workspace-sidebar');
+  await ensurePanels(main);
+  await chooseTerminalLayout(main, 'tabs');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.session-grid .session-card').length`), 1, 'Tabs render one terminal');
+  await main.evaluate(`document.querySelector('.terminal-subtabs [aria-selected=true]').focus()`);
+  await key(main, 'ArrowRight', { code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+  await until(() => main.evaluate(`document.querySelector('.terminal-subtabs [aria-selected=true]')?.textContent === 'smoke-dois' && Boolean(${card('smoke-dois')})`), 'keyboard changes terminal tab');
+  await screenshot(main, 'workspace-tabs');
+
+  await chooseTerminalLayout(main, 'grid');
+  await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 3`), 'all sessions back in grid');
+  while (await main.evaluate(`document.querySelectorAll('.session-grid .session-card').length > 0`)) {
+    await main.evaluate(`document.querySelector('.session-grid .session-card [aria-label^="Ocultar "]').click()`);
+    await delay(150);
+  }
+  await until(() => main.evaluate(`document.querySelector('.sessions-hidden-empty')?.innerText.includes('processos continuam')`), 'all-hidden empty state');
+  const hiddenExits = await main.evaluate(`Promise.all(${JSON.stringify([first.id, second.id])}.map(id => window.atlasDesktop.attachTerminal(id).then(item => item.exit)))`);
+  assert.deepEqual(hiddenExits, [null, null], 'All PTYs survive hiding every card');
+  await click(main, '.sessions-hidden-empty button', 'Restaurar sessões');
+  await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 3`), 'restore all sessions');
+  assert.equal(Number((await raw(first.id)).match(/PID:(\d+)/g).at(-1).slice(4)), firstPid);
+  assert.equal(Number((await raw(second.id)).match(/PID:(\d+)/g).at(-1).slice(4)), secondPid);
+  await focus('smoke-dois');
+  console.log('PASS layouts, subtabs por teclado e ocultação com mesmo PID e scrollback');
+
   // Paleta de comandos: abre com o foco dentro do terminal (o xterm não pode engolir o atalho),
   // filtra, leva ao terminal escolhido e fecha com Esc.
   await main.evaluate(`document.querySelector(${JSON.stringify(input)}).focus()`);
@@ -403,7 +471,7 @@ try {
   const panelPage = await until(async () => (await pages()).find((item) => item.url.includes('window=panels')), 'panel popup');
   const panel = await connect(panelPage);
   await until(() => panel.evaluate(`Boolean(document.querySelector('.native-inspector'))`), 'panel ready');
-  await main.evaluate(`[...document.querySelectorAll('.project-tab')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
+  await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
   await until(() => panel.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa real · smoke')`), 'task snapshot synced to popup');
   assert.equal(await panel.evaluate(`document.querySelectorAll('.persistent-tasks button').length`), 1, 'Popup lists task selection but cannot create tasks');
   await click(main, target);
@@ -432,7 +500,7 @@ try {
   await click(main, '[data-column-id=left] .detach-control', 'Ocultar');
   await click(main, '[data-column-id=right] .detach-control', 'Ocultar');
   assert.equal(await main.evaluate(`document.querySelectorAll('[data-column-id]').length`), 1);
-  await click(main, '[title="Exibir grid"]');
+  await chooseTerminalLayout(main, 'grid');
   await main.evaluate(`window.atlasDesktop.closePty(${JSON.stringify(first.id)})`);
   await until(() => main.evaluate(`[...document.querySelectorAll('.session-state')].some(item => item.textContent.includes('encerrado'))`), 'visible exit status');
   await main.call('Page.reload');
@@ -444,8 +512,8 @@ try {
   await screenshot(main, 'terminals-focused');
   await click(main, '.toolbar-actions button', 'Navegação');
   await click(main, '.toolbar-actions button', 'Painéis');
-  await until(() => main.evaluate(`[...document.querySelectorAll('.project-tab')].some(item => item.textContent.startsWith('Projeto adicional'))`), 'project tabs hydrated');
-  await main.evaluate(`[...document.querySelectorAll('.project-tab')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
+  await until(() => main.evaluate(`[...document.querySelectorAll('.tree-project-name')].some(item => item.textContent.startsWith('Projeto adicional'))`), 'project tabs hydrated');
+  await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
   await click(main, '.inspector-tabs button', 'Tarefas');
   await until(() => main.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa real · smoke')`), 'task restored after renderer reload');
   assert((await main.evaluate(`document.querySelector('.persistent-tasks').innerText`)).includes('Preservar após recarregar e reabrir o banco'));
@@ -541,6 +609,7 @@ try {
   const geminiSettings = path.join(geminiHome, '.gemini', 'settings.json');
   fs.mkdirSync(path.dirname(geminiSettings), { recursive: true });
   fs.writeFileSync(geminiSettings, JSON.stringify({ security: { auth: { selectedType: 'oauth-personal' } } }));
+  await ensureStatus(main);
   const geminiStatus = "[...document.querySelectorAll('.integration-status')].find((item) => item.innerText.includes('no Gemini'))";
   await until(() => main.evaluate(`${geminiStatus}?.innerText.includes('não conectadas')`), 'gemini integration status after detection');
   await main.evaluate(`${geminiStatus}.querySelector('.link-button').click()`);
@@ -639,9 +708,9 @@ try {
   assert(requestCards[1].includes('Segunda linha preservada') && requestCards[1].includes('Vale até') && requestCards[1].includes('Política: até 2 agentes'), 'Request shows purpose, validity and policy');
   assert(requestCards.every((text) => text.includes('sem flags de autonomia')), 'Request states how the agent starts');
   // Painel do Atlas: cada pedido pendente espera o usuário e leva ao próprio cartão.
-  const panelRequests = await main.evaluate(`[...document.querySelectorAll('.atlas-decision.request strong')].map(item => item.textContent)`);
+  const panelRequests = await main.evaluate(`[...document.querySelectorAll('.tree-decision.request')].map(item => item.textContent.replace(/^[!✓]/, ''))`);
   assert(panelRequests.includes('Novo agente: revisor-recusado') && panelRequests.length === 2, `Panel lists pending requests: ${panelRequests}`);
-  await main.evaluate(`[...document.querySelectorAll('.atlas-decision.request')].find(item => item.innerText.includes('revisor-recusado')).click()`);
+  await main.evaluate(`[...document.querySelectorAll('.tree-decision.request')].find(item => item.innerText.includes('revisor-recusado')).click()`);
   await until(() => main.evaluate(`document.activeElement?.closest('.agent-request')?.innerText.includes('revisor-recusado')`), 'painel leva ao cartão do pedido');
   const requestAudit = await main.evaluate(`(${auditInterface.toString()})()`);
   assert.equal(requestAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in agent requests');
@@ -676,7 +745,7 @@ try {
   assert.equal(await main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'revisor-sem-cli')`), false);
   await click(main, '.agent-request button', 'Dispensar');
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'failed request dismissed');
-  assert.equal(await main.evaluate(`document.querySelectorAll('.atlas-decision.request').length`), 0, 'Decided requests leave the panel');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.tree-decision.request').length`), 0, 'Decided requests leave the panel');
   console.log('PASS pedidos de agente da principal: conteúdo, validade, política, recusa, falha honesta sem CLI e Painel do Atlas');
   // Delegação semeada como a principal e um agente da fixture fariam pela ponte MCP:
   // uma oferta aberta e uma tarefa aceita e bloqueada. O usuário cancela e devolve.
@@ -746,7 +815,8 @@ try {
   await click(main, '.agent-request button', 'Recusar');
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'worktree request rejected');
   console.log('PASS pedido com worktree mostra tarefa e recusa honesta sem repositório Git');
-  // Suíte de regressão configurada pelo usuário na subbarra do projeto. A sugestão
+  await ensureStatus(main);
+  // Suíte de regressão configurada pelo usuário no estado do projeto. A sugestão
   // vem do package.json da fixture e só entra no campo pelo botão.
   fs.writeFileSync(path.join(extraProject, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
   const setField = (selector, value) => main.evaluate(`(() => { const field = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, ${JSON.stringify(value)}); field.dispatchEvent(new Event('input', { bubbles: true })); })()`);
@@ -844,8 +914,8 @@ try {
     const second = spawn(electron, [path.join(root, 'scripts/smoke-app.cjs'), `--atlas-open=${target}`], { cwd: fixture, env: { ...env, ATLAS_SMOKE_SECOND_INSTANCE: '1' }, stdio: 'ignore', windowsHide: true });
     await new Promise((resolve) => second.on('exit', resolve));
   };
-  const activeTab = () => main.evaluate(`document.querySelector('.project-tab.active')?.textContent || ''`);
-  await main.evaluate(`[...document.querySelectorAll('.project-tab')].find(item => !item.textContent.startsWith('Projeto adicional') && !item.textContent.startsWith('Início'))?.click()`);
+  const activeTab = () => main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]')?.textContent || ''`);
+  await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => !item.textContent.startsWith('Projeto adicional') && !item.textContent.startsWith('Início'))?.click()`);
   await until(async () => !(await activeTab()).startsWith('Projeto adicional'), 'other project selected before opening');
   const nested = path.join(extraProject, 'sub pasta ação & cia');
   fs.mkdirSync(nested, { recursive: true });
@@ -876,7 +946,7 @@ try {
   await until(() => main.evaluate(`document.querySelector('.integration-modal')?.innerText.includes('Cadastrar Pendente B')`), 'second request replaces modal');
   await click(main, '.integration-modal button', 'Cancelar');
   await until(() => main.evaluate(`!document.querySelector('.integration-modal')`), 'modal closed after cancel');
-  assert.equal(await main.evaluate(`[...document.querySelectorAll('.project-tab')].some(item => item.textContent.startsWith('Pendente'))`), false, 'No pending folder registered');
+  assert.equal(await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].some(item => item.textContent.startsWith('Pendente'))`), false, 'No pending folder registered');
   console.log('PASS Abrir no ATLAS: segunda instância, subpasta abre o projeto, pasta nova com confirmação, substituição de pedido e caminho inválido');
   await click(main, '.title-actions button', 'Aparência');
   await until(() => main.evaluate(`document.querySelector('.explorer-integration')?.innerText.includes('Não adicionada')`), 'explorer integration status');
@@ -920,7 +990,7 @@ try {
   const canCreateAndReopenAtMinimumWidth = await main.evaluate(`[...document.querySelectorAll('.toolbar-actions button')].filter(item => item.textContent === 'Terminal').every(item => item.getBoundingClientRect().width > 0)`);
   await screenshot(main, 'cockpit-compact');
   await native('resize', { width: 1440, height: 900 });
-  await click(main, '[title="Exibir grid"]');
+  await chooseTerminalLayout(main, 'grid');
   await until(async () => (await main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(first.id)}).then(item => item.exit)`)) && (await main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(second.id)}).then(item => item.exit)`)), 'PTY exits');
   console.log('PASS aparência clara/escura, fundo personalizado, persistência e saída dos PTYs');
   assert(keyboardFocusInModal && keyboardFocusTrapped, 'Modal must receive focus and keep Tab inside it');
@@ -931,7 +1001,7 @@ try {
   fs.writeFileSync(path.join(resultsDir, 'result.json'), JSON.stringify({ passed: false, fixture, error: error.message, checkedAt: new Date().toISOString() }, null, 2));
   for (const connection of connections.filter((item) => item.ws.readyState === WebSocket.OPEN)) {
     await screenshot(connection, 'failure').catch(() => {});
-    console.error(await connection.evaluate(`({ visibility: document.visibilityState, selected: document.querySelector('.worktree-item.active')?.title, select: document.querySelector('select[name=cwd]')?.value, options: [...document.querySelectorAll('select[name=cwd] option')].map(item => item.value), focused: document.activeElement?.outerHTML?.slice(0, 100), terminalText: [...document.querySelectorAll('.real-terminal')].map(item => item.innerText.slice(-1800)) })`).catch(() => null));
+    console.error(await connection.evaluate(`({ visibility: document.visibilityState, selected: document.querySelector('.tree-worktree.active')?.title, select: document.querySelector('select[name=cwd]')?.value, options: [...document.querySelectorAll('select[name=cwd] option')].map(item => item.value), focused: document.activeElement?.outerHTML?.slice(0, 100), terminalText: [...document.querySelectorAll('.real-terminal')].map(item => item.innerText.slice(-1800)) })`).catch(() => null));
   }
   const created = await native('terminals').catch(() => []);
   for (const terminal of created) console.error(await connections[0]?.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(terminal.id)}).then(item => ({ ...item, scrollback: item.scrollback.slice(-1200) }))`).catch(() => null));

@@ -18,7 +18,7 @@ O ATLAS tem o titã do logo como personagem: a estátua de mármore que sustenta
 - **Marca:** `src/assets/atlas-statue.webp`, recorte do logo com fundo transparente, local e sem rede. Aparece na barra de título (`AtlasMark`) e grande na tela do projeto sem sessões (`AtlasWelcome`).
 - **Wordmark:** "ATLAS" em Jost 300, espaçamento de .5em a .6em, sempre em maiúsculas.
 - **Ouro (`--gold`):** marca, rótulos de seção, aba ativa, seleção e órbitas. Não é cor de estado nem de ação.
-- Estilos da identidade ficam em `src/identity.css`, carregado depois de `src/styles.css`.
+- Estilos da identidade ficam em `src/identity.css`; a densidade e os layouts ficam em `src/workspace.css`, carregado por último.
 
 ### Color Palette
 
@@ -72,7 +72,7 @@ O ATLAS tem o titã do logo como personagem: a estátua de mármore que sustenta
 
 ### Elevation
 
-- Cartões de sessão: raio de 12px, borda discreta e uma sombra baixa e larga que os separa do fundo sem brilho.
+- Panes de sessão: raio e intervalos de 3px, borda discreta, sem sombra decorativa.
 - Seleção: borda e anel em ouro, além do estado textual.
 - Modais: material elevado (raio de 16px), scrim com desfoque, que vira fundo sólido com `prefers-reduced-transparency`.
 - Gradientes só como luz quente sutil no topo da barra de título e da navegação. Sem glow em controles.
@@ -111,20 +111,29 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 - Cada card oferece Pop-up e Foco; o pop-up permite Reintegrar sem encerrar o processo.
 - O cabeçalho usa uma linha para nome, origem, CLI e ações. Tokens fictícios e metadados redundantes não competem com o terminal.
 - Seleção, foco e estado não dependem apenas de cor.
-- A linha da grade define a altura do cartão: piso de 380px, crescendo para que duas linhas caibam na janela. Cartões não têm altura mínima própria, para nunca se sobreporem. No Foco, o cartão ocupa toda a área.
-- A barra de status inferior foi retirada para dar altura aos terminais; projeto e diretório continuam nas abas e nos cartões.
+- A linha da grade define a altura do cartão: piso de 300px, crescendo com a área disponível. Cartões não têm altura mínima própria, para nunca se sobreporem. No Foco, o cartão ocupa toda a área.
+- A barra de status inferior foi retirada para dar altura aos terminais; projeto e diretório continuam na árvore e no contexto da área de trabalho.
 
 ### Navegação e painéis
 
-- Uma barra só em cima: marca, abas de projeto e ações. Não há barra de status.
-- O Painel do Atlas abre a navegação: estado da principal, "Espera você" e equipe por tarefa. Cada item leva ao lugar da decisão; o painel não duplica aprovações. Estado das sessões por ponto e texto (para leitores de tela, "ativa" fica oculto visualmente).
+- Barra superior de 42px: marca, contexto e ações. Projetos ficam na árvore lateral; não há barra de status permanente.
+- A árvore organiza projetos, repositórios, worktrees e sessões. "Espera você" reúne principal parada, pedidos e revisões do projeto ativo. Cada item leva ao lugar da decisão; o painel não duplica aprovações. Estado das sessões por ponto e texto (para leitores de tela, "ativa" fica oculto visualmente).
 - A paleta de comandos (Ctrl Shift P ou F1) reúne as ações, os projetos e os terminais. O atalho vale com o foco no terminal, e o que se digita nela nunca chega ao PTY. Toda ação nova entra também na paleta.
 
-- Navegação e Painéis podem ser ocultadas independentemente e recuperadas pela toolbar.
+- Navegação e Painéis podem ser ocultados independentemente e recuperados pela toolbar. Painéis começam recolhidos numa instalação nova. Estado do projeto e integrações abre sob demanda.
 - Os mesmos controles permanecem disponíveis na largura desktop mínima de 940px. A navegação mantém rótulos textuais e seu conteúdo rola sem sobreposição.
 - A ordem das colunas e sua visibilidade persistem localmente.
-- Repositórios e worktrees usam uma árvore compacta somente leitura, com branch e alterações locais.
+- Repositórios e worktrees usam uma árvore compacta somente leitura, com branch e alterações locais. Cada sessão pode ser ocultada e restaurada sem encerrar o PTY; o estado oculto aparece em texto.
 - Pop-ups de terminal são janelas normais; a janela de Acompanhamento permanece `always-on-top`.
+
+### Layouts dos terminais
+
+- **Grade:** panes simultâneos, com rolagem da grade.
+- **Destaque:** uma sessão ocupa o espaço disponível; faixa superior permite mudar a sessão.
+- **Principal + agentes:** principal visível maior; sem principal, a sessão selecionada, demais ao lado; em área estreita, empilha para preservar leitura.
+- **Abas:** uma sessão por vez, com setas, Home e End na faixa de abas.
+- O layout e a lista de sessões ocultas persistem só como preferências locais. Restaurar layout revela todas as sessões.
+- Abas, avisos e terminais têm linhas explícitas para que a ausência de uma faixa não deixe espaço vazio.
 
 ### Inputs e modais
 
