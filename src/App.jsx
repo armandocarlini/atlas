@@ -39,7 +39,7 @@ import useModalFocus from './useModalFocus.js';
 import CommandPalette from './CommandPalette.jsx';
 import { atlasDecisions } from './atlas-panel.js';
 import { nextVisibleSessionId, normalizeTerminalLayout, sessionsInLayout, visibleWorkspaceSessions, workspaceSessions } from './workspace-layout.js';
-import { agentSession, mergeAgentSessions, restoreSummary, sessionExit, usesGemini, usesKimi } from './session-state.js';
+import { agentSession, mergeAgentSessions, restoreSummary, sessionExit, terminalSession, usesGemini, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
@@ -739,6 +739,7 @@ export default function App() {
   const [modal, setModal] = useState(null);
   const [modalFunction, setModalFunction] = useState('');
   const [restoreTick, setRestoreTick] = useState(0);
+  const [terminalRestoreError, setTerminalRestoreError] = useState('');
   // Histórico aberto pela árvore nesta execução; na abertura, só sessões vivas aparecem.
   const [revealedHistoryIds, setRevealedHistoryIds] = useState([]);
   const [toast, setToast] = useState('');
@@ -927,6 +928,22 @@ export default function App() {
     }).catch((error) => notify(`Não foi possível carregar as sessões: ${error.message}`));
     return () => { active = false; };
   }, [isSecondaryWindow, projects, workingDirectory, restoreTick]);
+
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow) return undefined;
+    let active = true;
+    desktop.listTerminals().then(({ terminals, failed }) => {
+      if (!active) return;
+      setSessions((current) => {
+        const ids = new Set(current.map((item) => item.id));
+        return [...current, ...terminals.filter((item) => !ids.has(item.sessionId)).map(terminalSession)];
+      });
+      if (failed.length) setTerminalRestoreError(`Não foi possível reabrir ${failed.map(({ name, error }) => `${name} (${error})`).join(', ')}`);
+    }).catch((error) => {
+      if (active) setTerminalRestoreError(cleanIpcError(error));
+    });
+    return () => { active = false; };
+  }, [isSecondaryWindow]);
 
   // Continuidade: as sessões abertas no último fechamento voltam sozinhas (AGENTS.md). Quando a
   // retomada termina, a interface recarrega as sessões e a principal e diz o que voltou.
@@ -1740,14 +1757,13 @@ export default function App() {
   }
 
   async function createSession({ kind, name, cli, model, functionSlug = null, cwd }) {
-    let id = `${kind}-${Date.now()}`;
     const isTerminal = kind === 'terminal';
     let pty = null;
     let agent = null;
     if (desktop?.isDesktop) {
       setCreatingTerminal(true);
       try {
-        if (isTerminal) pty = await desktop.createTerminal({ cwd });
+        if (isTerminal) pty = await desktop.createTerminal({ cwd, name });
         else agent = await desktop.createAgent({ adapterId: cli, model, name, cwd, functionSlug });
       } catch (error) {
         setCreatingTerminal(false);
@@ -1755,24 +1771,21 @@ export default function App() {
       }
       setCreatingTerminal(false);
     }
-    if (agent) id = agent.id;
-    const session = agent ? agentSession(agent) : {
-      id,
+    const session = agent ? agentSession(agent) : pty ? terminalSession(pty) : {
+      id: `${kind}-${Date.now()}`,
       projectId: currentProject?.id,
-      ptyId: pty?.id || agent?.ptyId || null,
-      name: agent?.name || name || (isTerminal ? 'terminal-local' : 'nova-sessao'),
-      role: isTerminal ? 'Shell sem identidade de agente' : agent ? 'Sessão de agente criada pelo usuário' : 'Sessão criada pelo usuário',
+      name: name || (isTerminal ? 'terminal-local' : 'nova-sessao'),
+      role: isTerminal ? 'Shell sem identidade de agente' : 'Sessão criada pelo usuário',
       origin: isTerminal ? 'terminal' : 'manual',
-      cli: agent?.cli || (isTerminal ? 'PowerShell' : cli),
-      version: agent?.version || null,
-      model: isTerminal || agent ? null : 'automático',
-      effort: isTerminal ? 'local' : agent ? null : 'medium',
-      status: pty || agent ? 'em execução' : 'pronto',
+      cli: isTerminal ? 'PowerShell' : cli,
+      model: isTerminal ? null : 'automático',
+      effort: isTerminal ? 'local' : 'medium',
+      status: 'pronto',
       color: isTerminal ? '#8d959d' : '#4ecb8d',
       task: isTerminal ? activeProject : 'Missão cockpit interativo',
       tokens: '0',
       cost: '—',
-      worktree: pty?.cwd || agent?.cwd || cwd || 'atlas/main',
+      worktree: cwd || 'atlas/main',
       lines: isTerminal ? [
         { type: 'info', text: 'Windows PowerShell · terminal local ilustrativo' },
         { type: 'command', text: `PS ${cwd}>` },
@@ -1782,8 +1795,8 @@ export default function App() {
         { type: 'command', text: '❯ aguardando sua primeira instrução' },
       ],
     };
-    setSessions((current) => [...current.filter((item) => item.id !== id), session]);
-    setSelectedId(id);
+    setSessions((current) => [...current.filter((item) => item.id !== session.id), session]);
+    setSelectedId(session.id);
     setFocusId(null);
     setModal(null);
     notify(pty ? 'PowerShell conectado ao PTY' : agent ? `${agent.cli} ${agent.version} iniciado na worktree selecionada` : isTerminal ? 'Terminal ilustrativo adicionado ao grid' : 'Sessão manual conectada à missão');
@@ -1950,6 +1963,7 @@ export default function App() {
           </section>}
 
           <div className="workspace-notices">
+          {terminalRestoreError && <div className="scope-note error-note" role="alert"><span>{terminalRestoreError}</span><button className="button secondary compact" onClick={() => setTerminalRestoreError('')}>Dispensar aviso</button></div>}
           {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed.kimi && usesKimi(projectSessions) && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModal('kimi')} onDismiss={() => setIntegrationNoticeDismissed((current) => ({ ...current, kimi: true }))} />}
           {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed.gemini && usesGemini(projectSessions) && <KimiIntegrationNotice cli="Gemini" status={geminiIntegration} onReview={() => setIntegrationModal('gemini')} onDismiss={() => setIntegrationNoticeDismissed((current) => ({ ...current, gemini: true }))} />}
           {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} adapters={adapters} functions={agentFunctions} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}

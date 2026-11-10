@@ -25,6 +25,17 @@ export function agentSession(agent) {
   };
 }
 
+export function terminalSession(terminal) {
+  return {
+    id: terminal.sessionId, ptyId: terminal.id, projectId: terminal.projectId,
+    name: terminal.name, cli: 'PowerShell', worktree: terminal.cwd,
+    role: 'Shell sem identidade de agente', origin: 'terminal', effort: 'local',
+    exited: Boolean(terminal.exit),
+    status: terminal.exit ? `encerrado · código ${terminal.exit.exitCode}` : 'em execução',
+    color: '#8d959d', tokens: '0', cost: '—', lines: [],
+  };
+}
+
 const joinNames = (items) => {
   const names = items.map((item) => item.name);
   return names.length > 1 ? `${names.slice(0, -1).join(', ')} e ${names.at(-1)}` : names[0] || '';

@@ -31,7 +31,9 @@ Nos CLIs que retomam pela pasta, duas sessões do mesmo CLI na mesma pasta não 
 
 ## Fase 2: terminais PowerShell
 
-Os terminais sem agente não ficam no banco. A interface guarda a lista local (nome e pasta) e, ao abrir, recria cada um na mesma pasta.
+No fechamento normal, o processo principal grava em `app_state` os terminais PowerShell que ainda estão em execução, com a identidade da janela, o nome e a pasta escolhida ao abrir. Na próxima abertura, consome a lista antes de recriar os PTYs. Cada pasta passa pela mesma validação usada ao abrir um terminal manualmente. Uma falha aparece em um aviso e os demais terminais continuam a reabrir.
+
+Recarregar a interface reapresenta os PTYs existentes. Fechar o aplicativo encerra os processos e o novo PowerShell inicia na pasta de abertura com um buffer novo.
 
 ## Testes
 

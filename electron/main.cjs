@@ -28,6 +28,7 @@ let operationalStore = null;
 let mcpHost = null;
 let regressionRunner = null;
 let agentHost = null;
+let terminalHost = null;
 // Fechamento: grava as runs como fechadas pelo app antes de matar os processos, para
 // reabrir de onde estavam (docs/planos/PLANO_CONTINUIDADE_SESSOES.md).
 let sessionsClosed = false;
@@ -104,8 +105,9 @@ function closeSessionsForQuit() {
   if (sessionsClosed) return;
   sessionsClosed = true;
   agentHost?.prepareShutdown();
+  const terminals = terminalHost?.snapshotForQuit();
   try {
-    if (operationalStore && !operationalStore.closed) operationalStore.markAppClosed();
+    if (operationalStore && !operationalStore.closed) operationalStore.markAppClosed(terminals);
   } catch (error) {
     console.error('Não foi possível registrar o fechamento das sessões do ATLAS:', error);
   }
@@ -285,7 +287,7 @@ app.whenReady().then(async () => {
     onChange: (project) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('project:changed', project); },
   });
   ptyTransport = createPtyTransport({ getMainWindow });
-  const terminalHost = createTerminalHost({
+  terminalHost = createTerminalHost({
     ipcMain,
     getMainWindow,
     projectHost,
@@ -353,9 +355,12 @@ app.whenReady().then(async () => {
   createMainWindow();
   // Reabre sozinho, sem pedir confirmação (decisão do mantenedor, AGENTS.md), as sessões
   // que estavam em execução no último fechamento; a interface recebe o resultado.
-  const restoreSessions = () => agentHost.restoreSessions()
-    .then((result) => sendToMain('agent:restored', result))
-    .catch((error) => console.error('Não foi possível retomar as sessões do ATLAS:', error));
+  const restoreSessions = () => {
+    terminalHost.restoreTerminals(operationalStore.takeRestorableTerminals());
+    agentHost.restoreSessions()
+      .then((result) => sendToMain('agent:restored', result))
+      .catch((error) => console.error('Não foi possível retomar as sessões do ATLAS:', error));
+  };
   restoreSessions();
   openPathHost = createOpenPathHost({
     ipcMain,

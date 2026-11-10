@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   refreshProjects: () => ipcRenderer.invoke('project:refresh'),
   getTerminalDefaults: () => ipcRenderer.invoke('terminal:defaults'),
   createTerminal: (request) => ipcRenderer.invoke('terminal:create', request),
+  listTerminals: () => ipcRenderer.invoke('terminal:list'),
   attachTerminal: (terminalId) => ipcRenderer.invoke('terminal:attach', terminalId),
   writeTerminal: (terminalId, data) => ipcRenderer.send('terminal:write', { terminalId, data }),
   resizeTerminal: (terminalId, cols, rows) => ipcRenderer.send('terminal:resize', { terminalId, cols, rows }),
