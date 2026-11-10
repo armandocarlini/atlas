@@ -170,8 +170,13 @@ async function ensureStatus(cdp) {
   await until(() => cdp.evaluate(`Boolean(document.querySelector('#workspace-status'))`), 'project status open');
 }
 async function ensurePanels(cdp) {
-  await cdp.evaluate(`(() => { const button = [...document.querySelectorAll('.toolbar-actions button')].find(item => item.textContent === 'Painéis'); button?.click(); })()`);
+  await cdp.evaluate(`(() => { const button = document.querySelector('.workspace-panel-toggle[data-panel=right]'); if (button?.getAttribute('aria-expanded') === 'false') button.click(); })()`);
   await until(() => cdp.evaluate(`Boolean(document.querySelector('[data-column-id=right]'))`), 'right panels open');
+}
+async function sessionAction(cdp, cardExpression, action) {
+  assert(await cdp.evaluate(`(() => { const trigger = (${cardExpression})?.querySelector('.session-menu-trigger'); if (!trigger) return false; trigger.click(); return true; })()`), `Missing session actions for ${action}`);
+  assert(await cdp.evaluate(`(() => { const button = (${cardExpression})?.querySelector('[data-action=${action}]'); if (!button) return false; button.click(); return true; })()`), `Missing session action ${action}`);
+  await delay(120);
 }
 async function key(cdp, keyName, options = {}) {
   await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: keyName, ...options });
@@ -214,11 +219,11 @@ try {
   assert.equal(restoredHistory.popup, false);
   assert.equal(restoredHistory.tokens, false);
   assert.equal((await native('terminals')).length, 0, 'Restoring history must not spawn a process');
-  await main.evaluate(`document.querySelector('.session-history').closest('.session-card').querySelector('[title="Alternar foco"]').click()`);
+  await sessionAction(main, `document.querySelector('.session-history').closest('.session-card')`, 'focus');
   await screenshot(main, 'session-history');
   const historyAudit = await main.evaluate(`(${auditInterface.toString()})()`);
   assert.equal(historyAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in restored history');
-  await main.evaluate(`document.querySelector('.session-history').closest('.session-card').querySelector('[title="Alternar foco"]').click()`);
+  await sessionAction(main, `document.querySelector('.session-history').closest('.session-card')`, 'focus');
   console.log('PASS histórico restaurado como lost, sem PTY, composer ou métricas fictícias');
   await native('focus');
   await click(main, '[aria-label="Autorizar pasta de projeto"]');
@@ -230,6 +235,7 @@ try {
   await until(() => native('defaults-resolved'), 'delayed defaults resolved');
   await delay(150);
   assert(await main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional')`), 'Initial hydration overwrote the selected project');
+  assert(await main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]').closest('.tree-project-row').querySelector('.tree-expander').getAttribute('aria-expanded') === 'true'`), 'Selecting a project must reveal its repositories and sessions');
   assert(await main.evaluate(`document.querySelector('.workspace-path span').textContent === ${JSON.stringify(extraProject)}`), 'Initial hydration overwrote the selected directory');
   console.log('PASS seleção do projeto preservada durante inicialização tardia');
   await chooseTerminalLayout(main, 'spotlight');
@@ -340,7 +346,7 @@ try {
   const first = await createTerminal('smoke-um');
   const second = await createTerminal('smoke-dois');
   const card = (name) => `[...document.querySelectorAll('.session-card')].find(item => item.querySelector('h3')?.textContent === ${JSON.stringify(name)})`;
-  const focus = async (name) => { await main.evaluate(`${card(name)}.querySelector('[title="Alternar foco"]').click()`); await delay(200); };
+  const focus = async (name) => { await sessionAction(main, card(name), 'focus'); await delay(120); };
   const input = '.real-terminal .xterm-helper-textarea';
   const raw = async (id) => main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(id)}).then(item => item.scrollback)`);
   const output = async (marker, id = first.id) => until(async () => (await raw(id)).includes(marker), marker);
@@ -387,7 +393,27 @@ try {
   await until(() => main.evaluate(`Boolean(${card('smoke-um')} && ${card('smoke-dois')})`), 'grid restores both terminals');
   const terminalSpace = await main.evaluate(`(() => { const cockpit = document.querySelector('.cockpit').getBoundingClientRect(); const grid = document.querySelector('.session-grid').getBoundingClientRect(); return { bottom: cockpit.bottom - grid.bottom, height: grid.height, available: cockpit.bottom - grid.top }; })()`);
   assert(terminalSpace.bottom <= 4 && terminalSpace.height >= terminalSpace.available - 4, 'Grid fills remaining workspace without tabs');
-  await main.evaluate(`${card('smoke-um')}.querySelector('[aria-label="Ocultar smoke-um sem encerrar o processo"]').click()`);
+  const terminalDensity = await main.evaluate(`(() => { const grid = document.querySelector('.session-grid'); const style = getComputedStyle(grid); const cards = [...grid.querySelectorAll('.session-card')]; return { gap: style.gap, padding: style.padding, borders: cards.map(item => getComputedStyle(item).borderWidth), radii: cards.map(item => getComputedStyle(item).borderRadius), adjacent: cards.every((item, index) => index === cards.length - 1 || Math.abs(item.getBoundingClientRect().bottom - cards[index + 1].getBoundingClientRect().top) < 1) }; })()`);
+  assert.equal(terminalDensity.gap, '0px', 'Terminal panes must not have gaps');
+  assert.equal(terminalDensity.padding, '0px', 'Terminal grid must not have inset padding');
+  assert(terminalDensity.borders.every((value) => value === '0px') && terminalDensity.radii.every((value) => value === '0px'), 'Terminal panes must be square and borderless');
+  assert(terminalDensity.adjacent, 'Terminal rows must touch directly');
+  const panelsBeforeMenu = await main.evaluate(`document.querySelector('.workspace-panel-toggle[data-panel=right]').getAttribute('aria-expanded')`);
+  await main.evaluate(`${card('smoke-um')}.querySelector('.session-menu-trigger').click()`);
+  await until(() => main.evaluate(`Boolean(${card('smoke-um')}.querySelector('.session-menu-popover'))`), 'session actions open');
+  await screenshot(main, 'session-actions');
+  await main.evaluate(`${card('smoke-um')}.querySelector('.session-menu-trigger').focus()`);
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  assert(await main.evaluate(`!document.querySelector('.session-menu-popover') && document.activeElement === ${card('smoke-um')}.querySelector('.session-menu-trigger')`), 'Escape closes only the menu and restores its trigger focus');
+  assert.equal(await main.evaluate(`document.querySelector('.workspace-panel-toggle[data-panel=right]').getAttribute('aria-expanded')`), panelsBeforeMenu, 'Menu Escape must not toggle underlying panels');
+  const controlOrder = () => main.evaluate(`[...document.querySelectorAll('.toolbar-actions > *')].map(item => item.dataset.panel || item.textContent.trim() || item.getAttribute('aria-label'))`);
+  const controlsBefore = await controlOrder();
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await click(main, '.workspace-panel-toggle[data-panel=right]');
+  await click(main, '.workspace-panel-toggle[data-panel=right]');
+  assert.deepEqual(await controlOrder(), controlsBefore, 'Panel toggles must not insert, remove or reorder toolbar controls');
+  await sessionAction(main, card('smoke-um'), 'hide');
   await until(() => main.evaluate(`!${card('smoke-um')} && [...document.querySelectorAll('.tree-session')].some(item => item.dataset.state === 'oculta' && item.innerText.includes('smoke-um'))`), 'hidden terminal remains in tree');
   assert.equal(await main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(first.id)}).then(item => item.exit)`), null, 'Hiding must not close the PTY');
   await main.evaluate(`[...document.querySelectorAll('.tree-session')].find(item => item.dataset.state === 'oculta' && item.innerText.includes('smoke-um')).click()`);
@@ -417,8 +443,7 @@ try {
   await chooseTerminalLayout(main, 'grid');
   await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 3`), 'all sessions back in grid');
   while (await main.evaluate(`document.querySelectorAll('.session-grid .session-card').length > 0`)) {
-    await main.evaluate(`document.querySelector('.session-grid .session-card [aria-label^="Ocultar "]').click()`);
-    await delay(150);
+    await sessionAction(main, `document.querySelector('.session-grid .session-card')`, 'hide');
   }
   await until(() => main.evaluate(`document.querySelector('.sessions-hidden-empty')?.innerText.includes('processos continuam')`), 'all-hidden empty state');
   const hiddenExits = await main.evaluate(`Promise.all(${JSON.stringify([first.id, second.id])}.map(id => window.atlasDesktop.attachTerminal(id).then(item => item.exit)))`);
@@ -449,7 +474,7 @@ try {
   // Volta ao estado anterior: grade e smoke-dois em Foco, como o restante do roteiro espera.
   await focus('smoke-um');
   await focus('smoke-dois');
-  await main.evaluate(`[...${card('smoke-dois')}.querySelectorAll('button')].find(item => item.textContent === 'Pop-up').click()`);
+  await sessionAction(main, card('smoke-dois'), 'popup');
   const popupPage = await until(async () => (await pages()).find((item) => item.url.includes('window=terminal')), 'popup');
   const popup = await connect(popupPage);
   await until(() => popup.evaluate(`Boolean(document.querySelector('.terminal-view'))`), 'popup terminal');
@@ -462,7 +487,7 @@ try {
   await output('ATLAS_POPUP_OK', second.id);
   assert.equal(Number((await raw(second.id)).match(/PID:(\d+)/g).at(-1).slice(4)), secondPid);
   assert(await main.evaluate(`Boolean(document.querySelector('.detached-terminal-placeholder'))`));
-  await click(popup, 'button', 'Reintegrar');
+  await sessionAction(popup, `document.querySelector('.session-card')`, 'popup');
   await until(() => main.evaluate(`Boolean(document.querySelector('.real-terminal .terminal-view'))`), 'reattach');
   await native('focus');
   await until(() => main.evaluate(`document.querySelector('.real-terminal').innerText.includes('ATLAS_POPUP_OK')`), 'scrollback reattached');
@@ -502,7 +527,7 @@ try {
   assert.equal(await main.evaluate(`document.querySelectorAll('[data-column-id]').length`), 1);
   await chooseTerminalLayout(main, 'grid');
   await main.evaluate(`window.atlasDesktop.closePty(${JSON.stringify(first.id)})`);
-  await until(() => main.evaluate(`[...document.querySelectorAll('.session-state')].some(item => item.textContent.includes('encerrado'))`), 'visible exit status');
+  await until(() => main.evaluate(`[...document.querySelectorAll('.session-header')].some(item => item.title.includes('encerrado'))`), 'exit status in session details');
   await main.call('Page.reload');
   await until(() => main.evaluate(`document.querySelectorAll('.session-history').length === 1`), 'project history restored once after reload');
   await until(() => main.evaluate(`document.querySelector('.app-shell') && document.querySelectorAll('[data-column-id]').length === 1 && getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#18222b'`), 'layout and custom background persisted after reload');

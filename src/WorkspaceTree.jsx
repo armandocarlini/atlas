@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, GitBranch } from 'lucide-react';
 import { buildWorkspaceTree, sameWorkspacePath } from './workspace-layout.js';
 
 function changeSummary(worktree) {
@@ -57,6 +58,15 @@ export default function WorkspaceTree({
     });
   }, [activeProjectId, projects]);
 
+  function chooseProject(project) {
+    setCollapsed((current) => {
+      const next = { ...current, [project.id]: false };
+      for (const repository of project.repositories) next[repository.id] = false;
+      return next;
+    });
+    onSelectProject(project);
+  }
+
   function sessionList(items) {
     return <ul className="tree-sessions">{items.map((session) => <TreeSession
       key={session.id}
@@ -92,20 +102,20 @@ export default function WorkspaceTree({
                     aria-label={`${projectCollapsed ? 'Expandir' : 'Recolher'} ${project.name}`}
                     aria-expanded={!projectCollapsed}
                     onClick={() => setCollapsed((current) => ({ ...current, [project.id]: !projectCollapsed }))}
-                  >{projectCollapsed ? '+' : '−'}</button>
-                  <button type="button" className="tree-project-name" aria-current={active ? 'page' : undefined} onClick={() => onSelectProject(project)} title={project.path || project.name}>
-                    <span>{project.name}</span><small>{project.sessionCount}</small>
+                  >{projectCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</button>
+                  <button type="button" className="tree-project-name" aria-current={active ? 'page' : undefined} onClick={() => chooseProject(project)} title={project.path || project.name}>
+                    {active && !projectCollapsed ? <FolderOpen size={14} /> : <Folder size={14} />}<span>{project.name}</span><small title={`${project.sessionCount} sessões`}>{project.sessionCount}</small>
                   </button>
                 </div>
                 {!projectCollapsed && <div className="tree-project-content">
-                  {active && <section className={`tree-decisions ${attention ? 'has-attention' : ''}`} aria-label="Espera você">
+                  {attention > 0 && <section className="tree-decisions has-attention" aria-label="Espera você">
                     <div className="tree-section-label"><span>Espera você</span><b>{attention}</b></div>
-                    {decisions.length > 0 && <ul>{decisions.map((decision) => <li key={decision.id}>
+                    <ul>{decisions.map((decision) => <li key={decision.id}>
                       <button type="button" className={`tree-decision ${decision.kind}`} onClick={() => onDecision(decision)} title={decision.detail}>
                         <span className="tree-decision-mark" aria-hidden="true">{decision.kind === 'review' ? '✓' : '!'}</span>
                         <span>{decision.title}</span>
                       </button>
-                    </li>)}</ul>}
+                    </li>)}</ul>
                   </section>}
                   {project.repositories.map((repository) => {
                     const containsDirectory = repository.worktrees.some((worktree) => sameWorkspacePath(worktree.path, workingDirectory));
@@ -113,14 +123,14 @@ export default function WorkspaceTree({
                     return (
                       <section className="tree-repository" key={repository.id}>
                         <button type="button" className="tree-repository-title" aria-expanded={!repositoryCollapsed} onClick={() => setCollapsed((current) => ({ ...current, [repository.id]: !repositoryCollapsed }))}>
-                          <span aria-hidden="true">{repositoryCollapsed ? '+' : '−'}</span><strong>{repository.name}</strong><small>{repository.worktrees.length} WT</small>
+                          {repositoryCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}<strong>{repository.name}</strong><small title={`${repository.worktrees.length} worktrees`}>{repository.worktrees.length}</small>
                         </button>
                         {!repositoryCollapsed && <ul className="tree-worktrees">{repository.worktrees.map((worktree) => {
                           const selected = sameWorkspacePath(worktree.path, workingDirectory);
                           const summary = changeSummary(worktree);
                           return <li key={worktree.id}>
                             <button type="button" className={`tree-worktree ${selected ? 'active' : ''}`} aria-pressed={selected} title={worktree.path} onClick={() => onSelectWorktree(project, repository, worktree)}>
-                              <span className="tree-label"><strong>{worktree.name}</strong><small>{worktree.branch || 'diretório autorizado'}</small></span>
+                              <GitBranch size={12} aria-hidden="true" /><span className="tree-label"><strong>{worktree.name}</strong><small>{worktree.branch || 'diretório autorizado'}</small></span>
                               {summary && <span className="tree-change">{summary}</span>}
                             </button>
                             {worktree.sessions.length > 0 && sessionList(worktree.sessions)}

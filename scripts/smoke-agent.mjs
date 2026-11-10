@@ -142,6 +142,15 @@ async function evaluateMain(expression) {
   return result.result.value;
 }
 
+async function openSessionActions(cardExpression) {
+  assert(await evaluateMain(`(() => { const trigger = (${cardExpression})?.querySelector('.session-menu-trigger'); if (!trigger) return false; if (trigger.getAttribute('aria-expanded') === 'false') trigger.click(); return true; })()`), 'ações da sessão disponíveis');
+}
+
+async function clickSessionAction(cardExpression, action) {
+  await openSessionActions(cardExpression);
+  assert(await evaluateMain(`(() => { const button = (${cardExpression})?.querySelector('[data-action=${action}]'); if (!button) return false; button.click(); return true; })()`), `ação ${action} disponível`);
+}
+
 // Escolha de CLI e modelo pela interface, como o usuário faz: selects controlados
 // pelo React recebem o setter nativo e o evento change.
 async function chooseInUi(scope, name, value) {
@@ -173,7 +182,7 @@ let exitCode = 1;
 let failureMessage = null;
 let modelDiagnostic = '';
 let kimiModel = null;
-const principalCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'ORQUESTRADOR')`;
+const principalCard = `document.querySelector('.session-card[data-session-name=ORQUESTRADOR]')`;
 const plainOutput = (value) => value.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
 
 async function sendCommand(session, command) {
@@ -231,16 +240,15 @@ async function switchTuiModel(session, previous, { declareInUi = false } = {}) {
   assert.equal(after.runId, session.runId);
   await until(async () => (await native('invoke', { channel: 'agent:list' })).find(item => item.id === session.id)?.atlasTools === true, 'MCP permanece após trocar modelo', 30000);
   if (declareInUi) {
-    // O seletor abaixo usa o nome para não depender de atributos de implementação.
-    const named = `[...document.querySelectorAll('.session-card')].find(item => item.querySelector('h3')?.textContent === ${JSON.stringify(session.name)})`;
-    await evaluateMain(`[...${named}.querySelectorAll('button')].find(button => button.textContent === 'Trocar modelo').click()`);
+    const named = `document.querySelector('.session-card[data-session-name=${session.name}]')`;
+    await clickSessionAction(named, 'model');
     await until(() => evaluateMain(`Boolean(document.querySelector('.model-switch-modal select[name="declared-model"]'))`), 'painel de troca de modelo carregado');
     assert(await evaluateMain(`document.querySelector('.model-switch-modal').innerText.includes('Alt+S')`));
     assert(await evaluateMain(`document.querySelector('.model-switch-modal button[type=submit]').disabled`), 'modelo vazio não pode ser informado');
     await chooseInUi('.model-switch-modal', 'declared-model', 'fixture-b');
     await evaluateMain(`document.querySelector('.model-switch-modal form').requestSubmit()`);
     await until(() => evaluateMain(`!document.querySelector('.model-switch-modal')`), 'modelo informado pelo painel');
-    await until(() => evaluateMain(`${named}.innerText.includes('informado por você; iniciou com fixture-a')`), 'card identifica modelo como informado pelo usuário');
+    await until(() => evaluateMain(`${named}.querySelector('.session-header').title.includes('informado por você; iniciou com fixture-a')`), 'card identifica modelo como informado pelo usuário');
   } else {
     await native('invoke', { channel: 'agent:declare-model', args: [{ sessionId: session.id, model: 'fixture-b' }] });
   }
@@ -355,13 +363,15 @@ try {
   console.log('PASS /status respondido pelo harness sem prompt ao modelo');
 
   await callMain('Page.reload', {});
-  const manualCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'smoke-kimi')`;
+  const manualCard = `document.querySelector('.session-card[data-session-name=smoke-kimi]')`;
   await until(() => evaluateMain(`Boolean(${principalCard}) && Boolean(${manualCard})`), 'cards principal e manual após reload');
-  if (integrationActive) await until(() => evaluateMain(`${manualCard}.querySelector('.atlas-tools')?.textContent === 'ATLAS conectado'`), 'indicação textual ATLAS conectado na sessão manual');
+  if (integrationActive) await until(() => evaluateMain(`${manualCard}.querySelector('.session-header').title.includes('ATLAS conectado')`), 'indicação ATLAS conectado na sessão manual');
   if (!configuredModel) await switchTuiModel(agent, manualNative, { declareInUi: true });
-  assert(await evaluateMain(`[...${manualCard}.querySelectorAll('button')].some(button => button.textContent === 'Descoberta')`), 'sessão manual deve oferecer envio de descoberta');
-  assert(await evaluateMain(`[...${principalCard}.querySelectorAll('button')].every(button => button.textContent !== 'Descoberta')`), 'principal não envia descoberta para si mesma');
-  await evaluateMain(`[...${manualCard}.querySelectorAll('button')].find(button => button.textContent === 'Descoberta').click()`);
+  await openSessionActions(manualCard);
+  assert(await evaluateMain(`Boolean(${manualCard}.querySelector('[data-action=discovery]'))`), 'sessão manual deve oferecer envio de descoberta');
+  await openSessionActions(principalCard);
+  assert(await evaluateMain(`!${principalCard}.querySelector('[data-action=discovery]')`), 'principal não envia descoberta para si mesma');
+  await clickSessionAction(manualCard, 'discovery');
   await until(() => evaluateMain(`document.activeElement?.name === 'subject'`), 'modal de descoberta com foco no assunto');
   assert(await evaluateMain(`document.querySelector('.modal button[type=submit]').disabled`), 'descoberta vazia não deve enviar');
   await evaluateMain(`(() => { for (const [name, value] of Object.entries({ subject: 'Descoberta real do smoke', body: 'Sequência ANSI de resize diverge entre ConPTY e WinPTY.' })) { const field = document.querySelector('.modal [name=' + name + ']'); Object.getOwnPropertyDescriptor(name === 'subject' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype, 'value').set.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })); } })()`);
@@ -399,13 +409,13 @@ try {
   }
 
   await until(() => evaluateMain(`Boolean(${principalCard})`), 'card principal no projeto');
-  await evaluateMain(`${principalCard}.querySelectorAll('button').forEach(button => { if (button.textContent === 'Pop-up') button.click(); })`);
+  await clickSessionAction(principalCard, 'popup');
   await until(async () => (await native('windows')).some((item) => item.url.includes('window=terminal')), 'pop-up da principal');
   await sendCommand(principal, '/exit');
-  await until(() => evaluateMain(`[...${principalCard}.querySelectorAll('button')].some(button => button.textContent === 'Nova execução')`), 'principal encerrada no pop-up');
+  await until(async () => { await openSessionActions(principalCard); return evaluateMain(`Boolean(${principalCard}.querySelector('[data-action=restart]'))`); }, 'principal encerrada no pop-up');
   await callMain('Page.reload', {});
-  await until(() => evaluateMain(`[...${principalCard}.querySelectorAll('button')].some(button => button.textContent === 'Nova execução')`), 'principal encerrada após reload com pop-up nativo aberto');
-  await evaluateMain(`[...${principalCard}.querySelectorAll('button')].find(button => button.textContent === 'Nova execução').click()`);
+  await until(async () => { await openSessionActions(principalCard); return evaluateMain(`Boolean(${principalCard}.querySelector('[data-action=restart]'))`); }, 'principal encerrada após reload com pop-up nativo aberto');
+  await clickSessionAction(principalCard, 'restart');
   await until(() => evaluateMain(`Boolean(document.querySelector('#orchestrator-choice-title'))`), 'escolha do agente para a nova execução');
   await chooseKimi('.modal');
   await until(() => evaluateMain(`document.querySelector('.modal button[type=submit]')?.disabled === false`), 'escolha completa da principal');
@@ -421,7 +431,7 @@ try {
   console.log('PASS nova execução após saída em pop-up reintegra e conecta PTY novo sem perder identidade');
   if (integrationActive) {
     await until(async () => (await native('invoke', { channel: 'agent:list' })).find((item) => item.id === principal.id)?.atlasTools === true, 'ponte MCP na nova run da principal', 30000);
-    await until(() => evaluateMain(`${principalCard}.querySelector('.atlas-tools')?.textContent === 'ATLAS conectado'`), 'indicação ATLAS conectado na principal');
+    await until(() => evaluateMain(`${principalCard}.querySelector('.session-header').title.includes('ATLAS conectado')`), 'indicação ATLAS conectado na principal');
     console.log('PASS nova run da principal carrega a ponte MCP do ATLAS com perfil mcp__atlas__*');
     if (!configuredModel) await switchTuiModel(rerun, rerunNative);
   }
@@ -448,8 +458,8 @@ try {
   const fulfilled = (await native('invoke', { channel: 'agent-request:list', args: [{ cwd: fixture }] })).items.find((item) => item.id === seededRequest.id);
   assert.equal(fulfilled.state, 'fulfilled');
   assert.equal(fulfilled.sessionId, delegated.id);
-  const delegatedCard = `[...document.querySelectorAll('.session-card')].find(card => card.querySelector('h3')?.textContent === 'agente-da-principal')`;
-  await until(() => evaluateMain(`${delegatedCard}?.querySelector('.origin-badge')?.textContent === 'orquestrador'`), 'card do agente aprovado com origem orquestrador');
+  const delegatedCard = `document.querySelector('.session-card[data-session-name=agente-da-principal]')`;
+  await until(() => evaluateMain(`${delegatedCard}?.querySelector('.session-header').title.includes('orquestrador')`), 'card do agente aprovado com origem orquestrador');
 
   await until(() => evaluateMain(`document.querySelectorAll('.agent-request').length === 0`), 'pedido resolvido sai da fila');
   const delegatedAttach = () => native('invoke', { channel: 'terminal:attach', args: [delegated.ptyId] });
