@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, GitBranch } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, GitBranch, RefreshCw } from 'lucide-react';
 import { buildWorkspaceTree, sameWorkspacePath } from './workspace-layout.js';
 import SessionGlyph from './SessionGlyph.jsx';
 
@@ -84,8 +84,8 @@ export default function WorkspaceTree({
       <div className="workspace-tree-heading">
         <strong>Projetos</strong>
         <div>
-          <button type="button" onClick={onRefresh} disabled={loading} title="Atualizar estado Git" aria-label="Atualizar estado Git">{loading ? '···' : 'Atualizar'}</button>
-          <button type="button" onClick={onAddProject} title="Autorizar pasta de projeto" aria-label="Autorizar pasta de projeto">Adicionar</button>
+          <button type="button" className="chrome-icon-button" onClick={onRefresh} disabled={loading} title="Atualizar estado Git" aria-label="Atualizar estado Git"><RefreshCw size={15} aria-hidden="true" /></button>
+          <button type="button" className="chrome-icon-button" onClick={onAddProject} title="Autorizar pasta de projeto" aria-label="Autorizar pasta de projeto"><FolderPlus size={16} aria-hidden="true" /></button>
         </div>
       </div>
       <div className="workspace-tree-scroll">

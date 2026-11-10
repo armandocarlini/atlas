@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Activity,
+  AppWindow,
   ArrowUp,
   Bell,
   Bot,
@@ -8,15 +10,23 @@ import {
   ChevronRight,
   Circle,
   Clock3,
+  Columns2,
+  ExternalLink,
   FileCode2,
   Focus,
   FolderGit2,
   GitBranch,
+  LayoutGrid,
   Layers3,
   ListTodo,
   MessageSquare,
   MoreHorizontal,
   Palette,
+  PanelLeft,
+  PanelLeftClose,
+  PanelRight,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Search,
   Send,
@@ -27,7 +37,6 @@ import {
   Terminal,
   TestTube2,
   User,
-  Workflow,
   X,
 } from 'lucide-react';
 import TerminalView from './TerminalView.jsx';
@@ -262,9 +271,13 @@ const missions = [
   { name: 'Release pública', count: 1, color: '#777f86' },
 ];
 
-// A estátua do logo é a marca do ATLAS (imagem em src/assets, sem rede).
 function AtlasMark() {
-  return <span className="atlas-statue-mark" aria-hidden="true" />;
+  return <>
+    <span className="atlas-statue-mark" aria-hidden="true" />
+    <svg className="atlas-wordmark" viewBox="0 0 108 23" role="img" aria-label="ATLAS">
+      <path d="M2 21 10 3l8 18 M25 3h16m-8 0v18 M48 3v18h14 M68 21l8-18 8 18 M105 5c-1.6-1.5-3.8-2-7.2-2h-1.3c-4.1 0-6.3 1.7-6.3 4.4 0 3.6 3 4.6 7.5 4.6 4.7 0 8 1 8 4.6 0 2.8-2.4 4.4-6.4 4.4h-3.2c-3 0-5.3-.6-7.1-2.2" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  </>;
 }
 
 const ORBIT_PATH = 'M0 332a320 92 0 1 0 640 0a320 92 0 1 0-640 0';
@@ -632,6 +645,15 @@ function AppearanceModal({ theme, onChange, onClose }) {
 }
 
 const PANEL_LABELS = { task: 'Tarefas', messages: 'Mensagens', evidence: 'Evidências' };
+const LAYOUT_ICONS = { grid: LayoutGrid, spotlight: Focus, sidebar: Columns2, tabs: AppWindow };
+
+function ChromeIconButton({ icon: Icon, label, title = label, className = '', ...props }) {
+  return (
+    <button type="button" className={`chrome-icon-button ${className}`} aria-label={label} title={title} {...props}>
+      <Icon size={16} aria-hidden="true" />
+    </button>
+  );
+}
 
 function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReorderPanel, columnDragOver, columnDragging, onColumnPointerDown, style, detached = false, native = false, onToggleDetach, onPopupPointerDown, onHideColumn, taskPanel, messagesPanel, evidencePanel, unreadMessages }) {
   const [dragOverPanel, setDragOverPanel] = useState(null);
@@ -648,13 +670,13 @@ function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReord
         <strong>{detached ? 'Acompanhamento' : 'Painéis'}</strong>
         {!detached && <span>Arrastar coluna</span>}
         <div className="column-bar-actions" onPointerDown={(event) => event.stopPropagation()}>
-          {!detached && <button type="button" className="detach-control" onClick={onHideColumn} aria-expanded="true" aria-controls="atlas-panels">Ocultar</button>}
-          <button
-            type="button"
+          {!detached && <ChromeIconButton icon={PanelRightClose} label="Ocultar painéis" className="detach-control" onClick={onHideColumn} aria-expanded="true" aria-controls="atlas-panels" />}
+          <ChromeIconButton
+            icon={detached ? PanelRightOpen : ExternalLink}
+            label={detached ? 'Reintegrar painéis ao ATLAS' : 'Destacar painéis em pop-up'}
             className="detach-control"
             onClick={onToggleDetach}
-            title={detached ? 'Reintegrar Painéis ao ATLAS' : 'Destacar Painéis; no app desktop, a janela fica sempre no topo'}
-          >{detached ? 'Reintegrar' : 'Pop-up'}</button>
+          />
         </div>
       </div>
       {panels.length > 0 ? <>
@@ -732,6 +754,7 @@ export default function App() {
   const [focusId, setFocusId] = useState(null);
   const [initialTerminalWorkspace] = useState(getInitialTerminalWorkspace);
   const [terminalLayout, setTerminalLayout] = useState(initialTerminalWorkspace.layout);
+  const LayoutIcon = LAYOUT_ICONS[terminalLayout];
   const [hiddenSessionIds, setHiddenSessionIds] = useState(initialTerminalWorkspace.hiddenSessionIds);
   const [statusOpen, setStatusOpen] = useState(false);
   const [activeProject, setActiveProject] = useState('ATLAS');
@@ -797,8 +820,9 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Sessão cujo modelo o usuário está trocando no CLI (painel de orientação e registro).
   const [modelSwitch, setModelSwitch] = useState(null);
-  // Funções de agente: o aviso na barra lateral conta as que ainda pedem CLI e modelo.
+  // Funções de agente: a paleta mostra quantas ainda pedem CLI e modelo.
   const [agentFunctions, setAgentFunctions] = useState({ items: [], recommendations: null });
+  const pendingFunctions = pendingConfiguration(agentFunctions.items);
   const desktop = window.atlasDesktop;
   const isNativePanelWindow = desktop?.windowKind === 'panels';
   const isNativeTerminalWindow = desktop?.windowKind === 'terminal';
@@ -1770,7 +1794,7 @@ export default function App() {
       { id: 'reset-layout', group: 'Layout', label: 'Restaurar layout padrão', run: resetLayout },
       { id: 'appearance', group: 'Preferências', label: 'Aparência e configurações', keywords: 'tema cor fundo', shortcut: 'Ctrl ,', run: () => setAppearanceOpen(true) },
     );
-    if (desktop?.isDesktop && desktop.listAgentFunctions) commands.push({ id: 'functions', group: 'Preferências', label: 'Funções de agente', keywords: 'cli modelo orquestrador', run: () => setFunctionsOpen(true) });
+    if (desktop?.isDesktop && desktop.listAgentFunctions) commands.push({ id: 'functions', group: 'Preferências', label: 'Funções de agente', hint: pendingFunctions ? `${pendingFunctions} a configurar` : null, keywords: 'cli modelo orquestrador', run: () => setFunctionsOpen(true) });
     commands.push({ id: 'add-project', group: 'Projetos', label: 'Autorizar pasta de projeto', keywords: 'adicionar repositorio', run: addProject });
     (desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((name) => ({ name }))).forEach((project) => commands.push({ id: `project-${project.id || project.name}`, group: 'Projetos', label: `Ir para ${project.name}`, hint: project.path, keywords: 'projeto repositorio', run: () => selectProject(project) }));
     projectSessions.forEach((session) => {
@@ -1962,13 +1986,13 @@ export default function App() {
     <div className="app-shell">
       <a className="skip-link" href="#terminal-workspace">Ir para os terminais</a>
       <header className="titlebar">
-        <div className="brand" title="ATLAS 0.1 · local"><AtlasMark /><strong>ATLAS</strong></div>
+        <div className="brand" title="ATLAS 0.1 · local"><AtlasMark /></div>
         <div className="titlebar-context"><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{openSessions.length ? `${unhiddenSessions.length} de ${openSessions.length} sessões visíveis` : 'Nenhuma sessão aberta'}</small></div>
         <div className="title-actions">
           <div className="workspace-path" title={workingDirectory}><span>{workingDirectory}</span></div>
           {!desktop?.isDesktop && <div className="demo-label">AGENTES ILUSTRATIVOS</div>}
-          <button className="text-control palette-trigger" title="Paleta de comandos (Ctrl Shift P ou F1)" onClick={() => setPaletteOpen(true)}>Comandos <kbd>Ctrl Shift P</kbd></button>
-          <button className="text-control" title="Aparência e configurações (Ctrl ,)" onClick={() => setAppearanceOpen(true)}>Aparência</button>
+          <button type="button" className="text-control palette-trigger" aria-label="Paleta de comandos" title="Paleta de comandos (Ctrl Shift P ou F1)" onClick={() => setPaletteOpen(true)}><Search size={14} aria-hidden="true" /><kbd aria-hidden="true">Ctrl Shift P</kbd></button>
+          <ChromeIconButton icon={Palette} label="Aparência e configurações" title="Aparência e configurações (Ctrl ,)" onClick={() => setAppearanceOpen(true)} />
         </div>
       </header>
 
@@ -1986,7 +2010,7 @@ export default function App() {
         >
           <div className="column-drag-bar" onPointerDown={(event) => beginColumnDrag(event, 'left')}>
             <strong>Navegação</strong><span>Arrastar coluna</span>
-            <button type="button" className="detach-control" onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleHiddenColumn('left')} aria-expanded="true" aria-controls="atlas-navigation">Ocultar</button>
+            <ChromeIconButton icon={PanelLeftClose} label="Ocultar navegação" className="detach-control" onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleHiddenColumn('left')} aria-expanded="true" aria-controls="atlas-navigation" />
           </div>
           <aside className="sidebar" id="atlas-navigation">
             <WorkspaceTree
@@ -2006,11 +2030,6 @@ export default function App() {
               onRefresh={refreshProjects}
               loading={projectsLoading || projects.some((project) => project.scanning)}
             />
-            <div className="sidebar-bottom">
-              <button className="workspace-settings" onClick={resetLayout}><span>Restaurar layout</span></button>
-              {desktop?.isDesktop && desktop.listAgentFunctions && <button className="workspace-settings" onClick={() => setFunctionsOpen(true)}><Workflow size={14} /><span>Funções de agente</span>{pendingConfiguration(agentFunctions.items) > 0 && <small className="functions-pending">{pendingConfiguration(agentFunctions.items)} a configurar</small>}<ChevronRight size={13} /></button>}
-              <button className="workspace-settings" onClick={() => setAppearanceOpen(true)}><Palette size={14} /><span>Aparência e configurações</span><ChevronRight size={13} /></button>
-            </div>
           </aside>
         </div>}
 
@@ -2024,17 +2043,24 @@ export default function App() {
           <div className="cockpit-toolbar">
             <div className="terminal-project-title" onPointerDown={(event) => beginColumnDrag(event, 'center')} title="Arrastar coluna de terminais"><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{workingDirectory}</small></div>
             <div className="toolbar-actions">
-              <button className="workspace-panel-toggle" data-panel="left" aria-label={`${hiddenColumns.left ? 'Mostrar' : 'Ocultar'} navegação`} aria-pressed={!hiddenColumns.left} aria-expanded={!hiddenColumns.left} aria-controls="atlas-navigation" onClick={() => toggleHiddenColumn('left')}>Navegação</button>
-              <button className="workspace-panel-toggle" data-panel="right" aria-label={`${hiddenColumns.right ? 'Mostrar' : 'Ocultar'} painéis`} aria-pressed={!hiddenColumns.right} aria-expanded={!hiddenColumns.right} aria-controls="atlas-panels" onClick={() => toggleHiddenColumn('right')}>Painéis</button>
-              <select className="terminal-layout-select" aria-label="Layout dos terminais" value={terminalLayout} onChange={(event) => changeTerminalLayout(event.target.value)}>
-                <option value="grid">Grade</option>
-                <option value="spotlight">Destaque</option>
-                <option value="sidebar">Principal + agentes</option>
-                <option value="tabs">Abas</option>
-              </select>
-              <button className="button secondary compact" aria-expanded={statusOpen} aria-controls="workspace-status" onClick={() => setStatusOpen((current) => !current)}>Estado</button>
-              <button className="button secondary compact" onClick={() => setModal('terminal')}><SquareTerminal size={14} />Terminal</button>
-              <button className="button primary compact" onClick={() => openSessionModal()}><Plus size={14} />Sessão</button>
+              <div className="workspace-view-controls" role="group" aria-label="Visualização dos terminais">
+                <ChromeIconButton icon={PanelLeft} label={`${hiddenColumns.left ? 'Mostrar' : 'Ocultar'} navegação`} className="workspace-panel-toggle" data-panel="left" aria-pressed={!hiddenColumns.left} aria-expanded={!hiddenColumns.left} aria-controls="atlas-navigation" onClick={() => toggleHiddenColumn('left')} />
+                <ChromeIconButton icon={PanelRight} label={`${hiddenColumns.right ? 'Mostrar' : 'Ocultar'} painéis`} className="workspace-panel-toggle" data-panel="right" aria-pressed={!hiddenColumns.right} aria-expanded={!hiddenColumns.right} aria-controls="atlas-panels" onClick={() => toggleHiddenColumn('right')} />
+                <div className="workspace-layout-control">
+                  <LayoutIcon size={14} aria-hidden="true" />
+                  <select className="terminal-layout-select" aria-label="Layout dos terminais" value={terminalLayout} onChange={(event) => changeTerminalLayout(event.target.value)}>
+                    <option value="grid">Grade</option>
+                    <option value="spotlight">Destaque</option>
+                    <option value="sidebar">Principal + agentes</option>
+                    <option value="tabs">Abas</option>
+                  </select>
+                </div>
+              </div>
+              <ChromeIconButton icon={Activity} label="Estado do projeto" className="workspace-status-trigger" aria-expanded={statusOpen} aria-controls="workspace-status" onClick={() => setStatusOpen((current) => !current)} />
+              <div className="workspace-create-controls" role="group" aria-label="Abrir terminais e sessões">
+                <ChromeIconButton icon={SquareTerminal} label="Abrir terminal PowerShell" className="button secondary workspace-create-button" onClick={() => setModal('terminal')} />
+                <ChromeIconButton icon={Plus} label="Nova sessão de agente" className="button primary workspace-create-button" onClick={() => openSessionModal()} />
+              </div>
             </div>
           </div>
           {statusOpen && <section id="workspace-status" className="workspace-status-popover" aria-label="Estado do projeto">
