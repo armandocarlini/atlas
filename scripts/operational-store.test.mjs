@@ -13,14 +13,14 @@ function fixture(t) {
   const filename = path.join(directory, 'estado.sqlite');
   const stores = [];
   t.after(() => {
-    stores.forEach((store) => store.close());
+    stores.forEach((store) => { if (!store.closed) store.close(); });
     const resolved = fs.realpathSync(directory);
     assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
     assert(path.basename(resolved).startsWith('atlas-store-'));
     fs.rmSync(resolved, { recursive: true, force: true });
   });
-  const open = (file = filename) => {
-    const store = createOperationalStore({ filename: file });
+  const open = (file = filename, options = {}) => {
+    const store = createOperationalStore({ filename: file, ...options });
     stores.push(store);
     return store;
   };
@@ -265,4 +265,101 @@ test('modo da principal: sem linha é só coordena; só valores conhecidos; troc
   const events = store.listEvents('p1').filter((item) => item.type === 'orchestrator.mode');
   assert.deepEqual(events.map((item) => item.payload.mode), ['auto', 'coordinate'], 'repetir o mesmo modo não gera evento');
   assert(events.every((item) => item.payload.actor === 'user'));
+});
+
+// Continuidade (docs/planos/PLANO_CONTINUIDADE_SESSOES.md).
+function clockedStore(open) {
+  let current = Date.parse('2026-11-10T19:00:00.000Z');
+  const store = open(undefined, { now: () => new Date(current).toISOString() });
+  return { store, advance: (ms) => { current += ms; } };
+}
+
+test('migration 15: conversa da sessão, tentativa de retomada e último fechamento', (t) => {
+  const { filename, open } = fixture(t);
+  open().close();
+  const raw = new DatabaseSync(filename);
+  try {
+    assert.equal(raw.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.length);
+    assert(raw.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'conversation_id'").get());
+    assert(raw.prepare("SELECT 1 FROM pragma_table_info('agent_runs') WHERE name = 'restored_at'").get());
+    assert(raw.prepare("SELECT 1 FROM sqlite_master WHERE name = 'app_state'").get());
+  } finally {
+    raw.close();
+  }
+});
+
+test('fechar o app marca e grava as runs ativas antes de os processos morrerem', (t) => {
+  const { open } = fixture(t);
+  const { store } = clockedStore(open);
+  const id = project(store);
+  const run = session(store, id);
+  assert.equal(store.markAppClosed(), 1);
+  const [closed] = store.listRuns(id);
+  assert.deepEqual([closed.state, closed.reason], ['lost', 'application_closed']);
+  // A saída forçada que chega depois não vira "falhou".
+  assert.throws(() => store.finishRun({ runId: run.id, expectedVersion: run.version, exitCode: 1 }), /encerrada/);
+  assert.deepEqual(store.listRestorableRuns().map((item) => [item.id, item.run_id]), [['session-a', run.id]]);
+});
+
+test('só o último fechamento volta, uma vez, e só a run mais recente da sessão', (t) => {
+  const { open } = fixture(t);
+  const { store, advance } = clockedStore(open);
+  const id = project(store);
+  session(store, id, 'antiga');
+  store.markAppClosed();
+  store.markRunsRestored(store.listRestorableRuns().map((item) => item.run_id));
+  advance(3 * 24 * 60 * 60 * 1000);
+  session(store, id, 'velha-sem-tentativa');
+  store.reconcileRuns('application_closed');
+  advance(30000);
+  const recent = session(store, id, 'recente');
+  store.markAppClosed();
+  assert.deepEqual(store.listRestorableRuns().map((item) => item.id), ['recente'], 'nem um fechamento de 30 segundos atrás volta');
+  assert.equal(store.markRunsRestored([recent.id]), 1);
+  assert.equal(store.markRunsRestored([recent.id]), 0, 'tentativa única');
+  assert.deepEqual(store.listRestorableRuns(), []);
+  // Fechar sem nada aberto não ressuscita o fechamento anterior.
+  advance(60 * 60 * 1000);
+  store.markAppClosed();
+  assert.deepEqual(store.listRestorableRuns(), []);
+});
+
+test('banco anterior sem lista gravada usa o fechamento mais recente encontrado', (t) => {
+  const { open } = fixture(t);
+  const { store, advance } = clockedStore(open);
+  const id = project(store);
+  session(store, id, 'outubro');
+  store.reconcileRuns('application_closed');
+  advance(10 * 24 * 60 * 60 * 1000);
+  session(store, id, 'hoje');
+  store.reconcileRuns('application_closed');
+  session(store, id, 'queda');
+  store.reconcileRuns();
+  assert.deepEqual(store.listRestorableRuns().map((item) => item.id), ['hoje'], 'queda (application_restarted) e outubro ficam de fora');
+});
+
+test('retomada: nova run na mesma sessão de agente só com o mesmo CLI e a mesma pasta', (t) => {
+  const { open } = fixture(t);
+  const { store } = clockedStore(open);
+  const id = project(store);
+  session(store, id);
+  store.markAppClosed();
+  const base = { id: 'session-a', projectId: id, name: 'Investigação', version: '2.5.2', origin: 'user', createdAt: '2026-10-26T12:00:00.000Z' };
+  assert.throws(() => store.startSession({ ...base, adapterId: 'opencode', cli: 'OpenCode', cwd: `/fixtures/${id}` }), /Identidade de sessão já existente/);
+  assert.throws(() => store.startSession({ ...base, adapterId: 'kimi-code', cli: 'Kimi Code', cwd: '/outra/pasta' }), /Identidade de sessão já existente/);
+  assert.throws(() => store.startSession({ ...base, adapterId: 'kimi-code', cli: 'Kimi Code', cwd: `/fixtures/${id}`, role: 'orchestrator' }), /Identidade de sessão já existente/);
+  const resumed = store.startSession({ ...base, adapterId: 'kimi-code', cli: 'Kimi Code', cwd: `/fixtures/${id}` });
+  assert.equal(resumed.attempt, 2);
+  assert.throws(() => store.startSession({ ...base, adapterId: 'kimi-code', cli: 'Kimi Code', cwd: `/fixtures/${id}` }), /Identidade de sessão já existente/, 'nunca duas runs ativas');
+});
+
+test('conversa da sessão: só UUID, e sobrevive ao reinício', (t) => {
+  const { filename, open } = fixture(t);
+  const store = open();
+  const id = project(store);
+  session(store, id);
+  assert.throws(() => store.setConversation({ sessionId: 'session-a', conversationId: '--resume; rm' }), /Conversa inválida/);
+  assert.equal(store.setConversation({ sessionId: 'session-a', conversationId: '0f8fad5b-d9cb-469f-a165-70867728950e' }), true);
+  store.close();
+  assert.equal(open().getSession('session-a').conversation_id, '0f8fad5b-d9cb-469f-a165-70867728950e');
 });

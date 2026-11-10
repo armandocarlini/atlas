@@ -462,11 +462,17 @@ test('Claude Code sem lista aceita modelo digitado, só com formato válido', as
   await assert.rejects(create({ adapterId: 'claude-code', model: 'opus & calc' }), /Modelo inválido/);
   const typed = await create({ adapterId: 'claude-code', model: 'claude-opus-5-5' });
   assert.equal(typed.model, 'claude-opus-5-5');
-  assert.deepEqual(spawns[0].args, ['--model', 'claude-opus-5-5']);
+  // Toda conversa nova do Claude Code nasce com ID fixado pelo ATLAS, para voltar ao reabrir.
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  assert.deepEqual(spawns[0].args.slice(0, 3), ['--model', 'claude-opus-5-5', '--session-id']);
+  assert.match(spawns[0].args[3], uuid);
+  assert.equal(spawns[0].args.length, 4);
   assert.equal(spawns[0].env.DISABLE_AUTOUPDATER, '1');
   const configured = await create({ adapterId: 'claude-code' });
   assert.equal(configured.model, null);
-  assert.deepEqual(spawns[1].args, []);
+  assert.equal(spawns[1].args[0], '--session-id');
+  assert.match(spawns[1].args[1], uuid);
+  assert.notEqual(spawns[1].args[1], spawns[0].args[3], 'cada sessão tem a própria conversa');
   // A regra vale só para CLIs sem lista: o Kimi continua recusando modelo avulso.
   await assert.rejects(create({ adapterId: 'kimi-code', model: 'claude-opus-5-5' }), /não foi identificado/);
 });
@@ -669,3 +675,4 @@ test('modo da principal: só coordena por padrão; a escolha do diálogo fica sa
   assert.equal(fixture.store.getOrchestratorMode('project-a'), 'auto');
   assert.deepEqual(await handlers.get('agent:orchestrator-mode')(mainEvent, { cwd: 'C:\\projeto' }), { projectId: 'project-a', mode: 'auto' });
 });
+

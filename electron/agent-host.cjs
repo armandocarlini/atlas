@@ -1,5 +1,5 @@
 const { randomUUID } = require('node:crypto');
-const { discoverAdapters, listModels, launchFor, MODEL_PATTERN, assertOrchestratorSupport } = require('./agent-adapters.cjs');
+const { discoverAdapters, listModels, launchFor, conversationSupport, MODEL_PATTERN, assertOrchestratorSupport } = require('./agent-adapters.cjs');
 const { waitForCwd } = require('./project-host.cjs');
 
 const MODELS_CACHE_MS = 60 * 1000;
@@ -7,11 +7,21 @@ const MODELS_CACHE_MS = 60 * 1000;
 // Ciclo de vida de sessões de agente neste marco: identidade gerada no
 // processo principal, cwd validado, PTY real e estado mínimo em memória.
 // O estado operacional é apenas running/exited; nada é inferido do ANSI.
-function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, listModelsImpl = listModels, store, onPersistenceError = console.error, orchestratorProfile, claudeProfile = null, geminiProfile = null, mcpHost = null, bridgeEntry = null, onRunEnded = () => {} }) {
+// Uma retomada que morre com erro logo ao abrir (conversa que nunca chegou a ser gravada,
+// nenhuma conversa anterior na pasta) volta uma vez com conversa nova.
+const RESUME_GRACE_MS = 4000;
+const graceDelay = () => new Promise((resolve) => setTimeout(resolve, RESUME_GRACE_MS));
+
+function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, listModelsImpl = listModels, store, onPersistenceError = console.error, orchestratorProfile, claudeProfile = null, geminiProfile = null, mcpHost = null, bridgeEntry = null, onRunEnded = () => {}, resumeGrace = graceDelay }) {
   const agents = new Map();
   const pendingOrchestrators = new Map();
   const modelCache = new Map();
   let discoveryPromise = null;
+  // Fechamento do app: as saídas forçadas dos processos não viram "falhou"; o banco já
+  // marcou as runs como fechadas pelo app (operational-store markAppClosed).
+  let shuttingDown = false;
+  // Retomada na abertura (docs/planos/PLANO_CONTINUIDADE_SESSOES.md).
+  let restoreState = { pending: false, result: null };
 
   function describe(agent) {
     return {
@@ -121,7 +131,16 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     return { adapterId: adapter.id, models: await modelsFor(adapter, request?.refresh === true) };
   });
 
-  async function createAgent(request = {}, { role = 'agent', existing = null, origin = 'user', launch: resolved = null } = {}) {
+  // Conversa do CLI desta run. resume: null (sessão nova ou nova execução), 'resume'
+  // (mesma conversa pelo ID salvo), 'continue' (a mais recente da pasta) ou 'fresh'.
+  function conversationFor(adapter, role, existing, resume) {
+    const support = conversationSupport(adapter.id, role);
+    if (resume === 'resume' && support === 'exact' && existing?.conversation_id) return { mode: 'resume', id: existing.conversation_id };
+    if ((resume === 'resume' || resume === 'continue') && support !== 'none') return { mode: 'continue' };
+    return support === 'exact' ? { mode: 'new', id: randomUUID() } : null;
+  }
+
+  async function createAgent(request = {}, { role = 'agent', existing = null, origin = 'user', launch: resolved = null, resume = null } = {}) {
     await waitForCwd(projectHost, request.cwd);
 
     const { adapter, model } = resolved || await resolveLaunch(request.adapterId, request.model);
@@ -148,9 +167,10 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     // CLIs que recebem a ponte por run (OpenCode) levam a entrada com o token desta run.
     const bridge = atlasToken && bridgeEntry ? { command: bridgeEntry.command, args: bridgeEntry.args, env: { ...bridgeEntry.env, ...env } } : null;
 
+    const conversation = conversationFor(adapter, role, existing, resume);
     let record;
     try {
-      const launch = launchFor({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge, orchestratorMode: orchestratorMode || 'coordinate' });
+      const launch = launchFor({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge, orchestratorMode: orchestratorMode || 'coordinate', conversation });
       record = transport.spawn({
         file: adapter.executable,
         args: launch.args,
@@ -188,6 +208,8 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     let run;
     try {
       run = store?.startSession(agent);
+      // Conversa nova com ID fixado pelo ATLAS: é por ele que a sessão volta ao reabrir.
+      if (conversation?.mode === 'new') store?.setConversation({ sessionId: agent.id, conversationId: conversation.id });
       agent.runId = run?.id;
       agent.runAttempt = run?.attempt;
       if (atlasToken && run) mcpHost.bindRun(atlasToken, run.id);
@@ -201,7 +223,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       if (atlasToken) mcpHost.revoke(atlasToken);
       agent.state = 'exited';
       agent.exit = { exitCode, signal };
-      if (store && !store.closed) {
+      if (store && !store.closed && !shuttingDown) {
         try {
           store.finishRun({ runId: run.id, expectedVersion: run.version, exitCode, signal });
           // O fim da run tira o claim das tarefas dela; a interface precisa recarregar.
@@ -298,8 +320,93 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     return operation;
   });
 
+  async function restoreOrchestrator(item, resume) {
+    const project = projectHost.getProjectForCwd(item.cwd);
+    if (!project || !projectHost.isAllowedCwd(project.path)) throw new Error('Projeto não encontrado para a pasta autorizada.');
+    if (pendingOrchestrators.has(project.id)) return pendingOrchestrators.get(project.id);
+    const current = [...agents.values()].find((agent) => agent.projectId === project.id && agent.role === 'orchestrator' && agent.state === 'running');
+    if (current) return describe(current);
+    const model = item.current_model || item.model || null;
+    const operation = createAgent({
+      adapterId: item.adapter_id, model, name: 'ORQUESTRADOR', cwd: project.path, orchestratorMode: store.getOrchestratorMode(project.id),
+      ...functionAudit('orquestrador', item.adapter_id, model, { orchestrator: true }),
+    }, { role: 'orchestrator', existing: store.getOrchestrator(project.id), resume }).finally(() => pendingOrchestrators.delete(project.id));
+    pendingOrchestrators.set(project.id, operation);
+    return operation;
+  }
+
+  // Reabre, sem pedir confirmação (decisão do mantenedor, AGENTS.md), as sessões que
+  // estavam em execução no último fechamento: mesmo CLI, modelo, função, nome e pasta.
+  // Cada run tem uma única tentativa, gravada antes de iniciar.
+  async function restoreSessions() {
+    const result = { restored: [], fresh: [], failed: [] };
+    if (!store) return result;
+    restoreState = { pending: true, result: null };
+    try {
+      const candidates = store.listRestorableRuns();
+      store.markRunsRestored(candidates.map((item) => item.run_id));
+      // Retomada pela pasta: só a sessão mais recente de cada CLI e pasta pega a conversa.
+      const folders = new Set();
+      const launches = [];
+      for (const item of candidates) {
+        const role = item.role === 'orchestrator' ? 'orchestrator' : 'agent';
+        const support = conversationSupport(item.adapter_id, role);
+        let resume = 'fresh';
+        if (support === 'exact' && item.conversation_id) resume = 'resume';
+        else if (support !== 'none') {
+          const folder = `${item.adapter_id}|${String(item.cwd).toLowerCase()}`;
+          resume = folders.has(folder) ? 'fresh' : 'continue';
+          folders.add(folder);
+        }
+        const entry = { id: item.id, name: role === 'orchestrator' ? 'Principal' : item.name, cli: item.cli };
+        try {
+          await waitForCwd(projectHost, item.cwd);
+          if (!projectHost.isAllowedCwd(item.cwd)) throw new Error('A pasta da sessão não está mais autorizada.');
+          // Função apagada desde então: a sessão volta sem o rótulo, em vez de não voltar.
+          const functionSlug = item.function_slug && store.getFunctionBySlug?.(item.function_slug) ? item.function_slug : null;
+          const relaunch = (mode) => (role === 'orchestrator' ? restoreOrchestrator(item, mode) : createAgent({
+            adapterId: item.adapter_id, model: item.current_model || item.model || null, name: item.name, cwd: item.cwd,
+            functionSlug, functionOverridden: functionSlug && item.function_overridden !== null ? Boolean(item.function_overridden) : null,
+          }, { role: 'agent', existing: { ...item, ...store.getSession(item.id) }, origin: item.origin, resume: mode }));
+          const agent = await relaunch(resume);
+          result[resume === 'fresh' ? 'fresh' : 'restored'].push(entry);
+          if (resume !== 'fresh') launches.push({ entry, agentId: agent.id, runId: agent.runId, relaunch });
+        } catch (error) {
+          result.failed.push({ ...entry, error: error.message });
+        }
+      }
+      if (launches.length) {
+        await resumeGrace();
+        for (const launch of launches) {
+          const agent = agents.get(launch.agentId);
+          if (!agent || agent.runId !== launch.runId || agent.state !== 'exited' || agent.exit?.exitCode === 0 || shuttingDown) continue;
+          result.restored = result.restored.filter((item) => item !== launch.entry);
+          try {
+            await launch.relaunch('fresh');
+            result.fresh.push(launch.entry);
+          } catch (error) {
+            result.failed.push({ ...launch.entry, error: error.message });
+          }
+        }
+      }
+    } catch (error) {
+      result.failed.push({ id: null, name: 'Sessões', cli: null, error: error.message });
+    }
+    restoreState = { pending: false, result };
+    return result;
+  }
+
+  ipcMain.handle('agent:restore-status', (event) => {
+    if (!isMainSender(event)) return { pending: false, result: null };
+    return restoreState;
+  });
+
   return {
     listAgents,
+    restoreSessions,
+    // Fechamento: as saídas que chegam depois não são gravadas como resultado da run.
+    prepareShutdown: () => { shuttingDown = true; },
+    resumeRecording: () => { shuttingDown = false; },
     requireAdapter,
     resolveLaunch,
     getAgent: (id) => agents.get(id),

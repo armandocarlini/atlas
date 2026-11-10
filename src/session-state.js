@@ -25,6 +25,23 @@ export function agentSession(agent) {
   };
 }
 
+const joinNames = (items) => {
+  const names = items.map((item) => item.name);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} e ${names.at(-1)}` : names[0] || '';
+};
+
+// Aviso da retomada ao reabrir o ATLAS: o que voltou de onde estava, o que voltou com
+// conversa nova (o CLI não retoma aquela conversa) e o que não voltou, com o motivo.
+export function restoreSummary(result) {
+  if (!result) return '';
+  const { restored = [], fresh = [], failed = [] } = result;
+  const parts = [];
+  if (restored.length) parts.push(restored.length === 1 ? `${restored[0].name} voltou de onde estava.` : `${restored.length} sessões voltaram de onde estavam.`);
+  if (fresh.length) parts.push(`${joinNames(fresh)} ${fresh.length === 1 ? 'voltou' : 'voltaram'} com conversa nova: o CLI não retoma aquela conversa.`);
+  if (failed.length) parts.push(`Não foi possível retomar ${failed.map((item) => `${item.name} (${item.error})`).join('; ')}.`);
+  return parts.join(' ');
+}
+
 export function mergeAgentSessions(current, agents) {
   const updates = new Map(agents.map((agent) => [agent.id, agentSession(agent)]));
   const merged = current.map((session) => {

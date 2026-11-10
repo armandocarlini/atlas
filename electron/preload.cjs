@@ -48,6 +48,9 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   cancelRegressionRun: (request) => ipcRenderer.invoke('regression-run:cancel', request),
   openRegressionLog: (request) => ipcRenderer.invoke('regression-run:open-log', request),
   listAgents: () => ipcRenderer.invoke('agent:list'),
+  // Retomada ao reabrir: estado (pendente ou resultado) e aviso de quando termina.
+  getRestoreStatus: () => ipcRenderer.invoke('agent:restore-status'),
+  onAgentsRestored: (callback) => subscribe('agent:restored', callback),
   openOrchestrator: (request) => ipcRenderer.invoke('agent:open-orchestrator', request),
   getOrchestratorMode: (request) => ipcRenderer.invoke('agent:orchestrator-mode', request),
   listTasks: (request) => ipcRenderer.invoke('task:list', request),

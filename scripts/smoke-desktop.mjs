@@ -76,6 +76,10 @@ const { idFor } = createRequire(import.meta.url)('../electron/git-discovery.cjs'
 const seed = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
 const projectId = idFor(fs.realpathSync(fixture));
 seed.registerProject({ id: projectId, name: path.basename(fixture), path: fs.realpathSync(fixture) });
+// Continuidade: sessão aberta quando o app foi fechado. Ela volta sozinha na abertura;
+// na fixture o CLI não existe, e a falha tem que ser honesta e não repetir.
+seed.startSession({ id: 'restore-fixture', projectId, name: 'retomar-fixture', adapterId: 'claude-code', cli: 'Claude Code', version: '1.0.0', cwd: fs.realpathSync(fixture), origin: 'user', createdAt: new Date(Date.now() - 70000).toISOString() });
+seed.markAppClosed();
 seed.startSession({ id: 'history-fixture', projectId, name: 'histórico-fixture', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(fixture), origin: 'user', createdAt: new Date(Date.now() - 60000).toISOString() });
 const extraProjectId = idFor(fs.realpathSync(extraProject));
 seed.registerProject({ id: extraProjectId, name: path.basename(extraProject), path: fs.realpathSync(extraProject) });
@@ -265,6 +269,14 @@ try {
   // Abertura: histórico sem processo não reabre como terminal; o projeto sem sessões vivas
   // mostra a escolha de função, e o histórico continua na árvore.
   await until(() => main.evaluate(`Boolean(document.querySelector('.start-launcher')) && Boolean(document.getElementById('tree-session-history-fixture'))`), 'tela inicial com escolha de função');
+  // A sessão aberta no último fechamento foi retomada sozinha; sem o CLI na fixture, falha honesta.
+  const restoreStatus = await until(async () => { const status = await main.evaluate(`window.atlasDesktop.getRestoreStatus()`); return status?.pending === false && status.result ? status : null; }, 'retomada da sessão aberta no último fechamento');
+  assert.deepEqual(restoreStatus.result.restored, []);
+  assert.deepEqual(restoreStatus.result.failed.map((item) => item.name), ['retomar-fixture']);
+  assert.match(restoreStatus.result.failed[0].error, /Claude Code/);
+  const restoredRun = await native('invoke', { channel: 'agent:list' });
+  assert.equal(restoredRun.find((item) => item.id === 'restore-fixture')?.archived, true, 'falhou: continua no histórico, sem PTY');
+  console.log('PASS sessão aberta no último fechamento é retomada sozinha, com falha honesta sem o CLI');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-card').length`), 0, 'histórico não abre como card na abertura');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 0, 'nenhum "resultado incerto" na abertura');
   assert.equal(await main.evaluate(`document.querySelector('.titlebar-context small').textContent`), 'Nenhuma sessão aberta');
@@ -318,7 +330,7 @@ try {
   console.log('PASS histórico restaurado como lost, sem PTY, composer ou métricas fictícias');
   await native('focus');
   await click(main, '[aria-label="Autorizar pasta de projeto"]');
-  await until(() => main.evaluate(`window.atlasDesktop.listAgents().then(items => items.length === 3)`), 'history loaded after project authorization without reload');
+  await until(() => main.evaluate(`window.atlasDesktop.listAgents().then(items => items.length === 4)`), 'history loaded after project authorization without reload');
   console.log('PASS autorizar projeto restaura histórico adicional sem recarregar a UI');
   await until(() => main.evaluate(`document.querySelectorAll('.tree-worktree').length >= 2`), 'Git discovery UI');
   await until(() => main.evaluate(`!document.querySelector('[aria-label="Atualizar estado Git"]').disabled`), 'project loading finished');
@@ -1179,6 +1191,10 @@ try {
   assert(paths.includes(fs.realpathSync(extraProject)), 'Authorized project must persist in SQLite');
   assert.equal(persisted.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
   assert.equal(persisted.prepare('SELECT state FROM agent_runs WHERE session_id = ?').get('history-fixture').state, 'lost');
+  // Tentativa única: a retomada que falhou ficou registrada e não criou outra run.
+  const restoreRuns = persisted.prepare('SELECT restored_at FROM agent_runs WHERE session_id = ?').all('restore-fixture');
+  assert.equal(restoreRuns.length, 1);
+  assert(restoreRuns[0].restored_at, 'tentativa de retomada gravada');
   const persistedTask = persisted.prepare('SELECT title, acceptance, state FROM tasks WHERE id = ?').get(createdTaskId);
   assert.equal(persistedTask.title, 'Tarefa real · smoke');
   assert.equal(persistedTask.acceptance, 'Preservar após recarregar e reabrir o banco');

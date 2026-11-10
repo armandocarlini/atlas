@@ -27,6 +27,10 @@ let boundsSaveTimer = null;
 let operationalStore = null;
 let mcpHost = null;
 let regressionRunner = null;
+let agentHost = null;
+// Fechamento: grava as runs como fechadas pelo app antes de matar os processos, para
+// reabrir de onde estavam (docs/planos/PLANO_CONTINUIDADE_SESSOES.md).
+let sessionsClosed = false;
 const terminalWindows = new Map();
 
 const stateFile = () => path.join(app.getPath('userData'), 'atlas-window-state.json');
@@ -96,7 +100,24 @@ function getPopupEntry(webContents) {
   return [...terminalWindows.values()].find((entry) => !entry.window.isDestroyed() && entry.window.webContents === webContents);
 }
 
+function closeSessionsForQuit() {
+  if (sessionsClosed) return;
+  sessionsClosed = true;
+  agentHost?.prepareShutdown();
+  try {
+    if (operationalStore && !operationalStore.closed) operationalStore.markAppClosed();
+  } catch (error) {
+    console.error('Não foi possível registrar o fechamento das sessões do ATLAS:', error);
+  }
+  ptyTransport?.killAll();
+}
+
 function createMainWindow() {
+  // Janela reaberta sem sair do app (macOS): as runs novas voltam a ter a saída gravada.
+  if (sessionsClosed) {
+    sessionsClosed = false;
+    agentHost?.resumeRecording();
+  }
   // Uma barra só: no Windows e no Linux os controles da janela ficam sobre a barra do ATLAS.
   const chrome = windowChrome('main');
   mainWindow = createSecureWindow({
@@ -113,7 +134,7 @@ function createMainWindow() {
     for (const entry of terminalWindows.values()) {
       if (!entry.window.isDestroyed()) entry.window.close();
     }
-    ptyTransport?.killAll();
+    closeSessionsForQuit();
   });
 }
 
@@ -299,7 +320,7 @@ app.whenReady().then(async () => {
   }
   // A mesma entrada da ponte que vai para o mcp.json do Kimi; o OpenCode a recebe por run.
   const integration = createIntegrationHost({ ipcMain, isMainSender: terminalHost.isMainSender });
-  const agentHost = createAgentHost({
+  agentHost = createAgentHost({
     ipcMain,
     projectHost,
     transport: ptyTransport,
@@ -330,6 +351,12 @@ app.whenReady().then(async () => {
   regressionRunner = createRegressionRunner({ store: operationalStore, logsDir: regressionLogs, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
   createRegressionSuiteHost({ ipcMain, projectHost, store: operationalStore, runner: regressionRunner, logsDir: regressionLogs, shell, isMainSender: terminalHost.isMainSender, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
   createMainWindow();
+  // Reabre sozinho, sem pedir confirmação (decisão do mantenedor, AGENTS.md), as sessões
+  // que estavam em execução no último fechamento; a interface recebe o resultado.
+  const restoreSessions = () => agentHost.restoreSessions()
+    .then((result) => sendToMain('agent:restored', result))
+    .catch((error) => console.error('Não foi possível retomar as sessões do ATLAS:', error));
+  restoreSessions();
   openPathHost = createOpenPathHost({
     ipcMain,
     projectHost,
@@ -351,7 +378,10 @@ app.whenReady().then(async () => {
   });
   for (const argv of [process.argv, ...earlyOpenRequests.splice(0)]) openPathHost.handleArgv(argv).catch((error) => console.error(error));
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow();
+      restoreSessions();
+    }
   });
 }).catch((error) => {
   console.error('Não foi possível abrir o estado operacional do ATLAS:', error);
@@ -360,7 +390,7 @@ app.whenReady().then(async () => {
 }
 
 app.on('before-quit', () => {
-  ptyTransport?.killAll();
+  closeSessionsForQuit();
   regressionRunner?.shutdown();
   mcpHost?.close();
   closeOperationalStore(operationalStore, (error) => console.error('Não foi possível registrar a interrupção das runs do ATLAS:', error));
