@@ -48,16 +48,22 @@ function createPtyTransport({ getMainWindow }) {
       send(record, 'terminal:data', { terminalId: id, sequence: record.sequence, data });
     });
     process.onExit(({ exitCode, signal }) => {
-      record.exit = { exitCode, signal };
+      record.exit = { exitCode, signal, ...(record.stoppedByUser && { stoppedByUser: true }) };
       send(record, 'terminal:exit', { terminalId: id, ...record.exit });
     });
     return record;
   }
 
   function close(record) {
-    if (record.exit || record.closing) return;
+    if (record.exit || record.closing) return false;
     record.closing = true;
-    try { record.process.kill(); } catch { record.closing = false; }
+    try {
+      record.process.kill();
+      return true;
+    } catch {
+      record.closing = false;
+      return false;
+    }
   }
 
   return {
@@ -65,6 +71,9 @@ function createPtyTransport({ getMainWindow }) {
     close,
     get: (id) => records.get(id),
     has: (id) => records.has(id),
+    forget(id) {
+      if (records.get(id)?.exit) records.delete(id);
+    },
     setPopupResolver(id, resolver) {
       const record = records.get(id);
       if (record) record.getPopupWebContents = resolver;
@@ -78,7 +87,7 @@ function createPtyTransport({ getMainWindow }) {
 
 // Registra os canais de transporte (attach/write/resize/close) uma única vez.
 // Valem para qualquer PTY do registro: shells e sessões de agente.
-function registerTransportChannels({ ipcMain, transport, isMainSender, getPopupPtyId }) {
+function registerTransportChannels({ ipcMain, transport, isMainSender, getPopupPtyId, onStop }) {
   function canAccess(event, terminalId) {
     return isMainSender(event) || getPopupPtyId(event.sender) === terminalId;
   }
@@ -114,6 +123,19 @@ function registerTransportChannels({ ipcMain, transport, isMainSender, getPopupP
     const record = transport.get(terminalId);
     if (!record || !canAccess(event, terminalId)) return;
     transport.close(record);
+  });
+
+  ipcMain.handle('terminal:stop', (event, terminalId) => {
+    const record = transport.get(terminalId);
+    if (!record || !canAccess(event, terminalId)) throw new Error('Terminal não encontrado ou não autorizado.');
+    if (record.exit || record.closing) return false;
+    record.stoppedByUser = true;
+    if (!transport.close(record)) {
+      record.stoppedByUser = false;
+      throw new Error('Não foi possível encerrar o processo.');
+    }
+    onStop(record);
+    return true;
   });
 }
 

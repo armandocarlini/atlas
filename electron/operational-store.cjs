@@ -281,6 +281,9 @@ const MIGRATIONS = [{
     ALTER TABLE agent_runs ADD COLUMN restored_at TEXT;
     CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
   `,
+}, {
+  version: 16,
+  sql: 'ALTER TABLE sessions ADD COLUMN removed_at TEXT;',
 }];
 
 const ORCHESTRATOR_MODES = ['coordinate', 'auto'];
@@ -419,11 +422,12 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   const regression = createRegressionSuites({ db, now, event, transaction, recordEvidence });
 
   function reconcileActive(reason) {
-    const active = db.prepare(`SELECT r.id, r.session_id, s.project_id FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE r.state = 'running'`).all();
+    const active = db.prepare(`SELECT r.id, r.session_id, r.reason, s.project_id FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE r.state = 'running'`).all();
     const at = now();
     for (const run of active) {
-      db.prepare(`UPDATE agent_runs SET state = 'lost', version = version + 1, ended_at = ?, reason = ? WHERE id = ?`).run(at, reason, run.id);
-      event({ projectId: run.project_id, sessionId: run.session_id, runId: run.id, type: 'run.lost', payload: { reason }, at });
+      const runReason = run.reason ?? reason;
+      db.prepare(`UPDATE agent_runs SET state = 'lost', version = version + 1, ended_at = ?, reason = ? WHERE id = ?`).run(at, runReason, run.id);
+      event({ projectId: run.project_id, sessionId: run.session_id, runId: run.id, type: 'run.lost', payload: { reason: runReason }, at });
       loseClaims(run.id, at);
     }
     // Aprovação persistida não autoriza repetir um spawn após interrupção.
@@ -524,7 +528,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
           if (previous.payload_hash !== hash) throw new Error('Chave de idempotência já usada com outro conteúdo.');
           return JSON.parse(previous.result);
         }
-        const findSession = db.prepare('SELECT id, name FROM sessions WHERE id = ? AND project_id = ?');
+        const findSession = db.prepare('SELECT id, name FROM sessions WHERE id = ? AND project_id = ? AND removed_at IS NULL');
         const from = findSession.get(request.fromSessionId, request.projectId);
         const to = findSession.get(request.toSessionId, request.projectId);
         if (!from || !to) throw new Error('Remetente e destinatário devem ser sessões deste projeto.');
@@ -571,7 +575,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
           if (previous.payload_hash !== hash) throw new Error('Chave de idempotência já usada com outro conteúdo.');
           return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(JSON.parse(previous.result).id));
         }
-        const requester = db.prepare('SELECT id, role FROM sessions WHERE id = ? AND project_id = ?').get(request.requestedBy, request.projectId);
+        const requester = db.prepare('SELECT id, role FROM sessions WHERE id = ? AND project_id = ? AND removed_at IS NULL').get(request.requestedBy, request.projectId);
         if (!requester) throw new Error('Sessão solicitante não pertence a este projeto.');
         if (requester.role !== 'orchestrator') throw new Error('Somente a sessão principal pode pedir novos agentes.');
         // A principal só pede funções existentes e nunca a reservada da principal.
@@ -702,9 +706,9 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
           if (existing.role !== role || existing.project_id !== projectId || existing.cwd !== cwd) throw new Error('Identidade de sessão já existente.');
           if (db.prepare("SELECT 1 FROM agent_runs WHERE session_id = ? AND state = 'running'").get(id)) throw new Error('Identidade de sessão já existente.');
           // Agente: nova run só ao retomar a mesma sessão, com o mesmo CLI.
-          if (role !== 'orchestrator' && existing.adapter_id !== adapterId) throw new Error('Identidade de sessão já existente.');
+          if (role !== 'orchestrator' && (existing.removed_at || existing.adapter_id !== adapterId)) throw new Error('Identidade de sessão já existente.');
           // A identidade da principal continua; o CLI da nova run é o que o usuário escolheu.
-          db.prepare('UPDATE sessions SET adapter_id = ?, cli = ?, cli_version = ? WHERE id = ?').run(adapterId, cli, version, id);
+          db.prepare('UPDATE sessions SET adapter_id = ?, cli = ?, cli_version = ?, removed_at = NULL WHERE id = ?').run(adapterId, cli, version, id);
         } else {
           db.prepare('INSERT INTO sessions (id, project_id, name, adapter_id, cli, cli_version, cwd, origin, created_at, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, role);
         }
@@ -715,6 +719,9 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       });
     },
     finishRun,
+    markRunStopRequested(runId) {
+      db.prepare("UPDATE agent_runs SET reason = 'user_closed' WHERE id = ? AND state = 'running'").run(runId);
+    },
     reconcileRuns(reason = 'application_restarted') {
       return transaction(db, () => reconcileActive(reason));
     },
@@ -746,7 +753,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       return db.prepare(`SELECT r.id AS run_id, r.started_at AS run_started_at, r.model, r.current_model, r.function_slug, r.function_overridden,
           s.id, s.project_id, s.name, s.adapter_id, s.cli, s.cwd, s.origin, s.role, s.created_at, s.conversation_id
         FROM agent_runs r JOIN sessions s ON s.id = r.session_id
-        WHERE r.state = 'lost' AND r.reason = 'application_closed' AND r.restored_at IS NULL
+        WHERE r.state = 'lost' AND r.reason = 'application_closed' AND r.restored_at IS NULL AND s.removed_at IS NULL
           AND r.id IN (SELECT value FROM json_each(?))
           AND r.attempt = (SELECT max(attempt) FROM agent_runs latest WHERE latest.session_id = r.session_id)
         ORDER BY s.role = 'orchestrator' DESC, r.started_at DESC, s.id`).all(ids);
@@ -765,6 +772,17 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       return db.prepare('UPDATE sessions SET conversation_id = ? WHERE id = ?').run(conversationId, sessionId).changes === 1;
     },
     getSession: (id) => db.prepare('SELECT * FROM sessions WHERE id = ?').get(id),
+    removeSession(sessionId) {
+      return transaction(db, () => {
+        const session = db.prepare('SELECT project_id, removed_at FROM sessions WHERE id = ?').get(sessionId);
+        if (!session || session.removed_at) return false;
+        if (db.prepare("SELECT 1 FROM agent_runs WHERE session_id = ? AND state = 'running'").get(sessionId)) throw new Error('Encerre a sessão antes de excluí-la.');
+        const at = now();
+        db.prepare('UPDATE sessions SET removed_at = ? WHERE id = ?').run(at, sessionId);
+        event({ projectId: session.project_id, sessionId, type: 'session.removed', at });
+        return true;
+      });
+    },
     // O usuário trocou o modelo no terminal do CLI e informa o novo. Sem nova run:
     // a mesma sessão, o mesmo claim; a troca fica auditada e marca a função como alterada.
     declareRunModel({ runId, model }) {
@@ -779,7 +797,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       });
     },
     listProjects: () => db.prepare('SELECT * FROM projects ORDER BY created_at, id').all(),
-    listSessions: (projectId) => db.prepare('SELECT * FROM sessions WHERE project_id = ? ORDER BY created_at, id').all(projectId),
+    listSessions: (projectId) => db.prepare('SELECT * FROM sessions WHERE project_id = ? AND removed_at IS NULL ORDER BY created_at, id').all(projectId),
     listRuns: (projectId) => db.prepare(`SELECT r.* FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE s.project_id = ? ORDER BY s.created_at, s.id, r.attempt`).all(projectId),
     listEvents: (projectId) => db.prepare('SELECT * FROM audit_events WHERE project_id = ? ORDER BY sequence').all(projectId).map((row) => ({ ...row, payload: JSON.parse(row.payload) })),
     async backupTo(destination) {

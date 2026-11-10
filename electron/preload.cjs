@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   writeTerminal: (terminalId, data) => ipcRenderer.send('terminal:write', { terminalId, data }),
   resizeTerminal: (terminalId, cols, rows) => ipcRenderer.send('terminal:resize', { terminalId, cols, rows }),
   closePty: (terminalId) => ipcRenderer.send('terminal:close', { terminalId }),
+  stopPty: (terminalId) => ipcRenderer.invoke('terminal:stop', terminalId),
+  removeTerminal: (sessionId) => ipcRenderer.invoke('terminal:remove', sessionId),
+  onPtyExit: (callback) => subscribe('terminal:exit', callback),
   onTerminalData: (terminalId, callback) => subscribe('terminal:data', callback, (payload) => payload?.terminalId === terminalId),
   onTerminalExit: (terminalId, callback) => subscribe('terminal:exit', callback, (payload) => payload?.terminalId === terminalId),
   openTerminalWindow: (sessionId, ptyId) => ipcRenderer.invoke('terminal-window:open', { sessionId, ptyId }),
@@ -49,6 +52,7 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   cancelRegressionRun: (request) => ipcRenderer.invoke('regression-run:cancel', request),
   openRegressionLog: (request) => ipcRenderer.invoke('regression-run:open-log', request),
   listAgents: () => ipcRenderer.invoke('agent:list'),
+  removeAgent: (sessionId) => ipcRenderer.invoke('agent:remove', sessionId),
   // Retomada ao reabrir: estado (pendente ou resultado) e aviso de quando termina.
   getRestoreStatus: () => ipcRenderer.invoke('agent:restore-status'),
   onAgentsRestored: (callback) => subscribe('agent:restored', callback),

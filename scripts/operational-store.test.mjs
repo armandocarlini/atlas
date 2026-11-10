@@ -363,3 +363,43 @@ test('conversa da sessão: só UUID, e sobrevive ao reinício', (t) => {
   store.close();
   assert.equal(open().getSession('session-a').conversation_id, '0f8fad5b-d9cb-469f-a165-70867728950e');
 });
+
+test('excluir do ATLAS retira a sessão da lista e preserva os vínculos e o histórico no banco', (t) => {
+  const { open } = fixture(t);
+  const store = open();
+  const projectId = project(store);
+  const run = session(store, projectId);
+  const principal = { id: 'principal', projectId, name: 'Principal', adapterId: 'kimi-code', cli: 'Kimi Code', version: '1.0.0', cwd: `/fixtures/${projectId}`, origin: 'user', role: 'orchestrator', createdAt: '2026-10-26T12:00:00Z' };
+  store.startSession(principal);
+  const task = store.createTask({ projectId, title: 'Revisar', acceptance: 'OK', idempotencyKey: 'task-removal-1' });
+  store.offerHandoff({ projectId, fromSessionId: principal.id, toSessionId: 'session-a', taskId: task.id, objective: 'Revisar a tarefa', idempotencyKey: 'handoff-removal-1' });
+  store.sendMessage({ projectId, fromSessionId: 'session-a', toSessionId: principal.id, kind: 'note', subject: 'Registro', body: 'Preservar', idempotencyKey: 'message-removal-1' });
+  assert.throws(() => store.removeSession('session-a'), /encerre/i);
+  store.markAppClosed();
+  assert.equal(store.removeSession('session-a'), true);
+  assert.equal(store.removeSession('session-a'), false);
+  assert.equal(store.removeSession(principal.id), true);
+  store.close();
+
+  const reopened = open();
+  assert.deepEqual(reopened.listSessions(projectId), []);
+  assert.deepEqual(reopened.listRestorableRuns(), []);
+  assert.equal(reopened.listRuns(projectId).find((item) => item.id === run.id).session_id, 'session-a');
+  assert.equal(reopened.listMessages(projectId)[0].fromSessionId, 'session-a');
+  assert.equal(reopened.listHandoffs(projectId)[0].toSessionId, 'session-a');
+  assert.throws(() => reopened.sendMessage({ projectId, fromSessionId: 'session-a', toSessionId: principal.id, kind: 'note', subject: 'Novo', body: 'Não entregar', idempotencyKey: 'message-removal-2' }), /sessões deste projeto/);
+  assert.equal(reopened.startSession(principal).attempt, 2, 'reinício explícito usa a identidade única da principal');
+  assert.deepEqual(reopened.listSessions(projectId).map(({ id }) => id), ['principal']);
+});
+
+test('encerrar pelo usuário impede retomada mesmo se o app fechar antes do evento de saída', (t) => {
+  const { open } = fixture(t);
+  const store = open();
+  const projectId = project(store);
+  const stopped = session(store, projectId, 'parado');
+  session(store, projectId, 'vivo');
+  store.markRunStopRequested(stopped.id);
+  store.markAppClosed();
+  assert.equal(store.listRuns(projectId).find(({ id }) => id === stopped.id).reason, 'user_closed');
+  assert.deepEqual(store.listRestorableRuns().map(({ id }) => id), ['vivo']);
+});

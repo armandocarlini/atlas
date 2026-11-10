@@ -61,9 +61,18 @@ function createTerminalHost({ ipcMain, getMainWindow, projectHost, transport, ge
     if (!isMainSender(event)) throw new Error('Janela não autorizada a listar terminais.');
     const failed = await restoration;
     return {
-      terminals: [...terminals.values()].map(({ details, record }) => ({ ...details, exit: record.exit })),
+      terminals: [...terminals.values()].map(({ details, record }) => ({ ...details, exit: record.exit, stopping: record.closing && !record.exit })),
       failed,
     };
+  });
+
+  ipcMain.handle('terminal:remove', (event, sessionId) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a excluir terminais.');
+    const terminal = terminals.get(sessionId);
+    if (!terminal) return false;
+    if (!terminal.record.exit) throw new Error('Encerre o terminal antes de excluí-lo.');
+    transport.forget(terminal.record.id);
+    return terminals.delete(sessionId);
   });
 
   return {
