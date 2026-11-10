@@ -28,8 +28,9 @@ function shellInvocation(command, platform, env) {
 
 function defaultKillTree(child, platform) {
   if (platform === 'win32') {
-    execFile('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
-    return;
+    return new Promise((resolve) => {
+      execFile('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => resolve());
+    });
   }
   try {
     process.kill(-child.pid, 'SIGKILL');
@@ -147,6 +148,7 @@ function createRegressionRunner({
       let timer = null;
       let settled = false;
       let drain = null;
+      let stopping = null;
 
       const write = (buffer) => {
         fs.writeSync(fd, buffer);
@@ -154,7 +156,10 @@ function createRegressionRunner({
         written += buffer.length;
       };
       const stop = () => {
-        if (child?.pid) killTree(child, platform);
+        if (!child?.pid || stopping) return;
+        const termination = Promise.withResolvers();
+        stopping = termination.promise;
+        termination.resolve(killTree(child, platform));
       };
 
       function onData(chunk) {
@@ -177,12 +182,13 @@ function createRegressionRunner({
         }
       }
 
-      function settle({ exitCode = null, spawnError = null }) {
+      async function settle({ exitCode = null, spawnError = null }) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         clearTimeout(drain);
         try { fs.closeSync(fd); } catch (error) { writeError ||= error; }
+        if (stopping) await stopping;
         if (stopped) {
           resolve(null);
           return;

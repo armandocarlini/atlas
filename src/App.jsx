@@ -39,7 +39,7 @@ import useModalFocus from './useModalFocus.js';
 import CommandPalette from './CommandPalette.jsx';
 import { atlasDecisions } from './atlas-panel.js';
 import { nextVisibleSessionId, normalizeTerminalLayout, sessionsInLayout, visibleWorkspaceSessions, workspaceSessions } from './workspace-layout.js';
-import { agentSession, mergeAgentSessions, sessionExit, usesGemini, usesKimi } from './session-state.js';
+import { agentSession, mergeAgentSessions, restoreSummary, sessionExit, usesGemini, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
 import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
@@ -738,6 +738,7 @@ export default function App() {
   const popupDragRef = useRef(null);
   const [modal, setModal] = useState(null);
   const [modalFunction, setModalFunction] = useState('');
+  const [restoreTick, setRestoreTick] = useState(0);
   // Histórico aberto pela árvore nesta execução; na abertura, só sessões vivas aparecem.
   const [revealedHistoryIds, setRevealedHistoryIds] = useState([]);
   const [toast, setToast] = useState('');
@@ -925,7 +926,24 @@ export default function App() {
       if (active) setSessions((current) => mergeAgentSessions(current, agents));
     }).catch((error) => notify(`Não foi possível carregar as sessões: ${error.message}`));
     return () => { active = false; };
-  }, [isSecondaryWindow, projects, workingDirectory]);
+  }, [isSecondaryWindow, projects, workingDirectory, restoreTick]);
+
+  // Continuidade: as sessões abertas no último fechamento voltam sozinhas (AGENTS.md). Quando a
+  // retomada termina, a interface recarrega as sessões e a principal e diz o que voltou.
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow || !desktop.getRestoreStatus) return undefined;
+    let handled = false;
+    const apply = (result) => {
+      if (handled || !result) return;
+      handled = true;
+      setRestoreTick((tick) => tick + 1);
+      const message = restoreSummary(result);
+      if (message) notify(message, 7000);
+    };
+    const unsubscribe = desktop.onAgentsRestored?.(apply);
+    desktop.getRestoreStatus().then((status) => { if (!status?.pending) apply(status?.result); }).catch(() => {});
+    return () => unsubscribe?.();
+  }, [isSecondaryWindow]);
 
   useEffect(() => {
     if (!desktop?.isDesktop || isSecondaryWindow || !currentProject) return undefined;
@@ -942,7 +960,7 @@ export default function App() {
       setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: '' });
     }).catch((error) => { if (active) setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: cleanIpcError(error) }); });
     return () => { active = false; };
-  }, [isSecondaryWindow, currentProject?.id]);
+  }, [isSecondaryWindow, currentProject?.id, restoreTick]);
 
   useEffect(() => { setFocusId(null); }, [currentProject?.id]);
 
@@ -1309,10 +1327,10 @@ export default function App() {
     return () => { active = false; };
   }, [needsAdapters, sessionModalOpen]);
 
-  function notify(message) {
+  function notify(message, duration = 2600) {
     setToast(message);
     window.clearTimeout(window.__atlasToast);
-    window.__atlasToast = window.setTimeout(() => setToast(''), 2600);
+    window.__atlasToast = window.setTimeout(() => setToast(''), duration);
   }
 
   function reorderPanel(panel, target) {

@@ -272,6 +272,15 @@ const MIGRATIONS = [{
       version INTEGER NOT NULL, updated_at TEXT NOT NULL
     ) STRICT;
   `,
+}, {
+  // Continuidade (docs/planos/PLANO_CONTINUIDADE_SESSOES.md): a conversa do CLI que a
+  // sessão retoma, a tentativa única de retomada de cada run e o último fechamento do app.
+  version: 15,
+  sql: `
+    ALTER TABLE sessions ADD COLUMN conversation_id TEXT;
+    ALTER TABLE agent_runs ADD COLUMN restored_at TEXT;
+    CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+  `,
 }];
 
 const ORCHESTRATOR_MODES = ['coordinate', 'auto'];
@@ -408,6 +417,25 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   const agentFunctions = createAgentFunctions({ db, now, transaction });
   const { recordEvidence, ...reviewApi } = review;
   const regression = createRegressionSuites({ db, now, event, transaction, recordEvidence });
+
+  function reconcileActive(reason) {
+    const active = db.prepare(`SELECT r.id, r.session_id, s.project_id FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE r.state = 'running'`).all();
+    const at = now();
+    for (const run of active) {
+      db.prepare(`UPDATE agent_runs SET state = 'lost', version = version + 1, ended_at = ?, reason = ? WHERE id = ?`).run(at, reason, run.id);
+      event({ projectId: run.project_id, sessionId: run.session_id, runId: run.id, type: 'run.lost', payload: { reason }, at });
+      loseClaims(run.id, at);
+    }
+    // Aprovação persistida não autoriza repetir um spawn após interrupção.
+    // Um processo pode ter iniciado antes do crash: mantenha o histórico,
+    // sem inferir sucesso nem criar outra sessão automaticamente.
+    for (const request of db.prepare("SELECT * FROM agent_requests WHERE state = 'approved'").all()) {
+      const error = 'Inicialização interrompida. Confira o histórico de sessões antes de solicitar outro agente.';
+      db.prepare("UPDATE agent_requests SET state = 'failed', error = ?, version = version + 1 WHERE id = ?").run(error, request.id);
+      event({ projectId: request.project_id, sessionId: request.requested_by, type: 'approval.failed', payload: { requestId: request.id, error, reason }, correlationId: request.id, at });
+    }
+    return active.length;
+  }
 
   function finishRun({ runId, expectedVersion, exitCode, signal = null }) {
     if (!Number.isInteger(exitCode) || (signal !== null && !Number.isInteger(signal))) throw new Error('Saída de processo inválida.');
@@ -671,7 +699,10 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         const attempt = db.prepare('SELECT coalesce(max(attempt), 0) + 1 AS next FROM agent_runs WHERE session_id = ?').get(id).next;
         const existing = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
         if (existing) {
-          if (existing.role !== 'orchestrator' || role !== 'orchestrator' || existing.project_id !== projectId || existing.cwd !== cwd) throw new Error('Identidade de sessão já existente.');
+          if (existing.role !== role || existing.project_id !== projectId || existing.cwd !== cwd) throw new Error('Identidade de sessão já existente.');
+          if (db.prepare("SELECT 1 FROM agent_runs WHERE session_id = ? AND state = 'running'").get(id)) throw new Error('Identidade de sessão já existente.');
+          // Agente: nova run só ao retomar a mesma sessão, com o mesmo CLI.
+          if (role !== 'orchestrator' && existing.adapter_id !== adapterId) throw new Error('Identidade de sessão já existente.');
           // A identidade da principal continua; o CLI da nova run é o que o usuário escolheu.
           db.prepare('UPDATE sessions SET adapter_id = ?, cli = ?, cli_version = ? WHERE id = ?').run(adapterId, cli, version, id);
         } else {
@@ -685,25 +716,49 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     },
     finishRun,
     reconcileRuns(reason = 'application_restarted') {
+      return transaction(db, () => reconcileActive(reason));
+    },
+    // Fechamento do app: grava a lista exata e marca as runs ativas como fechadas pelo app,
+    // antes de os processos morrerem, para a saída forçada não virar "falhou".
+    markAppClosed() {
       return transaction(db, () => {
-        const active = db.prepare(`SELECT r.id, r.session_id, s.project_id FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE r.state = 'running'`).all();
-        const at = now();
-        for (const run of active) {
-          db.prepare(`UPDATE agent_runs SET state = 'lost', version = version + 1, ended_at = ?, reason = ? WHERE id = ?`).run(at, reason, run.id);
-          event({ projectId: run.project_id, sessionId: run.session_id, runId: run.id, type: 'run.lost', payload: { reason }, at });
-          loseClaims(run.id, at);
-        }
-        // Aprovação persistida não autoriza repetir um spawn após interrupção.
-        // Um processo pode ter iniciado antes do crash: mantenha o histórico,
-        // sem inferir sucesso nem criar outra sessão automaticamente.
-        for (const request of db.prepare("SELECT * FROM agent_requests WHERE state = 'approved'").all()) {
-          const error = 'Inicialização interrompida. Confira o histórico de sessões antes de solicitar outro agente.';
-          db.prepare("UPDATE agent_requests SET state = 'failed', error = ?, version = version + 1 WHERE id = ?").run(error, request.id);
-          event({ projectId: request.project_id, sessionId: request.requested_by, type: 'approval.failed', payload: { requestId: request.id, error, reason }, correlationId: request.id, at });
-        }
-        return active.length;
+        const active = db.prepare("SELECT id FROM agent_runs WHERE state = 'running'").all();
+        db.prepare(`INSERT INTO app_state (key, value) VALUES ('last_closed_runs', ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify(active.map(({ id }) => id)));
+        return reconcileActive('application_closed');
       });
     },
+    // Runs a retomar na abertura: a última de cada sessão, fechada pelo app no último
+    // fechamento e ainda sem tentativa. Sem lista gravada (banco anterior), vale o
+    // fechamento mais recente encontrado; nada de fechamentos antigos.
+    listRestorableRuns() {
+      const saved = db.prepare("SELECT value FROM app_state WHERE key = 'last_closed_runs'").get();
+      const ids = saved?.value ?? JSON.stringify(db.prepare(`SELECT id FROM agent_runs
+        WHERE state = 'lost' AND reason = 'application_closed' AND ended_at = (
+          SELECT max(ended_at) FROM agent_runs WHERE state = 'lost' AND reason = 'application_closed'
+        )`).all().map(({ id }) => id));
+      return db.prepare(`SELECT r.id AS run_id, r.started_at AS run_started_at, r.model, r.current_model, r.function_slug, r.function_overridden,
+          s.id, s.project_id, s.name, s.adapter_id, s.cli, s.cwd, s.origin, s.role, s.created_at, s.conversation_id
+        FROM agent_runs r JOIN sessions s ON s.id = r.session_id
+        WHERE r.state = 'lost' AND r.reason = 'application_closed' AND r.restored_at IS NULL
+          AND r.id IN (SELECT value FROM json_each(?))
+          AND r.attempt = (SELECT max(attempt) FROM agent_runs latest WHERE latest.session_id = r.session_id)
+        ORDER BY s.role = 'orchestrator' DESC, r.started_at DESC, s.id`).all(ids);
+    },
+    // A tentativa é gravada antes de iniciar: um CLI que falha não é relançado a cada abertura.
+    markRunsRestored(runIds) {
+      return transaction(db, () => {
+        const at = now();
+        let count = 0;
+        for (const runId of runIds) count += db.prepare('UPDATE agent_runs SET restored_at = ? WHERE id = ? AND restored_at IS NULL').run(at, runId).changes;
+        return count;
+      });
+    },
+    setConversation({ sessionId, conversationId }) {
+      if (conversationId !== null && (typeof conversationId !== 'string' || !/^[0-9a-f-]{36}$/i.test(conversationId))) throw new Error('Conversa inválida.');
+      return db.prepare('UPDATE sessions SET conversation_id = ? WHERE id = ?').run(conversationId, sessionId).changes === 1;
+    },
+    getSession: (id) => db.prepare('SELECT * FROM sessions WHERE id = ?').get(id),
     // O usuário trocou o modelo no terminal do CLI e informa o novo. Sem nova run:
     // a mesma sessão, o mesmo claim; a troca fica auditada e marca a função como alterada.
     declareRunModel({ runId, model }) {

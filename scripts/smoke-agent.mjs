@@ -534,17 +534,24 @@ try {
   assert.equal(restored.ptyId, null);
   assert.equal(restored.cwd, fixture);
   if (!configuredModel) assert.equal(restored.currentModel, 'fixture-b', 'modelo informado da sessão manual preservado após reinício');
-  const restoredPrincipal = (await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] }));
+  // Continuidade (docs/planos/PLANO_CONTINUIDADE_SESSOES.md): a principal que estava aberta
+  // volta sozinha, numa nova run da mesma sessão. No Kimi, com conversa nova (--agent-file
+  // não combina com --continue).
+  const restoredPrincipal = await until(async () => {
+    const item = await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture }] });
+    return item?.state === 'running' ? item : null;
+  }, 'principal retomada ao reabrir', 60000);
   assert.equal(restoredPrincipal.id, principal.id);
-  assert.equal(restoredPrincipal.archived, true);
-  assert.equal(restoredPrincipal.ptyId, null);
-  assert.equal(restoredPrincipal.runState, 'lost');
-  if (!configuredModel) assert.equal(restoredPrincipal.currentModel, 'fixture-b', 'modelo informado preservado após reinício');
+  assert.notEqual(restoredPrincipal.ptyId, null);
+  assert(restoredPrincipal.runAttempt > rerun.runAttempt, 'nova run da mesma sessão');
+  if (!configuredModel) assert.equal(restoredPrincipal.model, 'fixture-b', 'modelo informado é o da principal retomada');
+  const restoreStatus = await native('invoke', { channel: 'agent:restore-status' });
+  assert.deepEqual(restoreStatus.result.fresh.map((item) => item.name), ['Principal']);
   const persistedMessages = await native('invoke', { channel: 'message:list', args: [{ cwd: fixture }] });
   assert.equal(persistedMessages.items.length, 1);
   assert.equal(persistedMessages.items[0].subject, 'Descoberta real do smoke');
   assert(persistedMessages.items[0].readAt, 'Leitura da descoberta preservada após reinício');
-  console.log('PASS reinício real do Electron preserva identidade, saída do Kimi e mensagens sem recriar PTY');
+  console.log('PASS reinício real do Electron preserva identidade, saída do Kimi e mensagens, e retoma a principal que estava aberta');
   if (!configuredModel) {
     assert.equal((await native('invoke', { channel: 'integration:kimi-mcp-status' })).state, 'installed', 'integração preservada após reinício');
     assert.equal(path.basename(JSON.parse(fs.readFileSync(path.join(kimiHome, 'mcp.json'), 'utf8')).mcpServers.atlas.args[0]), 'atlas-mcp-bridge.cjs');

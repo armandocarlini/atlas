@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { agentSession, mergeAgentSessions, sessionExit, usesKimi } from '../src/session-state.js';
+import { agentSession, mergeAgentSessions, sessionExit, usesKimi, restoreSummary } from '../src/session-state.js';
 
 const agent = { id: 'session-a', name: 'Agente', cli: 'Kimi Code', version: '2.3.2', cwd: '/fixture', projectId: 'project-a', state: 'running', ptyId: 'pty-a', origin: 'user' };
 
@@ -52,4 +52,14 @@ test('regressão: aviso do Kimi só com sessão Kimi no projeto', () => {
   assert.equal(usesKimi([{ cli: 'OpenCode' }, { cli: 'Kimi Code' }]), true);
   assert.equal(usesKimi([{ cli: 'Kimi Code', archived: true }]), true, 'histórico Kimi: a próxima execução precisa das ferramentas');
   assert.equal(usesKimi([{ cli: undefined }]), false);
+});
+
+test('aviso da retomada diz o que voltou, o que abriu conversa nova e o que falhou, com o motivo', () => {
+  assert.equal(restoreSummary(null), '');
+  assert.equal(restoreSummary({ restored: [], fresh: [], failed: [] }), '');
+  assert.equal(restoreSummary({ restored: [{ name: 'Principal' }] }), 'Principal voltou de onde estava.');
+  assert.equal(
+    restoreSummary({ restored: [{ name: 'Principal' }, { name: 'revisor' }], fresh: [{ name: 'oc-antigo' }, { name: 'kimi' }], failed: [{ name: 'codex', error: 'Codex não encontrado no PATH.' }] }),
+    '2 sessões voltaram de onde estavam. oc-antigo e kimi voltaram com conversa nova: o CLI não retoma aquela conversa. Não foi possível retomar codex (Codex não encontrado no PATH.).',
+  );
 });

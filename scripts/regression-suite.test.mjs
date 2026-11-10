@@ -214,6 +214,31 @@ test('parada pedida entre o início e o spawn encerra o processo assim que ele n
   assert(Date.now() - started < 20000, 'não esperou o processo terminar sozinho');
 });
 
+test('cancelamento só termina depois de o encerramento da árvore de processos completar', async (t) => {
+  const { store, configure, enqueue, runner } = harness(t);
+  const { EventEmitter } = await import('node:events');
+  const child = new EventEmitter();
+  child.pid = 42;
+  configure(script('setTimeout(()=>{},60000)'));
+  const queued = enqueue();
+  let treeStopped = false;
+  const instance = runner({
+    checks: { before: async () => ({}), after: async () => ({}) },
+    spawnImpl: () => child,
+    killTree: () => new Promise((resolve) => {
+      child.emit('close', 1);
+      setImmediate(() => { treeStopped = true; resolve(); });
+    }),
+  });
+  const done = instance.notify();
+  while (store.getRegressionRun(queued.id).state !== 'running') await new Promise((resolve) => setImmediate(resolve));
+  store.cancelRegressionRun({ projectId: 'project-a', id: queued.id });
+  instance.cancel(queued.id);
+  await done;
+  assert.equal(store.getRegressionRun(queued.id).state, 'cancelled');
+  assert.equal(treeStopped, true);
+});
+
 test('uma execução por vez, na ordem da fila', async (t) => {
   const { store, configure, enqueue, runner } = harness(t, { reviews: 3 });
   configure(script("console.log(Date.now());setTimeout(()=>console.log(Date.now()),150)"));
