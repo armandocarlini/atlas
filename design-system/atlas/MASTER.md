@@ -116,7 +116,10 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 
 ### Navegação e painéis
 
-- Barra superior de 36px: marca, contexto e ações. Projetos ficam na árvore lateral; não há barra de status permanente.
+- Uma barra superior só, de 36px: marca, contexto e ações. Projetos ficam na árvore lateral; não há barra de status permanente.
+- No Windows e no Linux a janela principal não tem barra nativa: minimizar, maximizar e fechar são os controles do sistema desenhados sobre a barra do ATLAS (`titleBarOverlay`, `electron/window-chrome.cjs`), na cor de `--surface` com símbolos em `--text`, e acompanham o tema. Os controles têm 35px para o filete inferior da barra continuar visível.
+- A barra arrasta a janela e maximiza com duplo clique; botões e campos dela são `no-drag`, assim como diálogos, paleta, toasts e o atalho de teclado que a cobrem. A área dos controles é reservada com `env(titlebar-area-*)`; nenhuma ação fica sob eles.
+- No macOS a barra nativa continua. Pop-ups e Acompanhamento mantêm a barra nativa.
 - A árvore organiza visualmente projetos, repositórios, worktrees e sessões com chevrons, ícones e indentação. Clicar no nome do projeto também o expande; trocar de projeto não recolhe a árvore anterior. "Espera você" aparece somente quando há decisões e leva à principal parada, aos pedidos e às revisões do projeto ativo. Cada item leva ao lugar da decisão; o painel não duplica aprovações. Estado das sessões por ponto e texto (para leitores de tela, "ativa" fica oculto visualmente).
 - A paleta de comandos (Ctrl Shift P ou F1) reúne as ações, os projetos e os terminais. O atalho vale com o foco no terminal, e o que se digita nela nunca chega ao PTY. Toda ação nova entra também na paleta.
 
@@ -156,6 +159,14 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 - Erros são textuais e não dependem apenas de cor.
 - Abrir um modal move o foco para ele, torna o conteúdo ao fundo inerte e mantém Tab/Shift+Tab dentro do diálogo. Fechar restaura o foco ao controle de origem.
 - Aparência oferece presets e cores livres para destaque e fundo, salvos localmente.
+
+### Seleções
+
+- Todo `<select>` usa `appearance: base-select` (`src/controls.css`): continua nativo para teclado, leitor de tela e formulário, mas a lista abre no material do ATLAS, não no popup padrão do sistema. Onde não houver suporte, o select nativo continua.
+- Gatilho: chevron próprio que gira 180° ao abrir; aberto, ganha a superfície de hover.
+- Lista: `--surface-raised`, borda `--border`, raio de 8px, 4px de respiro, sombra curta, ancorada no controle e no mínimo da largura dele.
+- Opções de 30px, raio de 5px. Hover usa `--surface-hover`; a escolhida usa peso 600 e marca de confirmação em `--accent-text` à direita (forma, não só cor); foco de teclado tem anel de 2px interno; desabilitada fica esmaecida.
+- Movimento: entra em 180ms (opacidade e 4px de deslocamento a partir do controle) e sai em 90ms; com movimento reduzido, só opacidade. Com contraste alto, borda em `--text` e sem sombra.
 
 ---
 

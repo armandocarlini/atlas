@@ -5,6 +5,7 @@ import '@fontsource-variable/jost/wght.css';
 import './styles.css';
 import './identity.css';
 import './workspace.css';
+import './controls.css';
 import { revealScrollbarsWhileScrolling } from './scrollbars.js';
 
 revealScrollbarsWhileScrolling();

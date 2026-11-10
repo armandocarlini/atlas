@@ -1171,9 +1171,18 @@ export default function App() {
 
   useEffect(() => {
     const root = document.documentElement;
-    Object.entries(appearanceTokens(theme)).forEach(([key, value]) => root.style.setProperty(key, value));
+    const tokens = appearanceTokens(theme);
+    Object.entries(tokens).forEach(([key, value]) => root.style.setProperty(key, value));
     localStorage.setItem('atlas-appearance', JSON.stringify(theme));
+    // Barra única: os controles da janela acompanham a superfície e a tinta do tema.
+    if (desktop?.windowChrome === 'overlay') desktop.setTitleBarOverlay?.({ color: tokens['--surface'], symbolColor: tokens['--text'] });
   }, [theme]);
+
+  useEffect(() => {
+    const overlay = desktop?.windowChrome === 'overlay';
+    document.documentElement.classList.toggle('window-overlay', overlay);
+    return () => document.documentElement.classList.remove('window-overlay');
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('atlas-docks', JSON.stringify({ ...docks, order: columnOrder, hidden: hiddenColumns }));

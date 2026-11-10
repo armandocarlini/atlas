@@ -203,6 +203,44 @@ async function screenshot(cdp, name) {
 try {
   const main = await connect(await until(async () => (await pages()).find((item) => !item.url.includes('window=')), 'main window'));
   await until(() => main.evaluate(`Boolean(document.querySelector('.app-shell'))`), 'React ready');
+  if (process.platform === 'win32') {
+    // Barra única: a barra nativa sai e os controles da janela ficam sobre a barra do ATLAS,
+    // sem cobrir as ações dela; os botões continuam clicáveis dentro da área de arraste.
+    const chrome = await until(() => main.evaluate(`(() => {
+      const overlay = navigator.windowControlsOverlay;
+      if (!overlay?.visible) return null;
+      const area = overlay.getTitlebarAreaRect();
+      const bar = document.querySelector('.titlebar');
+      const buttons = [...bar.querySelectorAll('.title-actions button')];
+      const style = (element) => getComputedStyle(element).getPropertyValue('-webkit-app-region') || getComputedStyle(element).webkitAppRegion;
+      return { classed: document.documentElement.classList.contains('window-overlay'), areaRight: area.x + area.width, areaHeight: area.height, top: bar.getBoundingClientRect().top, height: bar.getBoundingClientRect().height, actionsRight: Math.max(...buttons.map(item => item.getBoundingClientRect().right)), barRegion: style(bar), buttonRegions: buttons.map(style) };
+    })()`), 'controles da janela sobre a barra do ATLAS');
+    assert.equal(chrome.classed, true, 'janela principal marcada com overlay');
+    assert.equal(chrome.top, 0, 'a barra do ATLAS é a primeira e única barra');
+    assert.equal(chrome.height, 36);
+    assert.equal(chrome.areaHeight, 35, 'controles 1px abaixo da barra para o filete continuar visível');
+    assert(chrome.actionsRight <= chrome.areaRight, `ações da barra sob os controles da janela: ${JSON.stringify(chrome)}`);
+    assert.equal(chrome.barRegion, 'drag', 'a barra arrasta a janela');
+    assert(chrome.buttonRegions.every((region) => region === 'no-drag'), 'botões da barra continuam clicáveis');
+    assert.equal(await main.evaluate(`window.atlasDesktop.setTitleBarOverlay({ color: 'red', symbolColor: '#ffffff' })`), false, 'cor inválida recusada');
+    console.log('PASS barra única: controles da janela sobre a barra do ATLAS');
+  }
+  // Seleções no material do ATLAS: base-select mantém o <select> nativo e abre pelo teclado.
+  assert.equal(await main.evaluate(`getComputedStyle(document.querySelector('.terminal-layout-select')).appearance`), 'base-select', 'select usa base-select');
+  await native('focus');
+  const layoutBefore = await main.evaluate(`document.querySelector('.terminal-layout-select').value`);
+  await main.evaluate(`document.querySelector('.terminal-layout-select').focus()`);
+  await key(main, ' ', { code: 'Space', windowsVirtualKeyCode: 32, text: ' ' });
+  await until(() => main.evaluate(`document.querySelector('.terminal-layout-select').matches(':open')`), 'lista do layout aberta pelo teclado');
+  await delay(250);
+  await screenshot(main, 'select-picker');
+  const picker = await main.evaluate(`(() => { const option = document.querySelector('.terminal-layout-select option:checked'); const style = getComputedStyle(option); const mark = getComputedStyle(option, '::checkmark'); return { weight: style.fontWeight, radius: style.borderRadius, height: option.getBoundingClientRect().height, mark: mark.backgroundColor }; })()`);
+  assert.equal(picker.weight, '600', 'opção escolhida em peso maior');
+  assert(picker.height >= 30, `opção com alvo de 30px: ${picker.height}`);
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('.terminal-layout-select').matches(':open') && document.activeElement === document.querySelector('.terminal-layout-select')`), 'Escape fecha a lista e devolve o foco');
+  assert.equal(await main.evaluate(`document.querySelector('.terminal-layout-select').value`), layoutBefore, 'Escape não troca o layout');
+  console.log('PASS seleções com lista do ATLAS, teclado e Escape');
   await until(() => main.evaluate(`Boolean(document.querySelector('.session-history'))`), 'persisted session restored');
   assert.equal(await main.evaluate(`document.querySelectorAll('.origin-badge.demo').length`), 0, 'Desktop must not show illustrative agent cards');
   // Sem CLI padrão: a principal só inicia depois de o usuário escolher CLI e modelo.

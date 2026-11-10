@@ -17,6 +17,7 @@ const { createExplorerIntegration, createExplorerHost } = require('./explorer-in
 const { ensureOrchestratorProfile, ensureClaudeProfile, ensureGeminiProfile } = require('./orchestrator-profile.cjs');
 const { createRegressionRunner } = require('./regression-runner.cjs');
 const { createRegressionSuiteHost } = require('./regression-suite-host.cjs');
+const { mainWindowChrome, registerWindowChrome } = require('./window-chrome.cjs');
 
 let mainWindow = null;
 let panelWindow = null;
@@ -96,13 +97,16 @@ function getPopupEntry(webContents) {
 }
 
 function createMainWindow() {
+  // Uma barra só: no Windows e no Linux os controles da janela ficam sobre a barra do ATLAS.
+  const chrome = mainWindowChrome();
   mainWindow = createSecureWindow({
     width: 1440,
     height: 900,
     minWidth: 940,
     minHeight: 640,
     title: 'ATLAS',
-  });
+    ...chrome.options,
+  }, chrome.query);
   mainWindow.on('closed', () => {
     mainWindow = null;
     if (panelWindow && !panelWindow.isDestroyed()) panelWindow.close();
@@ -239,6 +243,7 @@ app.whenReady().then(async () => {
   operationalStore = createOperationalStore({ filename: path.join(app.getPath('userData'), 'atlas.sqlite') });
   operationalStore.reconcileRuns();
   operationalStore.reconcileRegressionRuns();
+  registerWindowChrome({ ipcMain, getMainWindow });
   // Cada projeto avisa a interface quando a varredura dele termina.
   projectHost = createProjectHost({
     app, dialog, ipcMain, getMainWindow, store: operationalStore,

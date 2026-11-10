@@ -24,7 +24,7 @@
 .brand { gap: 7px; }
 .brand .atlas-statue-mark { width: 17px; height: 27px; flex-basis: 17px; margin-top: 2px; }
 .brand strong { font-size: 12px; }
-.titlebar-context { min-width: 0; display: flex; align-items: baseline; gap: 9px; overflow: hidden; }
+.titlebar-context { align-self: center; min-width: 0; display: flex; align-items: baseline; gap: 9px; overflow: hidden; }
 .titlebar-context > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; font-weight: 600; }
 .titlebar-context small { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
 .title-actions .text-control { height: 28px; font-size: 11px; }
