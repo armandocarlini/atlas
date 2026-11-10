@@ -40,7 +40,7 @@ function createTaskDelegation({ db, now, event, transaction }) {
   const plain = (row) => row && { ...row };
   const getTask = (projectId, taskId) => plain(db.prepare(`${TASK_SELECT} WHERE t.id = ? AND t.project_id = ?`).get(taskId, projectId));
   const getHandoff = (projectId, handoffId) => plain(db.prepare(`${HANDOFF_SELECT} WHERE h.id = ? AND h.project_id = ?`).get(handoffId, projectId));
-  const session = (projectId, sessionId) => db.prepare('SELECT id, role FROM sessions WHERE id = ? AND project_id = ?').get(sessionId, projectId);
+  const session = (projectId, sessionId) => db.prepare('SELECT id, role FROM sessions WHERE id = ? AND project_id = ? AND removed_at IS NULL').get(sessionId, projectId);
   const activeRun = (sessionId) => db.prepare("SELECT id FROM agent_runs WHERE session_id = ? AND state = 'running'").get(sessionId);
 
   function requireTask(projectId, taskId) {

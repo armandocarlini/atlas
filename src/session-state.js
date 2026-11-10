@@ -1,7 +1,10 @@
 export function agentSession(agent) {
   const archived = Boolean(agent.archived);
+  const stopping = agent.reason === 'user_closed' && agent.state === 'running';
   let status = 'em execução';
-  if (archived) {
+  if (agent.reason === 'user_closed') {
+    status = stopping ? 'encerrando…' : 'encerrada pelo usuário';
+  } else if (archived) {
     status = agent.runState === 'lost' ? 'interrompida · resultado incerto'
       : agent.runState === 'succeeded' ? 'encerrada · código 0'
         : agent.runState === 'failed' ? `falhou · código ${agent.exit?.exitCode ?? 'desconhecido'}${agent.exit?.signal ? ` · sinal ${agent.exit.signal}` : ''}`
@@ -11,7 +14,7 @@ export function agentSession(agent) {
   }
   return {
     id: agent.id, ptyId: archived ? null : agent.ptyId, projectId: agent.projectId,
-    roleKind: agent.role || 'agent', exited: archived || agent.state === 'exited', runStartedAt: agent.runStartedAt, runAttempt: agent.runAttempt,
+    roleKind: agent.role || 'agent', exited: archived || agent.state === 'exited', stopping, runStartedAt: agent.runStartedAt, runAttempt: agent.runAttempt,
     name: agent.name, cli: agent.cli, version: agent.version,
     role: archived ? 'Histórico de sessão; nenhum processo conectado'
       : agent.role === 'orchestrator' ? 'Planejamento do projeto; pede novos agentes com aprovação do usuário'
@@ -30,8 +33,8 @@ export function terminalSession(terminal) {
     id: terminal.sessionId, ptyId: terminal.id, projectId: terminal.projectId,
     name: terminal.name, cli: 'PowerShell', worktree: terminal.cwd,
     role: 'Shell sem identidade de agente', origin: 'terminal', effort: 'local',
-    exited: Boolean(terminal.exit),
-    status: terminal.exit ? `encerrado · código ${terminal.exit.exitCode}` : 'em execução',
+    exited: Boolean(terminal.exit), stopping: terminal.stopping,
+    status: terminal.exit ? exitStatus(terminal.exit) : terminal.stopping ? 'encerrando…' : 'em execução',
     color: '#8d959d', tokens: '0', cost: '—', lines: [],
   };
 }
@@ -65,9 +68,13 @@ export function mergeAgentSessions(current, agents) {
   return [...merged, ...updates.values()];
 }
 
+function exitStatus(exit) {
+  return exit.stoppedByUser ? 'encerrado pelo usuário' : `encerrado · código ${exit.exitCode}`;
+}
+
 export function sessionExit(current, sessionId, exit) {
-  return current.map((session) => session.id === sessionId && typeof exit.ptyId === 'string' && exit.ptyId === session.ptyId
-    ? { ...session, exited: true, status: `encerrado · código ${exit.exitCode}` } : session);
+  return current.map((session) => (sessionId === null || session.id === sessionId) && typeof exit.ptyId === 'string' && exit.ptyId === session.ptyId
+    ? { ...session, exited: true, stopping: false, status: exitStatus(exit) } : session);
 }
 
 // O aviso de ferramentas do Kimi só faz sentido com sessão Kimi no projeto (ativa ou

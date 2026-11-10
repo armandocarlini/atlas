@@ -334,7 +334,7 @@ function HarnessIntro({ harness, session }) {
   );
 }
 
-function SessionActions({ session, onFocus, onPopup, onHide, onRestart, onSendDiscovery, onSwitchModel, focused, detached, popup }) {
+function SessionActions({ session, onFocus, onPopup, onHide, onRestart, onSendDiscovery, onSwitchModel, onStop, onRemove, focused, detached, popup }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
@@ -345,6 +345,8 @@ function SessionActions({ session, onFocus, onPopup, onHide, onRestart, onSendDi
     !session.archived && { id: 'popup', label: detached || popup ? 'Reintegrar' : 'Abrir em pop-up', run: () => onPopup(session) },
     !popup && !detached && { id: 'focus', label: focused ? 'Voltar à grade' : 'Focar terminal', run: () => onFocus(session.id), ariaLabel: `Focar ${session.name}` },
     !popup && !detached && onHide && { id: 'hide', label: 'Ocultar terminal', run: () => onHide(session.id), ariaLabel: `Ocultar ${session.name} sem encerrar o processo` },
+    onStop && session.ptyId && !session.exited && { id: 'stop', label: session.stopping ? 'Encerrando…' : 'Encerrar processo', run: () => onStop(session), disabled: session.stopping },
+    onRemove && session.exited && { id: 'remove', label: 'Excluir do ATLAS', run: () => onRemove(session) },
   ].filter(Boolean);
 
   useEffect(() => {
@@ -378,13 +380,18 @@ function SessionActions({ session, onFocus, onPopup, onHide, onRestart, onSendDi
         disabled={action.disabled}
         title={action.title}
         aria-label={action.ariaLabel}
-        onClick={(event) => { event.stopPropagation(); setOpen(false); action.run(); }}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (action.id === 'stop' || action.id === 'remove') triggerRef.current?.focus();
+          setOpen(false);
+          action.run();
+        }}
       >{action.label}</button>)}
     </div>}
   </div>;
 }
 
-function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, tabbed = false }) {
+function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, onStop, onRemove, tabbed = false }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
@@ -426,7 +433,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
           {session.demo && <span className="origin-badge demo">ilustrativo</span>}
         </div>
         <div className="session-actions">
-          <SessionActions session={session} onFocus={onFocus} onPopup={onPopup} onHide={onHide} onRestart={onRestart} onSendDiscovery={onSendDiscovery} onSwitchModel={onSwitchModel} focused={focused} detached={detached} popup={popup} />
+          <SessionActions session={session} onFocus={onFocus} onPopup={onPopup} onHide={onHide} onRestart={onRestart} onSendDiscovery={onSendDiscovery} onSwitchModel={onSwitchModel} onStop={onStop} onRemove={onRemove} focused={focused} detached={detached} popup={popup} />
         </div>
       </header>
 
@@ -454,6 +461,45 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
         </div>
       </>}
     </article>
+  );
+}
+
+function SessionActionDialog({ target, onClose, onConfirm }) {
+  const dialogRef = useModalFocus();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const removing = target.kind === 'remove';
+  const shell = target.session.origin === 'terminal';
+  const name = target.session.roleKind === 'orchestrator' ? 'Principal' : target.session.name;
+  const description = removing
+    ? shell ? `“${name}” e o conteúdo exibido no terminal serão removidos.` : `“${name}” sai da lista do ATLAS. Tarefas e mensagens vinculadas continuam disponíveis.`
+    : `O processo de “${name}” será encerrado. ${shell ? 'O conteúdo do terminal fica disponível até fechar o ATLAS.' : 'O histórico da sessão continua disponível.'}`;
+  function dismiss() { if (!busy) onClose(); }
+  return (
+    <div className="modal-backdrop" onMouseDown={dismiss}>
+      <section ref={dialogRef} className="modal" role="dialog" aria-modal="true" aria-labelledby="session-action-title" aria-describedby="session-action-detail" onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => {
+        if (event.key !== 'Escape') return;
+        event.stopPropagation();
+        dismiss();
+      }}>
+        <header><h2 id="session-action-title">{removing ? 'Excluir do ATLAS?' : 'Encerrar processo?'}</h2></header>
+        <form onSubmit={async (event) => {
+          event.preventDefault();
+          if (busy) return;
+          setBusy(true);
+          setError('');
+          try { await onConfirm(target); onClose(); }
+          catch (failure) { setError(cleanIpcError(failure)); setBusy(false); }
+        }}>
+          <p id="session-action-detail" className="scope-note"><span>{description}</span></p>
+          {error && <div className="scope-note error-note" role="alert"><span>{error}</span></div>}
+          <footer>
+            <button type="button" className="button secondary" onClick={dismiss} disabled={busy}>Cancelar</button>
+            <button type="submit" className="button secondary danger" disabled={busy}>{removing ? 'Excluir' : 'Encerrar'}</button>
+          </footer>
+        </form>
+      </section>
+    </div>
   );
 }
 
@@ -740,6 +786,8 @@ export default function App() {
   const [modalFunction, setModalFunction] = useState('');
   const [restoreTick, setRestoreTick] = useState(0);
   const [terminalRestoreError, setTerminalRestoreError] = useState('');
+  const [sessionAction, setSessionAction] = useState(null);
+  const removedSessionIds = useRef(new Set());
   // Histórico aberto pela árvore nesta execução; na abertura, só sessões vivas aparecem.
   const [revealedHistoryIds, setRevealedHistoryIds] = useState([]);
   const [toast, setToast] = useState('');
@@ -924,7 +972,7 @@ export default function App() {
     if (!desktop?.isDesktop || isSecondaryWindow) return undefined;
     let active = true;
     desktop.listAgents().then((agents) => {
-      if (active) setSessions((current) => mergeAgentSessions(current, agents));
+      if (active) setSessions((current) => mergeAgentSessions(current, agents.filter((agent) => !removedSessionIds.current.has(agent.id))));
     }).catch((error) => notify(`Não foi possível carregar as sessões: ${error.message}`));
     return () => { active = false; };
   }, [isSecondaryWindow, projects, workingDirectory, restoreTick]);
@@ -936,13 +984,20 @@ export default function App() {
       if (!active) return;
       setSessions((current) => {
         const ids = new Set(current.map((item) => item.id));
-        return [...current, ...terminals.filter((item) => !ids.has(item.sessionId)).map(terminalSession)];
+        return [...current, ...terminals.filter((item) => !ids.has(item.sessionId) && !removedSessionIds.current.has(item.sessionId)).map(terminalSession)];
       });
       if (failed.length) setTerminalRestoreError(`Não foi possível reabrir ${failed.map(({ name, error }) => `${name} (${error})`).join(', ')}`);
     }).catch((error) => {
       if (active) setTerminalRestoreError(cleanIpcError(error));
     });
     return () => { active = false; };
+  }, [isSecondaryWindow]);
+
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow) return undefined;
+    return desktop.onPtyExit(({ terminalId, ...exit }) => {
+      setSessions((current) => sessionExit(current, null, { ...exit, ptyId: terminalId }));
+    });
   }, [isSecondaryWindow]);
 
   // Continuidade: as sessões abertas no último fechamento voltam sozinhas (AGENTS.md). Quando a
@@ -972,6 +1027,7 @@ export default function App() {
         setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: '', needsChoice: true, previousCli: agent.previousCli });
         return;
       }
+      if (removedSessionIds.current.has(agent.id)) return;
       setSessions((current) => mergeAgentSessions(current, [agent]));
       setSelectedId((current) => current === 'orchestrator' ? agent.id : current);
       setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: '' });
@@ -1002,6 +1058,7 @@ export default function App() {
         setDetachedTerminals((current) => current.filter((id) => id !== target.session.id));
       }
       const agent = await desktop.openOrchestrator({ cwd: target.cwd, startNewRun: true, adapterId: choice.adapterId, model: choice.model || null, orchestratorMode: choice.orchestratorMode });
+      removedSessionIds.current.delete(agent.id);
       setSessions((current) => mergeAgentSessions(current, [agent]));
       setOrchestratorStatus((state) => state.projectId === target.projectId ? { projectId: target.projectId, loading: false, error: '' } : state);
       setOrchestratorChoice(null);
@@ -1580,6 +1637,27 @@ export default function App() {
     if (broadcast && isSecondaryWindow) panelChannelRef.current?.postMessage({ type: 'session-exit', sessionId, exit });
   }
 
+  async function applySessionAction({ session, kind }) {
+    if (kind === 'stop') {
+      const requested = await desktop.stopPty(session.ptyId);
+      if (requested) setSessions((current) => current.map((item) => item.id === session.id && item.ptyId === session.ptyId && !item.exited ? { ...item, stopping: true, status: 'encerrando…' } : item));
+      return;
+    }
+    if (session.origin === 'terminal') await desktop.removeTerminal(session.id);
+    else await desktop.removeAgent(session.id);
+    removedSessionIds.current.add(session.id);
+    setSessions((current) => current.filter((item) => item.id !== session.id));
+    setHiddenSessionIds((current) => current.filter((id) => id !== session.id));
+    setRevealedHistoryIds((current) => current.filter((id) => id !== session.id));
+    setDetachedTerminals((current) => current.filter((id) => id !== session.id));
+    setFocusId((current) => current === session.id ? null : current);
+    setSelectedId((current) => current === session.id ? 'orchestrator' : current);
+    if (session.roleKind === 'orchestrator') setOrchestratorStatus((current) => current.projectId === session.projectId ? { projectId: session.projectId, needsChoice: true, previousCli: session.cli, loading: false, error: '' } : current);
+    desktop.closeTerminalWindow(session.id).catch(() => {});
+    notify('Sessão excluída do ATLAS.');
+    window.setTimeout(() => { if (document.activeElement === document.body) document.querySelector('.palette-trigger')?.focus(); }, 0);
+  }
+
   async function toggleTerminalPopup(session) {
     if (desktop?.isDesktop) {
       if (isNativeTerminalWindow) {
@@ -1695,7 +1773,13 @@ export default function App() {
     if (desktop?.isDesktop && desktop.listAgentFunctions) commands.push({ id: 'functions', group: 'Preferências', label: 'Funções de agente', keywords: 'cli modelo orquestrador', run: () => setFunctionsOpen(true) });
     commands.push({ id: 'add-project', group: 'Projetos', label: 'Autorizar pasta de projeto', keywords: 'adicionar repositorio', run: addProject });
     (desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((name) => ({ name }))).forEach((project) => commands.push({ id: `project-${project.id || project.name}`, group: 'Projetos', label: `Ir para ${project.name}`, hint: project.path, keywords: 'projeto repositorio', run: () => selectProject(project) }));
-    projectSessions.forEach((session) => commands.push({ id: `session-${session.id}`, group: 'Terminais', label: `Ir para ${session.name}`, hint: modelLabel(session) ? `${session.cli} · ${modelLabel(session)}` : session.cli, keywords: 'terminal sessao agente', run: () => selectSessionTerminal(session.id) }));
+    projectSessions.forEach((session) => {
+      commands.push({ id: `session-${session.id}`, group: 'Terminais', label: `Ir para ${session.name}`, hint: modelLabel(session) ? `${session.cli} · ${modelLabel(session)}` : session.cli, keywords: 'terminal sessao agente', run: () => selectSessionTerminal(session.id) });
+      if (!desktop?.isDesktop) return;
+      const name = session.roleKind === 'orchestrator' ? 'Principal' : session.name;
+      if (session.exited) commands.push({ id: `remove-${session.id}`, group: 'Terminais', label: `Excluir ${name} do ATLAS`, run: () => setSessionAction({ kind: 'remove', session }) });
+      else if (session.ptyId && !session.stopping) commands.push({ id: `stop-${session.id}`, group: 'Terminais', label: `Encerrar processo de ${name}`, run: () => setSessionAction({ kind: 'stop', session }) });
+    });
     return commands;
   }
 
@@ -1866,7 +1950,9 @@ export default function App() {
           onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
           onPopup={toggleTerminalPopup}
           onExit={updateSessionExit}
+          onStop={(session) => setSessionAction({ kind: 'stop', session })}
         /> : <div className="terminal-window-loading">Carregando terminal…</div>}
+        {sessionAction && <SessionActionDialog target={sessionAction} onClose={() => setSessionAction(null)} onConfirm={applySessionAction} />}
         {toast && <div className="toast" role="status">{toast}</div>}
       </div>
     );
@@ -2016,6 +2102,8 @@ export default function App() {
               onHide={hideSession}
               onPopup={toggleTerminalPopup}
               onExit={updateSessionExit}
+              onStop={desktop?.isDesktop ? (session) => setSessionAction({ kind: 'stop', session }) : undefined}
+              onRemove={desktop?.isDesktop ? (session) => setSessionAction({ kind: 'remove', session }) : undefined}
               onRestart={openOrchestratorChoice}
               atlasConnected={toolConnections[session.id] ?? session.atlasTools}
               onSendDiscovery={desktop?.isDesktop && projectSessions.some((session) => session.roleKind === 'orchestrator') ? (session) => setMessageModal({ session }) : undefined}
@@ -2089,6 +2177,7 @@ export default function App() {
       {taskModalOpen && <NewTaskModal projectName={taskState.projectName} cwd={workingDirectory} onCreate={createTask} onClose={() => setTaskModalOpen(false)} />}
       {integrationModal && integrations[integrationModal] && !integrations[integrationModal].loading && <KimiIntegrationModal key={integrationModal} cli={INTEGRATION_CLIS[integrationModal].name} status={integrations[integrationModal]} onInstall={() => installIntegration(integrationModal)} onRemove={() => removeIntegration(integrationModal)} onRefresh={() => refreshIntegration(integrationModal)} onClose={() => setIntegrationModal(null)} />}
       {messageModal && <NewMessageModal projectName={currentProject?.name || activeProject} fromName={messageModal.session.name} toName={projectSessions.find((session) => session.roleKind === 'orchestrator')?.name || 'principal'} onSend={sendDiscovery} onClose={() => setMessageModal(null)} />}
+      {sessionAction && <SessionActionDialog target={sessionAction} onClose={() => setSessionAction(null)} onConfirm={applySessionAction} />}
       {toast && <div className="toast" role="status"><CheckCircle2 size={15} />{toast}</div>}
     </div>
   );

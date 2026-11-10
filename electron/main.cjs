@@ -298,6 +298,7 @@ app.whenReady().then(async () => {
     transport: ptyTransport,
     isMainSender: terminalHost.isMainSender,
     getPopupPtyId: (webContents) => getPopupEntry(webContents)?.ptyId || null,
+    onStop: (record) => agentHost?.markStopped(record),
   });
   const sendToMain = (channel, payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);

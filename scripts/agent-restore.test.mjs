@@ -30,6 +30,10 @@ function harness({ store, adapters, allowedCwds = ['C:\\projeto'], models = asyn
   const records = [];
   const transport = {
     close: (record) => { record.closed = true; },
+    forget(id) {
+      const index = records.findIndex((record) => record.id === id);
+      if (index >= 0) records.splice(index, 1);
+    },
     spawn(request) {
       spawns.push(request);
       let exitCallback = null;
@@ -225,4 +229,25 @@ test('retomada que morre com erro logo ao abrir volta uma vez com conversa nova'
   assert.equal(state.store.getSession(revived.id).conversation_id, second.spawns[2].args[1], 'o ID novo fica salvo para a próxima vez');
   assert.deepEqual(names(result.restored), ['ok']);
   assert.deepEqual(names(result.fresh), ['sem-conversa']);
+});
+
+test('encerrar uma retomada pelo usuário cancela o relançamento e permite excluir da interface', async (t) => {
+  const state = fixture(t);
+  const first = harness({ store: state.store, adapters: [CLAUDE] });
+  const agent = await first.create({ adapterId: 'claude-code', name: 'agente' });
+  closeApp(first, state.store);
+  let second;
+  second = harness({ store: state.restart(), adapters: [CLAUDE], resumeGrace: async () => {
+    second.host.markStopped(second.records[0]);
+    second.records[0].emitExit(1, null);
+  } });
+  await second.host.restoreSessions();
+  assert.equal(second.spawns.length, 1, 'encerramento explícito dispensa a conversa nova');
+  assert.equal(second.host.listAgents()[0].reason, 'user_closed');
+  const remove = second.handlers.get('agent:remove');
+  assert.throws(() => remove({ sender: 'popup' }, agent.id), /não autorizada/);
+  assert.equal(remove(second.mainEvent, agent.id), true);
+  assert.deepEqual(second.host.listAgents(), []);
+  assert.equal(second.records.length, 0);
+  assert.equal(state.store.listRuns('project-a').length, 2);
 });

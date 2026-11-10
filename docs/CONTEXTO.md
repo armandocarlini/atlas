@@ -1,6 +1,6 @@
 # Contexto atual do ATLAS
 
-Última revisão em 10/11/2026, após a entrega da retomada das sessões de agente e da principal.
+Última revisão em 10/11/2026, após a entrega da retomada dos agentes, da principal e dos terminais PowerShell.
 
 Este arquivo descreve **o que existe hoje**. Ele é reescrito a cada marco: não acrescente diário aqui. A história de como chegamos até este ponto fica em `docs/historico/`. O que vem depois fica em `docs/ROADMAP.md`.
 
@@ -18,7 +18,7 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 
 | Área | Comportamento | Onde |
 |---|---|---|
-| Terminais | PowerShell real por node-pty/ConPTY e xterm.js. Grade, Destaque, Principal + agentes e Abas; ocultação, restauração e pop-up sem matar o PTY. Scrollback só em memória | `electron/terminal-host.cjs`, `electron/pty-transport.cjs`, `src/TerminalView.jsx` |
+| Terminais | PowerShell real por node-pty/ConPTY e xterm.js. Grade, Destaque, Principal + agentes e Abas. Ocultar, restaurar ou destacar em pop-up mantém o PTY em execução. No fechamento normal, os terminais ativos ficam registrados para reabrir com o mesmo nome e a pasta de abertura. Cada PowerShell recriado começa com um buffer novo | `electron/terminal-host.cjs`, `electron/pty-transport.cjs`, `src/TerminalView.jsx` |
 | Projetos e Git | Pastas autorizadas e descoberta Git **somente leitura** (repositórios, branches, worktrees) | `electron/project-host.cjs`, `electron/git-discovery.cjs` |
 | Adaptadores | Kimi Code, OpenCode, Claude Code e Codex, detectados no `PATH`. O Claude Code não lista modelos: o cartão aceita o modelo digitado, ou vazio para o da configuração dele. O Codex lista os modelos por `codex debug models` e, nesta versão, é só agente. O Gemini lista por `gemini --list-models` e recebe a ponte pelo `settings.json`, com consentimento (como o Kimi). Não existe CLI nem modelo padrão do ATLAS: o usuário escolhe em **toda** sessão, partindo do que salvou na função quando há uma | `electron/agent-adapters.cjs`, `electron/agent-host.cjs`, `src/AgentChoice.jsx` |
 | Principal | Uma identidade por projeto, perfil somente leitura por padrão (chave "Principal só coordena", por projeto; desligada, a principal edita o que é pequeno, com as aprovações do CLI e o `.env` negado nas ferramentas de arquivo; o Kimi recusa esse modo) (`--agent-file` no Kimi, `atlas-orchestrator` no OpenCode, `--restricted` com Read, Grep e Glob no Claude Code, `--policy` do ATLAS no Gemini) e nova run explícita após a saída | `electron/orchestrator-profile.cjs` |

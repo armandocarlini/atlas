@@ -38,6 +38,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       ptyId: agent.ptyId,
       state: agent.state,
       exit: agent.exit,
+      reason: agent.stoppedByUser ? 'user_closed' : undefined,
       createdAt: agent.createdAt,
       projectId: agent.projectId,
       runId: agent.runId,
@@ -144,6 +145,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     await waitForCwd(projectHost, request.cwd);
 
     const { adapter, model } = resolved || await resolveLaunch(request.adapterId, request.model);
+    if (resume && existing && store?.getSession(existing.id)?.removed_at) throw new Error('A sessão foi excluída.');
     const orchestratorMode = role === 'orchestrator' ? (request.orchestratorMode || 'coordinate') : null;
     if (role === 'orchestrator') assertOrchestratorSupport(adapter);
     if (request.functionSlug !== undefined && request.functionSlug !== null && (typeof request.functionSlug !== 'string' || (store && !store.getFunctionBySlug?.(request.functionSlug)))) throw new Error('Função de agente desconhecida.');
@@ -251,6 +253,18 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     return createAgent({ ...request, ...functionAudit(request?.functionSlug, request?.adapterId, request?.model) });
   });
 
+  ipcMain.handle('agent:remove', (event, sessionId) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a excluir sessões.');
+    const stored = typeof sessionId === 'string' && store?.getSession(sessionId);
+    if (!stored || !projectHost.isAllowedCwd(stored.cwd)) throw new Error('Sessão fora das pastas autorizadas.');
+    const agent = agents.get(sessionId);
+    if (agent?.state === 'running') throw new Error('Encerre a sessão antes de excluí-la.');
+    const removed = store.removeSession(sessionId);
+    if (agent) transport.forget(agent.ptyId);
+    agents.delete(sessionId);
+    return removed;
+  });
+
   // O usuário trocou o modelo dentro do CLI (/model, /models) e informa o novo.
   // O ATLAS não digita no terminal nem reinicia nada: só registra na mesma run.
   ipcMain.handle('agent:declare-model', async (event, request = {}) => {
@@ -303,7 +317,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     const current = [...agents.values()].find((agent) => agent.projectId === project.id && agent.role === 'orchestrator' && agent.state === 'running');
     if (current) return describe(current);
     const existing = store.getOrchestrator(project.id);
-    if (existing && request.startNewRun !== true) {
+    if (existing && !existing.removed_at && request.startNewRun !== true) {
       const history = listAgents().find((agent) => agent.id === existing.id);
       if (!history) throw new Error('Histórico da principal fora do escopo autorizado.');
       return history;
@@ -379,7 +393,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
         await resumeGrace();
         for (const launch of launches) {
           const agent = agents.get(launch.agentId);
-          if (!agent || agent.runId !== launch.runId || agent.state !== 'exited' || agent.exit?.exitCode === 0 || shuttingDown) continue;
+          if (!agent || agent.runId !== launch.runId || agent.state !== 'exited' || agent.stoppedByUser || agent.exit?.exitCode === 0 || shuttingDown) continue;
           result.restored = result.restored.filter((item) => item !== launch.entry);
           try {
             await launch.relaunch('fresh');
@@ -404,6 +418,12 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
   return {
     listAgents,
     restoreSessions,
+    markStopped(record) {
+      const agent = agents.get(record.meta.agentId);
+      if (agent?.ptyId !== record.id) return;
+      agent.stoppedByUser = true;
+      if (agent.runId) store?.markRunStopRequested(agent.runId);
+    },
     // Fechamento: as saídas que chegam depois não são gravadas como resultado da run.
     prepareShutdown: () => { shuttingDown = true; },
     resumeRecording: () => { shuttingDown = false; },
