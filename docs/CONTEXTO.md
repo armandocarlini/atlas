@@ -1,6 +1,6 @@
 # Contexto atual do ATLAS
 
-Última revisão: 08/11/2026, com as fases 2 e 3 da identidade visual (barra única, paleta de comandos e Painel do Atlas).
+Última revisão: 10/11/2026, com a equipe com várias IAs da v0.2 entregue (Claude Code, Codex e Gemini, chave "Principal só coordena" e revisão cruzada), depois das fases 2 e 3 da identidade visual.
 
 Este arquivo descreve **o que existe hoje**. Ele é reescrito a cada marco: não acrescente diário aqui. A história de como chegamos até este ponto fica em `docs/historico/`. O que vem depois fica em `docs/ROADMAP.md`.
 
