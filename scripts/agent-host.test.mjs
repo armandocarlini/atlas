@@ -652,3 +652,20 @@ test('regressão Kimi 2.4: principal recusa versões com perda do perfil antes d
     assert.equal(grants, 1);
   }
 });
+
+test('modo da principal: só coordena por padrão; a escolha do diálogo fica salva no projeto e vale para a run', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const claudeProfile = { instructions: 'C:\\perfil\\claude-orchestrator.md', instructionsAuto: 'C:\\perfil\\claude-orchestrator-auto.md', settings: 'C:\\perfil\\claude-orchestrator-settings.json', mcpConfig: null };
+  const { handlers, mainEvent, spawns } = createHarness({ ...fixture, adapters: [CLAUDE, KIMI], claudeProfile });
+  assert.deepEqual(await handlers.get('agent:orchestrator-mode')(mainEvent, { cwd: 'C:\\projeto' }), { projectId: 'project-a', mode: 'coordinate' });
+  await assert.rejects(handlers.get('agent:orchestrator-mode')({ sender: 'popup' }, { cwd: 'C:\\projeto' }), /não autorizada/);
+  await assert.rejects(handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'claude-code', orchestratorMode: 'tudo' }), /Modo da principal inválido/);
+  // Kimi não tem o modo auto verificado: a recusa vem antes de iniciar qualquer processo.
+  await assert.rejects(handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code', orchestratorMode: 'auto' }), /não foi verificado no Kimi Code/);
+  assert.equal(spawns.length, 0);
+  const auto = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'claude-code', orchestratorMode: 'auto' });
+  assert.equal(auto.role, 'orchestrator');
+  assert(spawns[0].args.includes('Read,Grep,Glob,Edit,Write,Bash,PowerShell') && spawns[0].args.includes('C:\\perfil\\claude-orchestrator-auto.md'));
+  assert.equal(fixture.store.getOrchestratorMode('project-a'), 'auto');
+  assert.deepEqual(await handlers.get('agent:orchestrator-mode')(mainEvent, { cwd: 'C:\\projeto' }), { projectId: 'project-a', mode: 'auto' });
+});

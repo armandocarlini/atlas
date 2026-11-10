@@ -222,11 +222,14 @@ async function listModels(adapter, { env = process.env, execFileImpl = defaultEx
 // `.env` sem passar pela regra de `read`. As negações explícitas sobrescrevem
 // valores de outra configuração mesclada, onde a ordem das chaves decide a regra.
 const DENIED_TOOLS = ['bash', 'edit', 'write', 'patch', 'grep', 'task', 'webfetch', 'websearch', 'codesearch', 'external_directory', 'skill', 'todowrite'];
-function orchestratorPermission() {
+function orchestratorPermission(mode = 'coordinate') {
+  const read = { '*': 'allow', '*.env': 'deny', '*.env.*': 'deny', '*.env.example': 'allow' };
+  // Modo auto: as demais ferramentas seguem as permissões do próprio OpenCode.
+  if (mode === 'auto') return { read, 'atlas_*': 'allow' };
   return {
     '*': 'deny',
     ...Object.fromEntries(DENIED_TOOLS.map((tool) => [tool, 'deny'])),
-    read: { '*': 'allow', '*.env': 'deny', '*.env.*': 'deny', '*.env.example': 'allow' },
+    read,
     glob: 'allow',
     list: 'allow',
     'atlas_*': 'allow',
@@ -252,6 +255,10 @@ function assertOrchestratorSupport(adapter) {
 // tira shell e execução de código e ignora as configurações do usuário e do
 // repositório; só a ponte do ATLAS entra como servidor MCP.
 const CLAUDE_ORCHESTRATOR_TOOLS = 'Read,Grep,Glob';
+// Modo auto: escrita e shell, com as aprovações do Claude Code; `--restricted`
+// continua ignorando as configurações do usuário e do repositório.
+const CLAUDE_ORCHESTRATOR_AUTO_TOOLS = 'Read,Grep,Glob,Edit,Write,Bash,PowerShell';
+const ORCHESTRATOR_MODES = ['coordinate', 'auto'];
 
 // O Codex no Windows é um shim .cmd: a linha passa pelo cmd.exe. Os valores dos
 // `-c` usam strings literais TOML (aspas simples) e só caracteres sem significado
@@ -274,8 +281,12 @@ function codexBridgeArgs(bridge) {
   ];
 }
 
-function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, geminiProfile = null, bridge = null }) {
+function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, geminiProfile = null, bridge = null, orchestratorMode = 'coordinate' }) {
   if (role === 'orchestrator') assertOrchestratorSupport(adapter);
+  if (!ORCHESTRATOR_MODES.includes(orchestratorMode)) throw new Error('Modo da principal inválido.');
+  const auto = role === 'orchestrator' && orchestratorMode === 'auto';
+  // Kimi: o perfil de escrita da principal não foi verificado (docs/diagnosticos/KIMI_2_4_MCP.md).
+  if (auto && adapter.id === 'kimi-code') throw new Error('O modo em que a principal também edita ainda não foi verificado no Kimi Code. Ligue "Principal só coordena" ou escolha outro CLI.');
   if (model !== null && !MODEL_PATTERN.test(model)) throw new Error('Modelo inválido.');
   const modelArgs = model ? ['--model', model] : [];
   if (adapter.id === 'kimi-code') {
@@ -289,15 +300,15 @@ function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile 
     if (role === 'orchestrator') {
       // A permissão vale para a run inteira e os agentes padrão (build, plan) saem:
       // trocar de agente na TUI não devolve escrita nem shell à principal.
-      config.permission = orchestratorPermission();
+      config.permission = orchestratorPermission(orchestratorMode);
       config.agent = {
         build: { disable: true },
         plan: { disable: true },
         [ORCHESTRATOR_AGENT]: {
           description: 'Planejamento e acompanhamento do projeto autorizado no ATLAS',
           mode: 'primary',
-          prompt: orchestratorInstructions('atlas_'),
-          permission: orchestratorPermission(),
+          prompt: orchestratorInstructions('atlas_', { mode: orchestratorMode }),
+          permission: orchestratorPermission(orchestratorMode),
         },
       };
     }
@@ -315,7 +326,7 @@ function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile 
     const args = [...adapter.spawnArgs, ...modelArgs];
     if (bridge && claudeProfile?.mcpConfig) args.push('--mcp-config', claudeProfile.mcpConfig);
     if (role === 'orchestrator') {
-      args.push('--restricted', '--tools', CLAUDE_ORCHESTRATOR_TOOLS, '--strict-mcp-config', '--settings', claudeProfile.settings, '--append-system-prompt-file', claudeProfile.instructions);
+      args.push('--restricted', '--tools', auto ? CLAUDE_ORCHESTRATOR_AUTO_TOOLS : CLAUDE_ORCHESTRATOR_TOOLS, '--strict-mcp-config', '--settings', claudeProfile.settings, '--append-system-prompt-file', auto ? claudeProfile.instructionsAuto : claudeProfile.instructions);
     }
     // A versão conferida não deve mudar por autoatualização ao iniciar a run.
     return { args, env: { DISABLE_AUTOUPDATER: '1' } };
@@ -324,14 +335,16 @@ function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile 
     if (role !== 'orchestrator') return { args: [...adapter.spawnArgs, ...modelArgs], env: {} };
     if (!geminiProfile) throw new Error('Perfil do orquestrador não configurado.');
     // Shim .cmd: os caminhos do perfil passam pelo cmd.exe.
-    for (const file of [geminiProfile.policy, geminiProfile.systemPrompt]) {
+    const policy = auto ? geminiProfile.policyAuto : geminiProfile.policy;
+    const systemPrompt = auto ? geminiProfile.systemPromptAuto : geminiProfile.systemPrompt;
+    for (const file of [policy, systemPrompt]) {
       if (!CMD_SAFE_VALUE.test(file)) throw new Error('Pasta de perfis do ATLAS insegura para o cmd.exe; a principal no Gemini não pode iniciar.');
     }
     // Política: só leitura de arquivos (sem grep) e as ferramentas do ATLAS; só a
     // ponte do ATLAS como servidor MCP. O prompt da principal substitui o do CLI.
     return {
-      args: [...adapter.spawnArgs, ...modelArgs, '--policy', geminiProfile.policy, '--allowed-mcp-server-names', 'atlas'],
-      env: { GEMINI_SYSTEM_MD: geminiProfile.systemPrompt },
+      args: [...adapter.spawnArgs, ...modelArgs, '--policy', policy, '--allowed-mcp-server-names', 'atlas'],
+      env: { GEMINI_SYSTEM_MD: systemPrompt },
     };
   }
   if (adapter.id === 'codex') {

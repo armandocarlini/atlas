@@ -261,7 +261,20 @@ const MIGRATIONS = [{
     ALTER TABLE evidence_v13 RENAME TO evidence;
     CREATE INDEX evidence_by_project ON evidence(project_id, created_at);
   `,
+}, {
+  // Chave "Principal só coordena" (v0.2): por projeto, só do usuário. Sem linha,
+  // vale `coordinate` (somente leitura e delega tudo).
+  version: 14,
+  sql: `
+    CREATE TABLE orchestrator_settings (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id),
+      mode TEXT NOT NULL CHECK(mode IN ('coordinate', 'auto')),
+      version INTEGER NOT NULL, updated_at TEXT NOT NULL
+    ) STRICT;
+  `,
 }];
+
+const ORCHESTRATOR_MODES = ['coordinate', 'auto'];
 
 // Política padrão da v0.1 para pedidos de agente feitos pela sessão principal.
 const AGENT_REQUEST_POLICY = Object.freeze({ maxPending: 3, ttlMs: 15 * 60 * 1000, maxActiveAgents: 2 });
@@ -430,6 +443,25 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     ...agentFunctions,
     ...reviewApi,
     ...regression,
+
+    getOrchestratorMode(projectId) {
+      return db.prepare('SELECT mode FROM orchestrator_settings WHERE project_id = ?').get(projectId)?.mode || 'coordinate';
+    },
+
+    // Só o usuário escolhe, pelo diálogo de iniciar a principal (IPC da janela principal).
+    setOrchestratorMode({ projectId, mode }) {
+      if (!ORCHESTRATOR_MODES.includes(mode)) throw new Error('Modo da principal inválido.');
+      return transaction(db, () => {
+        if (!db.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId)) throw new Error('Projeto não encontrado.');
+        const current = db.prepare('SELECT mode FROM orchestrator_settings WHERE project_id = ?').get(projectId);
+        if (current?.mode === mode) return mode;
+        const at = now();
+        if (current) db.prepare('UPDATE orchestrator_settings SET mode = ?, version = version + 1, updated_at = ? WHERE project_id = ?').run(mode, at, projectId);
+        else db.prepare('INSERT INTO orchestrator_settings (project_id, mode, version, updated_at) VALUES (?, ?, 1, ?)').run(projectId, mode, at);
+        event({ projectId, type: 'orchestrator.mode', payload: { mode, actor: 'user' }, at });
+        return mode;
+      });
+    },
     sendMessage(request) {
       const payload = messagePayload(request);
       // Ator auditado do comando: o usuário pela interface ou a sessão de agente pela ponte MCP.

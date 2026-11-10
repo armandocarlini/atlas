@@ -580,6 +580,18 @@ try {
   await click(main, '.orchestrator-choice-note button', 'Escolher agente');
   await until(() => main.evaluate(`Boolean(document.querySelector('#orchestrator-choice-title'))`), 'escolha da principal aberta');
   assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]').value`), '', 'principal sem CLI pré-selecionado');
+  // Chave "Principal só coordena": ligada por padrão; desligada, o aviso explica o que muda.
+  const modeSwitch = "document.querySelector('.modal input[name=coordinate-only]')";
+  await until(() => main.evaluate(`${modeSwitch} && !${modeSwitch}.disabled`), 'modo da principal carregado');
+  assert.deepEqual(await main.evaluate(`[${modeSwitch}.checked, ${modeSwitch}.getAttribute('role'), ${modeSwitch}.getAttribute('aria-describedby')]`), [true, 'switch', 'orchestrator-mode-help'], 'só coordena ligada por padrão');
+  await main.evaluate(`${modeSwitch}.click()`);
+  await until(() => main.evaluate(`document.querySelector('#orchestrator-mode-help')?.innerText.includes('não passam pela revisão de tarefa')`), 'aviso do modo auto');
+  assert(await main.evaluate(`document.querySelector('#orchestrator-mode-help').innerText.includes('.env')`), 'aviso diz que o shell lê o .env');
+  const modeAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(modeAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in orchestrator mode warning');
+  await screenshot(main, 'orchestrator-mode-auto');
+  await main.evaluate(`${modeSwitch}.click()`);
+  assert(await main.evaluate(`${modeSwitch}.checked`));
   await choose(main, '.modal', 'cli', 'opencode');
   await until(() => main.evaluate(`document.querySelectorAll('.modal select[name=model] option').length === 3`), 'modelos para a principal');
   await choose(main, '.modal', 'model', 'fixture/modelo-forte');
@@ -589,7 +601,9 @@ try {
   assert.equal(await main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'ORQUESTRADOR')`), false, 'nenhuma principal fictícia');
   await click(main, '.modal button', 'Cancelar');
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'orchestrator choice closed');
+  assert.equal((await native('invoke', { channel: 'agent:orchestrator-mode', args: [{ cwd: extraProject }] })).mode, 'coordinate', 'modo escolhido salvo no projeto');
   console.log('PASS escolha explícita de CLI e modelo para sessão e principal, sem padrão e com falha honesta');
+  console.log('PASS chave "Principal só coordena": ligada por padrão, aviso do modo auto com contraste e escolha salva no projeto');
 
   // Gemini: a ponte não entra por run; o mesmo consentimento grava no settings.json da home de fixture.
   const geminiSettings = path.join(geminiHome, '.gemini', 'settings.json');

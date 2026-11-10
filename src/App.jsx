@@ -436,10 +436,14 @@ function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees,
   );
 }
 
-function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, onStart, functions = null }) {
+// `mode`: modo salvo no projeto ('coordinate' ou 'auto'); null enquanto carrega.
+function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, onStart, functions = null, mode = null }) {
   const dialogRef = useModalFocus();
   const orchestrator = (functions?.items || []).find((item) => item.kind === 'orchestrator') || null;
   const [choice, setChoice] = useState(() => choiceFromFunction(orchestrator));
+  // "Principal só coordena": ligada por padrão; só o usuário desliga, e vale para esta e as próximas runs.
+  const [coordinateOnly, setCoordinateOnly] = useState(mode !== 'auto');
+  useEffect(() => { if (mode) setCoordinateOnly(mode !== 'auto'); }, [mode]);
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section ref={dialogRef} className="modal" onMouseDown={(event) => event.stopPropagation()} aria-modal="true" role="dialog" aria-labelledby="orchestrator-choice-title">
@@ -450,12 +454,19 @@ function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, 
           </div>
           <button className="icon-button" onClick={onClose} title="Fechar" aria-label="Fechar"><X size={18} /></button>
         </header>
-        <form onSubmit={(event) => { event.preventDefault(); if (choice.ready && !busy) onStart(choice); }}>
+        <form onSubmit={(event) => { event.preventDefault(); if (choice.ready && !busy && mode) onStart({ ...choice, orchestratorMode: coordinateOnly ? 'coordinate' : 'auto' }); }}>
           <p className="agent-choice-note">{orchestrator?.adapterId ? 'Preenchido com o que você salvou para o Orquestrador. Confirme ou troque.' : 'Recomendado: o modelo mais capaz que você tiver; o Orquestrador planeja e delega, e um erro dele se espalha pelos agentes. Salve a escolha em Funções de agente para vir preenchida.'}</p>
           <AgentChoice adapters={adapters} value={choice} onChange={setChoice} disabled={busy} recommendation={pickRecommendation(functions?.recommendations, 'orquestrador', adapters)} />
-          <div className="scope-note"><ShieldCheck size={16} /><span>A principal planeja e delega: abre somente leitura, com as ferramentas do ATLAS deste projeto.{previousCli ? ` A execução anterior usou ${previousCli}; a identidade, as tarefas e as mensagens continuam.` : ''}</span></div>
+          <label className="regression-switch orchestrator-mode-switch">
+            <input type="checkbox" role="switch" name="coordinate-only" checked={coordinateOnly} disabled={busy || !mode} aria-describedby="orchestrator-mode-help" onChange={(event) => setCoordinateOnly(event.target.checked)} />
+            <span>Principal só coordena</span>
+          </label>
+          <p id="orchestrator-mode-help" className={`agent-choice-note${coordinateOnly ? '' : ' orchestrator-mode-warning'}`} role={coordinateOnly ? undefined : 'note'}>{coordinateOnly
+            ? 'Ela só lê e delega: todo trabalho com escrita vai para um agente, que passa pela revisão e pela suíte.'
+            : 'Ela pode fazer sozinha alterações pequenas e claras na pasta do projeto, com as aprovações do CLI, e delega o resto. Essas edições não passam pela revisão de tarefa nem pela suíte de regressão, e o shell do CLI consegue ler o .env. Vale para este projeto até você ligar de novo.'}</p>
+          <div className="scope-note"><ShieldCheck size={16} /><span>{coordinateOnly ? 'A principal planeja e delega: abre somente leitura, com as ferramentas do ATLAS deste projeto.' : 'A principal planeja, delega e faz o que é pequeno, com as ferramentas do ATLAS deste projeto.'}{previousCli ? ` A execução anterior usou ${previousCli}; a identidade, as tarefas e as mensagens continuam.` : ''}</span></div>
           {error && <div className="scope-note error-note" role="alert"><ShieldCheck size={16} /><span>{error}</span></div>}
-          <footer><button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancelar</button><button type="submit" className="button primary" disabled={busy || !choice.ready}>{busy ? 'Iniciando…' : 'Iniciar principal'}</button></footer>
+          <footer><button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancelar</button><button type="submit" className="button primary" disabled={busy || !choice.ready || !mode}>{busy ? 'Iniciando…' : 'Iniciar principal'}</button></footer>
         </form>
       </section>
     </div>
@@ -858,7 +869,12 @@ export default function App() {
   // Nova execução da principal: o usuário escolhe o CLI e o modelo de novo, e
   // pode trocar os dois; a identidade, as tarefas e as mensagens continuam.
   function openOrchestratorChoice(session) {
-    setOrchestratorChoice({ projectId: session?.projectId || currentProject?.id, cwd: session?.worktree || currentProject?.path || workingDirectory, previousCli: session?.cli || orchestratorStatus.previousCli || null, session: session || null, busy: false, error: '' });
+    const cwd = session?.worktree || currentProject?.path || workingDirectory;
+    setOrchestratorChoice({ projectId: session?.projectId || currentProject?.id, cwd, previousCli: session?.cli || orchestratorStatus.previousCli || null, session: session || null, busy: false, error: '', mode: null });
+    // Modo salvo no projeto; sem ele o diálogo não inicia, para não trocar o modo em silêncio.
+    desktop.getOrchestratorMode({ cwd })
+      .then(({ mode }) => setOrchestratorChoice((current) => current && current.cwd === cwd ? { ...current, mode } : current))
+      .catch((error) => setOrchestratorChoice((current) => current && current.cwd === cwd ? { ...current, error: cleanIpcError(error) } : current));
   }
 
   async function startOrchestrator(choice) {
@@ -870,7 +886,7 @@ export default function App() {
         await desktop.closeTerminalWindow(target.session.id);
         setDetachedTerminals((current) => current.filter((id) => id !== target.session.id));
       }
-      const agent = await desktop.openOrchestrator({ cwd: target.cwd, startNewRun: true, adapterId: choice.adapterId, model: choice.model || null });
+      const agent = await desktop.openOrchestrator({ cwd: target.cwd, startNewRun: true, adapterId: choice.adapterId, model: choice.model || null, orchestratorMode: choice.orchestratorMode });
       setSessions((current) => mergeAgentSessions(current, [agent]));
       setOrchestratorStatus((state) => state.projectId === target.projectId ? { projectId: target.projectId, loading: false, error: '' } : state);
       setOrchestratorChoice(null);
@@ -1889,7 +1905,7 @@ export default function App() {
         return session ? <div className="detached-terminal-window" style={{ right: 24 + index * 24, top: 72 + index * 24 }} key={id}><SessionCard session={session} selected popup desktop={desktop} theme={theme} onSelect={setSelectedId} onFocus={() => {}} onPopup={toggleTerminalPopup} onExit={updateSessionExit} onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)} /></div> : null;
       })}
 
-      {orchestratorChoice && <OrchestratorChoiceModal adapters={adapters} functions={agentFunctions} previousCli={orchestratorChoice.previousCli} busy={orchestratorChoice.busy} error={orchestratorChoice.error} onClose={() => { if (!orchestratorChoice.busy) setOrchestratorChoice(null); }} onStart={startOrchestrator} />}
+      {orchestratorChoice && <OrchestratorChoiceModal adapters={adapters} functions={agentFunctions} previousCli={orchestratorChoice.previousCli} busy={orchestratorChoice.busy} error={orchestratorChoice.error} mode={orchestratorChoice.mode} onClose={() => { if (!orchestratorChoice.busy) setOrchestratorChoice(null); }} onStart={startOrchestrator} />}
       {modal && <NewSessionModal kind={modal} onClose={() => setModal(null)} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} functions={desktop?.isDesktop ? agentFunctions : null} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
       {modelSwitch && <ModelSwitchModal session={modelSwitch} desktop={desktop} onClose={() => setModelSwitch(null)}
         onGoToTerminal={() => {

@@ -125,6 +125,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     await waitForCwd(projectHost, request.cwd);
 
     const { adapter, model } = resolved || await resolveLaunch(request.adapterId, request.model);
+    const orchestratorMode = role === 'orchestrator' ? (request.orchestratorMode || 'coordinate') : null;
     if (role === 'orchestrator') assertOrchestratorSupport(adapter);
     if (request.functionSlug !== undefined && request.functionSlug !== null && (typeof request.functionSlug !== 'string' || (store && !store.getFunctionBySlug?.(request.functionSlug)))) throw new Error('Função de agente desconhecida.');
 
@@ -149,7 +150,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
 
     let record;
     try {
-      const launch = launchFor({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge });
+      const launch = launchFor({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge, orchestratorMode: orchestratorMode || 'coordinate' });
       record = transport.spawn({
         file: adapter.executable,
         args: launch.args,
@@ -260,6 +261,15 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     return describe(agent);
   });
 
+  // Modo salvo no projeto, para o diálogo de iniciar a principal vir preenchido.
+  ipcMain.handle('agent:orchestrator-mode', async (event, request = {}) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a consultar a principal.');
+    await waitForCwd(projectHost, request?.cwd);
+    const project = request && projectHost.isAllowedCwd(request.cwd) ? projectHost.getProjectForCwd(request.cwd) : null;
+    if (!store || !project) throw new Error('Projeto não encontrado para a pasta autorizada.');
+    return { projectId: project.id, mode: store.getOrchestratorMode(project.id) };
+  });
+
   ipcMain.handle('agent:open-orchestrator', async (event, request = {}) => {
     if (!isMainSender(event)) throw new Error('Janela não autorizada a abrir o orquestrador.');
     if (!store || typeof orchestratorProfile !== 'string') throw new Error('Perfil do orquestrador não configurado.');
@@ -278,8 +288,11 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     }
     // Sem escolha do usuário a principal não inicia: a interface pergunta o CLI e o modelo.
     if (typeof request.adapterId !== 'string' || !request.adapterId) return { needsChoice: true, projectId: project.id, previousCli: existing?.cli || null };
+    // O modo vem do diálogo, escolhido pelo usuário; sem ele, vale o salvo no projeto.
+    if (request.orchestratorMode !== undefined) store.setOrchestratorMode({ projectId: project.id, mode: request.orchestratorMode });
+    const orchestratorMode = store.getOrchestratorMode(project.id);
     // A principal é sempre o Orquestrador: a run registra se a escolha seguiu o que está salvo nele.
-    const operation = createAgent({ adapterId: request.adapterId, model: request.model, name: 'ORQUESTRADOR', cwd: project.path, ...functionAudit('orquestrador', request.adapterId, request.model, { orchestrator: true }) }, { role: 'orchestrator', existing })
+    const operation = createAgent({ adapterId: request.adapterId, model: request.model, name: 'ORQUESTRADOR', cwd: project.path, orchestratorMode, ...functionAudit('orquestrador', request.adapterId, request.model, { orchestrator: true }) }, { role: 'orchestrator', existing })
       .finally(() => pendingOrchestrators.delete(project.id));
     pendingOrchestrators.set(project.id, operation);
     return operation;

@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   openRegressionLog: (request) => ipcRenderer.invoke('regression-run:open-log', request),
   listAgents: () => ipcRenderer.invoke('agent:list'),
   openOrchestrator: (request) => ipcRenderer.invoke('agent:open-orchestrator', request),
+  getOrchestratorMode: (request) => ipcRenderer.invoke('agent:orchestrator-mode', request),
   listTasks: (request) => ipcRenderer.invoke('task:list', request),
   createTask: (request) => ipcRenderer.invoke('task:create', request),
   cancelHandoff: (request) => ipcRenderer.invoke('task:cancel-handoff', request),
