@@ -172,7 +172,7 @@ async function chooseTerminalLayout(cdp, value) {
   await delay(200);
 }
 async function ensureStatus(cdp) {
-  await cdp.evaluate(`(() => { const button = [...document.querySelectorAll('.toolbar-actions button')].find(item => item.textContent === 'Estado'); if (button?.getAttribute('aria-expanded') === 'false') button.click(); })()`);
+  await cdp.evaluate(`document.querySelector('.workspace-status-trigger[aria-expanded=false]')?.click()`);
   await until(() => cdp.evaluate(`Boolean(document.querySelector('#workspace-status'))`), 'project status open');
 }
 async function ensurePanels(cdp) {
@@ -230,6 +230,12 @@ async function screenshot(cdp, name) {
 try {
   const main = await connect(await until(async () => (await pages()).find((item) => !item.url.includes('window=')), 'main window'));
   await until(() => main.evaluate(`Boolean(document.querySelector('.app-shell'))`), 'React ready');
+  const newSession = '.toolbar-actions [aria-label="Nova sessão de agente"]';
+  const newTerminal = '.toolbar-actions [aria-label="Abrir terminal PowerShell"]';
+  const appearance = '.title-actions [aria-label="Aparência e configurações"]';
+  const hideNavigation = '[data-column-id=left] .detach-control[aria-label="Ocultar navegação"]';
+  const hidePanels = '[data-column-id=right] .detach-control[aria-label="Ocultar painéis"]';
+  const popOutPanels = '[data-column-id=right] [aria-label="Destacar painéis em pop-up"]';
   if (process.platform === 'win32') {
     // Barra única: a barra nativa sai e os controles da janela ficam sobre a barra do ATLAS,
     // sem cobrir as ações dela; os botões continuam clicáveis dentro da área de arraste.
@@ -249,6 +255,13 @@ try {
     assert(chrome.actionsRight <= chrome.areaRight, `ações da barra sob os controles da janela: ${JSON.stringify(chrome)}`);
     assert.equal(chrome.barRegion, 'drag', 'a barra arrasta a janela');
     assert(chrome.buttonRegions.every((region) => region === 'no-drag'), 'botões da barra continuam clicáveis');
+    const brand = await main.evaluate(`(() => {
+      const mark = document.querySelector('.brand .atlas-statue-mark');
+      const word = document.querySelector('.brand .atlas-wordmark');
+      return { border: getComputedStyle(mark).borderLeftWidth, name: word?.getAttribute('aria-label'), width: word?.getBoundingClientRect().width };
+    })()`);
+    assert.equal(brand.border, '0px', 'a estátua não tem filete à esquerda');
+    assert(brand.name === 'ATLAS' && brand.width > 0, 'o lettering vetorial é visível e tem nome acessível');
     assert.equal(await main.evaluate(`window.atlasDesktop.setTitleBarOverlay({ color: 'red', symbolColor: '#ffffff' })`), false, 'cor inválida recusada');
     console.log('PASS barra única: controles da janela sobre a barra do ATLAS');
   }
@@ -297,7 +310,7 @@ try {
   assert.equal(await main.evaluate(`document.querySelector('.modal select[name=cli]')?.value ?? ''`), '', 'função não configurada não escolhe CLI');
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'diálogo da função fechado');
-  await click(main, '.toolbar-actions button', 'Sessão');
+  await click(main, newSession);
   await until(() => main.evaluate(`document.querySelector('.modal select[name=function]')?.value === ''`), 'botão Sessão não herda a função anterior');
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'diálogo de sessão fechado');
@@ -447,7 +460,7 @@ try {
   async function createTerminal(name) {
     await native('focus');
     await click(main, target);
-    await click(main, '.toolbar-actions button', 'Terminal');
+    await click(main, newTerminal);
     await until(() => main.evaluate(`document.querySelector('select[name=cwd]').value === ${JSON.stringify(worktree)}`), 'selected worktree in terminal dialog');
     await main.evaluate(`(() => { const field = document.querySelector('input[name=name]'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(field, ${JSON.stringify(name)}); field.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.modal form').requestSubmit(); })()`);
     await until(() => main.evaluate(`[...document.querySelectorAll('.session-card')].some(item => item.querySelector('h3')?.textContent === ${JSON.stringify(name)})`), name);
@@ -522,10 +535,14 @@ try {
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   assert(await main.evaluate(`!document.querySelector('.session-menu-popover') && document.activeElement === ${card('smoke-um')}.querySelector('.session-menu-trigger')`), 'Escape closes only the menu and restores its trigger focus');
   assert.equal(await main.evaluate(`document.querySelector('.workspace-panel-toggle[data-panel=right]').getAttribute('aria-expanded')`), panelsBeforeMenu, 'Menu Escape must not toggle underlying panels');
-  const controlOrder = () => main.evaluate(`[...document.querySelectorAll('.toolbar-actions > *')].map(item => item.dataset.panel || item.textContent.trim() || item.getAttribute('aria-label'))`);
+  const controlOrder = () => main.evaluate(`[...document.querySelectorAll('.toolbar-actions :is(button, select)')].map(item => item.dataset.panel || item.getAttribute('aria-label'))`);
   const controlsBefore = await controlOrder();
-  await click(main, '.workspace-panel-toggle[data-panel=left]');
-  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  assert.deepEqual(controlsBefore, ['left', 'right', 'Layout dos terminais', 'Estado do projeto', 'Abrir terminal PowerShell', 'Nova sessão de agente']);
+  await main.evaluate(`document.querySelector('.workspace-panel-toggle[data-panel=left]').focus()`);
+  await key(main, ' ', { code: 'Space', windowsVirtualKeyCode: 32 });
+  await until(() => main.evaluate(`!document.getElementById('atlas-navigation') && document.activeElement.getAttribute('aria-label') === 'Mostrar navegação' && document.activeElement.getAttribute('aria-pressed') === 'false'`), 'teclado oculta navegação e mantém o foco');
+  await key(main, ' ', { code: 'Space', windowsVirtualKeyCode: 32 });
+  await until(() => main.evaluate(`Boolean(document.getElementById('atlas-navigation')) && document.activeElement.getAttribute('aria-label') === 'Ocultar navegação' && document.activeElement.getAttribute('aria-pressed') === 'true'`), 'teclado mostra navegação');
   await click(main, '.workspace-panel-toggle[data-panel=right]');
   await click(main, '.workspace-panel-toggle[data-panel=right]');
   assert.deepEqual(await controlOrder(), controlsBefore, 'Panel toggles must not insert, remove or reorder toolbar controls');
@@ -542,7 +559,7 @@ try {
   await chooseTerminalLayout(main, 'spotlight');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-grid .session-card').length`), 1, 'Spotlight renders one terminal');
   assert.equal(await main.evaluate(`document.querySelectorAll('.terminal-subtabs [role=tab]').length`), 3, 'Spotlight keeps all visible sessions in subtabs');
-  await click(main, '[data-column-id=right] .detach-control', 'Ocultar');
+  await click(main, hidePanels);
   await native('resize', { width: 1440, height: 900 });
   await chooseTerminalLayout(main, 'sidebar');
   const sidebarWidths = await main.evaluate(`(() => { const cards = [...document.querySelectorAll('.session-grid .session-card')]; return cards.map(item => item.getBoundingClientRect().width); })()`);
@@ -600,7 +617,7 @@ try {
   await until(() => popup.evaluate(`Boolean(document.querySelector('.terminal-view'))`), 'popup terminal');
   await assertOverlayBar(popup, '.native-terminal-shell .session-header', 'pop-up de terminal');
   console.log('PASS barra única no pop-up de terminal');
-  await click(main, '.title-actions button', 'Aparência');
+  await click(main, appearance);
   await main.evaluate(`(() => { const field = document.querySelector('input[aria-label="Escolher cor de fundo personalizada"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, '#18222b'); field.dispatchEvent(new Event('input', { bubbles: true })); field.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await until(() => popup.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#18222b'`), 'custom background synced to terminal popup');
   await click(main, '.appearance-content footer button', 'Concluir');
@@ -614,7 +631,7 @@ try {
   await native('focus');
   await until(() => main.evaluate(`document.querySelector('.real-terminal').innerText.includes('ATLAS_POPUP_OK')`), 'scrollback reattached');
   console.log('PASS pop-up nativo, mesmo PID e histórico preservado ao reintegrar');
-  await click(main, '[data-column-id=right] .detach-control', 'Pop-up');
+  await click(main, popOutPanels);
   const panelPage = await until(async () => (await pages()).find((item) => item.url.includes('window=panels')), 'panel popup');
   const panel = await connect(panelPage);
   await until(() => panel.evaluate(`Boolean(document.querySelector('.native-inspector'))`), 'panel ready');
@@ -634,10 +651,10 @@ try {
   const panelsBounds = async () => (await native('windows')).find((item) => item.url.includes('window=panels'))?.bounds;
   const panelsResized = await until(panelsBounds, 'panels bounds after resize');
   await click(panel, '.inspector-tabs button', 'Evidências');
-  await click(panel, 'button', 'Reintegrar');
+  await click(panel, '[aria-label="Reintegrar painéis ao ATLAS"]');
   await until(() => main.evaluate(`Boolean(document.querySelector('[data-column-id=right]'))`), 'panels reattached');
   assert.equal(await main.evaluate(`document.querySelector('.inspector-tabs button.active').textContent.trim()`), 'Evidências');
-  await click(main, '[data-column-id=right] .detach-control', 'Pop-up');
+  await click(main, popOutPanels);
   await until(async () => (await pages()).find((item) => item.url.includes('window=panels')), 'panels reopened');
   const panelsReopened = await until(panelsBounds, 'panels bounds after reopen');
   assert(Math.abs(panelsReopened.width - panelsResized.width) <= 8, `largura restaurada: ${panelsReopened.width} vs ${panelsResized.width}`);
@@ -646,8 +663,8 @@ try {
   await main.evaluate(`window.atlasDesktop.closePanels()`);
   await until(() => main.evaluate(`Boolean(document.querySelector('[data-column-id=right]'))`), 'panels restored');
   console.log('PASS acompanhamento sempre no topo, tema sincronizado, aba e dimensões preservadas');
-  await click(main, '[data-column-id=left] .detach-control', 'Ocultar');
-  await click(main, '[data-column-id=right] .detach-control', 'Ocultar');
+  await click(main, hideNavigation);
+  await click(main, hidePanels);
   assert.equal(await main.evaluate(`document.querySelectorAll('[data-column-id]').length`), 1);
   await chooseTerminalLayout(main, 'grid');
   await sessionAction(main, card('smoke-um'), 'stop');
@@ -674,8 +691,8 @@ try {
   assert.equal(await main.evaluate(`window.atlasDesktop.listTerminals().then(({ terminals }) => terminals.some(item => item.name === 'smoke-um'))`), false);
   await main.evaluate(`window.atlasDesktop.closePty(${JSON.stringify(second.id)})`);
   await screenshot(main, 'terminals-focused');
-  await click(main, '.toolbar-actions button', 'Navegação');
-  await click(main, '.toolbar-actions button', 'Painéis');
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await click(main, '.workspace-panel-toggle[data-panel=right]');
   await until(() => main.evaluate(`[...document.querySelectorAll('.tree-project-name')].some(item => item.textContent.startsWith('Projeto adicional'))`), 'project tabs hydrated');
   await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
   await click(main, '.inspector-tabs button', 'Tarefas');
@@ -687,7 +704,7 @@ try {
   assert(await main.evaluate(`document.querySelector('.messages-panel')?.innerText.includes('lida em')`), 'read state persisted after renderer reload');
   await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Tarefas')).click()`);
   console.log('PASS ocultar e restaurar as duas colunas');
-  await click(main, '.toolbar-actions button', 'Sessão');
+  await click(main, newSession);
   await until(() => main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].some(item => item.textContent.includes('Kimi Code'))`), 'adapters listed in session modal');
   const adapterOption = await main.evaluate(`[...document.querySelectorAll('select[name=cli] option')].map(item => ({ text: item.textContent, value: item.value, disabled: item.disabled }))`);
   fs.writeFileSync(path.join(resultsDir, 'session-modal-adapters.json'), JSON.stringify(adapterOption, null, 2));
@@ -802,8 +819,11 @@ try {
   console.log('PASS consentimento do Gemini: settings.json exato, só referências ao token, conectar e remover preservando o restante');
   // Funções de agente (v0.2): Orquestrador e cinco padrão nascem sem CLI nem modelo;
   // a escolha salva só preenche e volta preenchida ao editar.
-  await until(() => main.evaluate(`document.querySelector('.functions-pending')?.textContent === '6 a configurar'`), 'aviso de funções a configurar');
-  await click(main, '.workspace-settings', 'Funções de agente6 a configurar');
+  assert.deepEqual(await main.evaluate(`[...document.getElementById('atlas-navigation').children].map(item => item.className)`), ['workspace-tree'], 'a navegação fica livre das ações de preferências');
+  await click(main, '.title-actions [aria-label="Paleta de comandos"]');
+  await until(() => main.evaluate(`document.querySelector('#palette-functions small')?.textContent === '6 a configurar'`), 'aviso de funções a configurar na paleta');
+  assert.deepEqual(await main.evaluate(`['reset-layout', 'appearance', 'functions'].map(id => document.querySelector('#palette-' + id + ' span')?.textContent)`), ['Restaurar layout padrão', 'Aparência e configurações', 'Funções de agente']);
+  await click(main, '#palette-functions');
   await until(() => main.evaluate(`document.querySelectorAll('.functions-modal .function-row').length === 6`), 'Orquestrador e cinco funções padrão');
   assert.deepEqual(await main.evaluate(`[...document.querySelectorAll('.functions-modal .function-row strong')].map(item => item.textContent)`), ['Orquestrador', 'Planejar', 'Explorar', 'Implementar', 'Revisar', 'Testes']);
   assert.equal(await main.evaluate(`[...document.querySelectorAll('.functions-modal .function-row-choice.pending')].length`), 6, 'todas nascem não configuradas');
@@ -820,7 +840,7 @@ try {
   await screenshot(main, 'agent-function-editor');
   await click(main, '.function-editor button[type=submit]', 'Salvar');
   await until(() => main.evaluate(`[...document.querySelectorAll('.functions-modal .function-row')].some(item => item.innerText.includes('Revisar') && item.innerText.includes('OpenCode · fixture/modelo-forte'))`), 'função salva com CLI e modelo');
-  await until(() => main.evaluate(`document.querySelector('.functions-pending')?.textContent === '5 a configurar'`), 'aviso atualizado');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.functions-modal .function-row-choice.pending').length`), 5, 'contagem de funções pendentes após salvar');
   // Regressão: a escolha salva volta preenchida ao editar, após a lista do CLI chegar.
   await click(main, '.functions-modal .function-row', 'RevisarRevisa um diff ou uma branch em busca de bugs, riscos e desvios do plano.OpenCode · fixture/modelo-forte');
   await until(() => main.evaluate(`document.querySelector('.function-editor select[name=model]')?.value === 'fixture/modelo-forte'`), 'modelo salvo preenchido');
@@ -839,9 +859,13 @@ try {
   await until(() => main.evaluate(`!document.querySelector('.function-editor') && ![...document.querySelectorAll('.functions-modal .function-row strong')].some(item => item.textContent === 'Documentar')`), 'função do usuário apagada');
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('.modal-backdrop')`), 'funções fechadas');
+  await click(main, '.title-actions [aria-label="Paleta de comandos"]');
+  await until(() => main.evaluate(`document.querySelector('#palette-functions small')?.textContent === '5 a configurar'`), 'aviso atualizado na paleta');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'paleta fechada');
   console.log('PASS funções de agente: padrão sem modelo, escolha salva preenchida, função do usuário criada e apagada');
   // Sessão manual: "Usar função" só preenche com o que foi salvo; sem função, nada vem escolhido.
-  await click(main, '.toolbar-actions button', 'Sessão');
+  await click(main, newSession);
   await until(() => main.evaluate(`Boolean(document.querySelector('.modal select[name=function]'))`), 'sessão manual oferece funções');
   assert.equal(await main.evaluate(`document.querySelector('.modal select[name=function]').value`), '', 'nenhuma função pré-selecionada');
   assert.equal(await main.evaluate(`[...document.querySelectorAll('.modal select[name=function] option')].some(item => item.value === 'orquestrador')`), false);
@@ -1093,8 +1117,16 @@ try {
   console.log('PASS suíte na revisão: parar na fila, falha com exit, aviso de arquivos de teste, log sob demanda e aceite livre');
   // "Abrir no ATLAS" por uma segunda instância real, como o Explorador faria.
   const openWith = async (target) => {
-    const second = spawn(electron, [path.join(root, 'scripts/smoke-app.cjs'), `--atlas-open=${target}`], { cwd: fixture, env: { ...env, ATLAS_SMOKE_SECOND_INSTANCE: '1' }, stdio: 'ignore', windowsHide: true });
-    await new Promise((resolve) => second.on('exit', resolve));
+    const second = spawn(electron, [path.join(root, 'scripts/smoke-app.cjs'), `--atlas-open=${target}`], { cwd: fixture, env: { ...env, ATLAS_SMOKE_SECOND_INSTANCE: '1' }, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+    let secondError = '';
+    second.stderr.on('data', (data) => { secondError = (secondError + data).slice(-2000); });
+    await new Promise((resolve, reject) => {
+      second.once('error', reject);
+      second.once('close', (code, signal) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Segunda instância falhou (${code ?? signal}): ${secondError}`));
+      });
+    });
   };
   const activeTab = () => main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]')?.textContent || ''`);
   await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => !item.textContent.startsWith('Projeto adicional') && !item.textContent.startsWith('Início'))?.click()`);
@@ -1130,7 +1162,7 @@ try {
   await until(() => main.evaluate(`!document.querySelector('.integration-modal')`), 'modal closed after cancel');
   assert.equal(await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].some(item => item.textContent.startsWith('Pendente'))`), false, 'No pending folder registered');
   console.log('PASS Abrir no ATLAS: segunda instância, subpasta abre o projeto, pasta nova com confirmação, substituição de pedido e caminho inválido');
-  await click(main, '.title-actions button', 'Aparência');
+  await click(main, appearance);
   await until(() => main.evaluate(`document.querySelector('.explorer-integration')?.innerText.includes('Não adicionada')`), 'explorer integration status');
   await click(main, '.explorer-integration button', 'Adicionar ao Explorador');
   assert((await main.evaluate(`document.querySelector('.explorer-integration').innerText`)).includes(`${explorerRoot}\\Directory\\shell\\ATLAS.Open`), 'Consent shows exact registry keys');
@@ -1145,7 +1177,7 @@ try {
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await main.evaluate(`document.querySelector('.appearance-modal')?.closest('.modal-backdrop')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
   console.log('PASS entrada do Explorador adicionada e removida por consentimento em chave de fixture');
-  await click(main, '.title-actions button', 'Aparência');
+  await click(main, appearance);
   await click(main, '.background-presets button', 'Névoa');
   assert.equal(await main.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#eef1f4');
   const modalAudit = await main.evaluate(`(${auditInterface.toString()})()`);
@@ -1155,7 +1187,7 @@ try {
   const lightAudit = await main.evaluate(`(${auditInterface.toString()})()`);
   fs.writeFileSync(path.join(resultsDir, 'audit-light-cockpit.json'), JSON.stringify(lightAudit, null, 2));
   await screenshot(main, 'cockpit-light');
-  await click(main, '.title-actions button', 'Aparência');
+  await click(main, appearance);
   const keyboardFocusInModal = await main.evaluate(`document.querySelector('[role=dialog]').contains(document.activeElement)`);
   await main.evaluate(`document.querySelector('.appearance-content footer button').focus()`);
   await key(main, 'Tab', { code: 'Tab', windowsVirtualKeyCode: 9 });
@@ -1169,7 +1201,16 @@ try {
   await native('resize', { width: 940, height: 700 });
   await delay(250);
   const canHideNavigationAtMinimumWidth = await main.evaluate(`document.querySelector('[data-column-id=left] .detach-control').getBoundingClientRect().width > 0`);
-  const canCreateAndReopenAtMinimumWidth = await main.evaluate(`[...document.querySelectorAll('.toolbar-actions button')].filter(item => item.textContent === 'Terminal').every(item => item.getBoundingClientRect().width > 0)`);
+  const visibleGlyphs = await main.evaluate(`['.palette-trigger svg', '.workspace-layout-control svg'].map(selector => document.querySelector(selector)?.getBoundingClientRect().width)`);
+  const panelSeams = await main.evaluate(`[
+    ['.sidebar', 'borderRightWidth'], ['.inspector.dock-right', 'borderLeftWidth'],
+    ['.cockpit-toolbar', 'borderBottomWidth'], ['.inspector-dockbar', 'borderBottomWidth'],
+    ...[...document.querySelectorAll('.workspace-body .column-drag-bar')].map(item => [item, 'borderBottomWidth'])
+  ].map(([target, property]) => getComputedStyle(typeof target === 'string' ? document.querySelector(target) : target)[property])`);
+  const reachableControls = await main.evaluate(`[...document.querySelectorAll('.toolbar-actions :is(button, select)')].filter(item => {
+    const { left, top, width, height } = item.getBoundingClientRect();
+    return width >= 24 && height >= 24 && item.contains(document.elementFromPoint(left + width / 2, top + height / 2));
+  }).length`);
   await screenshot(main, 'cockpit-compact');
   await native('resize', { width: 1440, height: 900 });
   await chooseTerminalLayout(main, 'grid');
@@ -1177,7 +1218,9 @@ try {
   console.log('PASS aparência clara/escura, fundo personalizado, persistência e saída dos PTYs');
   assert(keyboardFocusInModal && keyboardFocusTrapped, 'Modal must receive focus and keep Tab inside it');
   assert(canHideNavigationAtMinimumWidth, 'Navigation must be collapsible at minimum window width');
-  assert(canCreateAndReopenAtMinimumWidth, 'Terminal controls must remain available at minimum window width');
+  assert(visibleGlyphs.every((width) => width > 0), 'Os ícones da paleta e do layout devem permanecer visíveis');
+  assert(panelSeams.every((width) => width === '0px'), 'As junções das colunas usam superfícies, sem filetes');
+  assert.equal(reachableControls, controlsBefore.length, 'Todos os controles da barra precisam ficar acessíveis na largura mínima');
   assert.equal([...modalAudit, ...lightAudit, ...darkAudit].filter((item) => item.ratio < 4.5).length, 0, 'Low contrast text: inspect audit JSON files');
   await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
   await click(main, '#tree-session-reauthorized-fixture-2');

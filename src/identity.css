@@ -38,7 +38,6 @@ body { font-family: var(--font-ui); -webkit-font-smoothing: antialiased; }
 }
 .brand { align-self: center; gap: 10px; letter-spacing: 0; margin: 0; padding-right: 6px; }
 .brand .atlas-statue-mark { width: 24px; height: 36px; flex: 0 0 24px; margin-top: 4px; background: url("./assets/atlas-statue.webp") center top / contain no-repeat; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .5)); }
-.brand strong { font: 300 15px/1 var(--font-display); letter-spacing: .5em; color: var(--text); }
 
 .titlebar .project-tabs { display: flex; align-items: flex-end; min-width: 0; gap: 2px; padding: 0; border: 0; background: transparent; overflow-x: auto; overflow-y: hidden; }
 .project-tab { flex: 0 0 auto; min-width: 0; height: 38px; padding: 0 14px; font-size: 13px; font-weight: 500; border: 0; border-radius: var(--radius-control) var(--radius-control) 0 0; transition: background-color .15s, color .15s; }
@@ -62,7 +61,7 @@ body { font-family: var(--font-ui); -webkit-font-smoothing: antialiased; }
 
 /* ---------- Navegação lateral ---------- */
 .sidebar { background: linear-gradient(180deg, color-mix(in srgb, var(--gold) 4%, var(--surface)) 0%, var(--surface) 40%); }
-.sidebar-primary button, .sidebar-link, .mission-list button, .workspace-settings { border-radius: var(--radius-control); transition: background-color .15s, color .15s; }
+.sidebar-primary button, .sidebar-link, .mission-list button { border-radius: var(--radius-control); transition: background-color .15s, color .15s; }
 .sidebar-primary button.active { position: relative; background: var(--surface-raised); color: var(--text); border-color: transparent; box-shadow: inset 2px 0 0 var(--gold); }
 .sidebar-heading { color: var(--gold) !important; font-weight: 600; letter-spacing: .16em; }
 .local-card { border-radius: var(--radius-card); border-color: var(--border-soft); }

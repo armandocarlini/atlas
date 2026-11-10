@@ -16,7 +16,7 @@
 O ATLAS tem o titã do logo como personagem: a estátua de mármore que sustenta o globo escuro com órbitas de ouro. A interface usa as mesmas matérias: fundo obsidiana, texto marfim, ouro nas marcas e órbitas.
 
 - **Marca:** `src/assets/atlas-statue.webp`, recorte do logo com fundo transparente, local e sem rede. Aparece na barra de título (`AtlasMark`) e grande na tela do projeto sem sessões (`AtlasWelcome`).
-- **Wordmark:** "ATLAS" em Jost 300, espaçamento de .5em a .6em, sempre em maiúsculas.
+- **Wordmark:** na barra de título, "ATLAS" em vetor de traço fino, com letras espaçadas e os As sem travessa. Na tela inicial do projeto, o título usa Jost 300.
 - **Ouro (`--gold`):** marca, rótulos de seção e órbitas. Seleção de terminais e abas usa superfície e tipografia; ouro não é cor de estado nem de ação.
 - Estilos da identidade ficam em `src/identity.css`; a densidade e os layouts ficam em `src/workspace.css`, carregado por último.
 
@@ -75,7 +75,7 @@ O ATLAS tem o titã do logo como personagem: a estátua de mármore que sustenta
 - Panes de sessão são contíguos: zero intervalo, raio, borda ou sombra. O terminal começa logo abaixo do cabeçalho de 32px.
 - Seleção usa superfície e peso tipográfico, sem filetes, sublinhados ou anéis decorativos; o foco de teclado continua visível.
 - Modais: material elevado (raio de 16px), scrim com desfoque, que vira fundo sólido com `prefers-reduced-transparency`.
-- Gradientes só como luz quente sutil no topo da barra de título e da navegação. Sem glow em controles.
+- Transições sutis de tom unem as colunas ao fundo do workspace. A barra de título conserva a luz quente da marca. Sem glow em controles.
 
 ---
 
@@ -128,6 +128,10 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 - No macOS a barra nativa continua em todas as janelas.
 - A árvore organiza visualmente projetos, repositórios, worktrees e sessões com chevrons, ícones e indentação. Clicar no nome do projeto também o expande; trocar de projeto não recolhe a árvore anterior. "Espera você" aparece somente quando há decisões e leva à principal parada, aos pedidos e às revisões do projeto ativo. Cada item leva ao lugar da decisão; o painel não duplica aprovações. Estado das sessões por ponto e texto (para leitores de tela, "ativa" fica oculto visualmente).
 - A paleta de comandos (Ctrl Shift P ou F1) reúne as ações, os projetos e os terminais. O atalho vale com o foco no terminal, e o que se digita nela nunca chega ao PTY. Toda ação nova entra também na paleta.
+- A barra de título mostra a paleta em uma cápsula com lupa e atalho. Aparência usa um ícone com nome acessível.
+- A barra do workspace agrupa Navegação, Painéis e o seletor de layout. A superfície indica as colunas visíveis. Estado do projeto e criação de terminal usam ícones. O botão **+** de nova sessão usa a cor de destaque do tema. Ícones de ação têm nome acessível, dica ao passar o ponteiro e foco visível.
+- Os cabeçalhos de projetos e painéis usam ícones para ações compactas. Restaurar layout, Funções de agente e Aparência continuam disponíveis pela paleta, com a contagem de funções pendentes na entrada de Funções de agente.
+- Navegação, workspace e Painéis compartilham a altura de cabeçalho quando encaixados. As junções usam mudanças graduais de tom. A seleção na árvore e nas abas de painel usa superfícies arredondadas e peso tipográfico.
 
 - Navegação e Painéis podem ser ocultados independentemente e recuperados pela toolbar. Painéis começam recolhidos numa instalação nova. Estado do projeto e integrações abre sob demanda.
 - Os mesmos controles permanecem disponíveis na largura desktop mínima de 940px. A navegação mantém rótulos textuais e seu conteúdo rola sem sobreposição.
