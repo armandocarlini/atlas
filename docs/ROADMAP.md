@@ -92,7 +92,7 @@ Em andamento, a pedido do mantenedor (06/11/2026). A direção está definida: m
 Pontos observados em 27/10/2026 que continuam valendo:
 
 - **Terminal com a aparência do terminal do sistema.** O processo já é nativo (ConPTY), mas o desenho no xterm.js usa as cores do ATLAS: fundo do tema, cursor e seleção na cor de destaque, paleta ANSI padrão do xterm, fonte 13 com entrelinha 1,25, sem margem interna. Possível caminho: ler, só para leitura, o `settings.json` do Terminal do Windows (fonte, tamanho, esquema de cores, cursor) e cair no padrão do Windows (Cascadia Mono, Campbell) quando ele não existir; copiar e colar como no Windows; cor do ATLAS só na moldura do card.
-- **Continuidade ao reabrir.** A primeira fase (PR #80) reabre os agentes e a principal ativos no último fechamento normal. O ATLAS tenta retomar a conversa e mostra o resultado. O histórico abre pela árvore, sob demanda. A segunda fase recria os terminais PowerShell na pasta escolhida ao abrir. A retenção da última tela continua em avaliação. Plano em `docs/planos/PLANO_CONTINUIDADE_SESSOES.md`.
+- **Continuidade ao reabrir.** Entregue nos PRs #80 e #81. Agentes e principal ativos no último fechamento normal reabrem com tentativa de retomar a conversa. Terminais PowerShell ativos reabrem na pasta escolhida ao iniciar, com um processo novo. O histórico abre pela árvore, sob demanda. A retenção da última tela continua em avaliação. Plano em `docs/planos/PLANO_CONTINUIDADE_SESSOES.md`.
 
 ## Decisões em aberto
 
