@@ -751,7 +751,7 @@ try {
   // uma oferta aberta e uma tarefa aceita e bloqueada. O usuário cancela e devolve.
   const delegationStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
   try {
-    const agentRun = delegationStore.startSession({ id: 'smoke-agente', projectId: extraProjectId, name: 'agente-fixture', adapterId: 'fixture', cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'orchestrator', createdAt: new Date().toISOString() });
+    const agentRun = delegationStore.startSession({ id: 'smoke-agente', projectId: extraProjectId, name: 'agente-fixture', adapterId: 'opencode', model: 'fixture/modelo-forte', functionSlug: 'implementar', functionOverridden: false, cli: 'Fixture Agent', version: '1.0.0', cwd: fs.realpathSync(extraProject), origin: 'orchestrator', createdAt: new Date().toISOString() });
     offeredTaskId = delegationStore.createTask({ projectId: extraProjectId, title: 'Delegada aberta', acceptance: 'Oferta visível', idempotencyKey: 'smoke-delegation-task-01' }).id;
     blockedTaskId = delegationStore.createTask({ projectId: extraProjectId, title: 'Delegada bloqueada', acceptance: 'Bloqueio visível', idempotencyKey: 'smoke-delegation-task-02' }).id;
     delegationStore.offerHandoff({ projectId: extraProjectId, fromSessionId: 'smoke-orchestrator', toSessionId: 'smoke-agente', taskId: offeredTaskId, objective: 'Revisar a divergência ANSI.\nSegunda linha do objetivo.', nextSteps: 'Escrever a regressão primeiro.', idempotencyKey: 'smoke-delegation-offer-01' });
@@ -800,6 +800,18 @@ try {
   await until(() => main.evaluate(`document.querySelector('.agent-request')?.innerText.includes('executor-worktree')`), 'worktree request shown');
   const worktreeCard = await main.evaluate(`document.querySelector('.agent-request').innerText`);
   assert(worktreeCard.includes('Tarefa: Delegada bloqueada') && worktreeCard.includes('não tem repositório Git') && worktreeCard.includes('na worktree da tarefa'), `Worktree request explains plan: ${worktreeCard}`);
+  // Revisão cruzada: a mesma IA que já trabalhou na tarefa (outra função) gera aviso, sem bloquear.
+  assert.equal(await main.evaluate(`document.querySelectorAll('.agent-request-same-ai').length`), 0, 'sem escolha, sem aviso');
+  await choose(main, '.agent-request', 'cli', 'opencode');
+  await until(() => main.evaluate(`[...document.querySelectorAll('.agent-request select[name=model] option')].some((item) => item.value === 'fixture/modelo-forte')`), 'modelos no cartão');
+  await choose(main, '.agent-request', 'model', 'fixture/modelo-forte');
+  await until(() => main.evaluate(`document.querySelector('.agent-request-same-ai')?.innerText.includes('Mesma IA que já trabalhou nesta tarefa como Implementar')`), 'aviso de mesma IA');
+  assert((await main.evaluate(`document.querySelector('.agent-request-same-ai').innerText`)).includes('OpenCode · fixture/modelo-forte'));
+  assert(!(await main.evaluate(`[...document.querySelectorAll('.agent-request button')].find((item) => item.textContent.trim() === 'Aprovar e iniciar').disabled`)), 'o aviso não bloqueia a aprovação');
+  const sameAiAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(sameAiAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in same-AI warning');
+  await screenshot(main, 'agent-request-same-ai');
+  console.log('PASS revisão cruzada: cartão avisa a mesma IA que já trabalhou na tarefa, sem bloquear');
   await click(main, '.agent-request button', 'Recusar');
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'worktree request rejected');
   console.log('PASS pedido com worktree mostra tarefa e recusa honesta sem repositório Git');

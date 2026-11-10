@@ -55,7 +55,7 @@ Plano: `docs/planos/PLANO_V0_2_SUITE_DE_REGRESSAO.md`, entregue nas fases 1 a 4 
 - o prazo é escolhido pelo usuário, inclusive "sem prazo", e há o botão "Parar suíte";
 - o log completo fica em arquivo.
 
-### 4. Equipe com várias IAs: Claude Code, Codex, Gemini e revisão cruzada — plano aprovado, fases 1 a 5 entregues
+### 4. Equipe com várias IAs: Claude Code, Codex, Gemini e revisão cruzada — entregue
 
 Plano: `docs/planos/PLANO_V0_2_EQUIPE_MULTI_IA.md`. A investigação da fase 1 (`docs/diagnosticos/CLAUDE_CODEX_FASE1.md`) confirmou o Claude Code como agente e principal e o Codex só como agente; o Gemini foi investigado depois da instalação (`docs/diagnosticos/GEMINI_FASE4.md`). Os adaptadores do Claude Code (PR #63), do Codex (PR #65) e do Gemini (fase 4, com a ponte por consentimento, decisão do mantenedor em 09/11/2026) já estão no produto. Escopo escolhido pelo mantenedor entre 04 e 06/11/2026:
 
@@ -101,6 +101,6 @@ Pontos observados em 27/10/2026 que continuam valendo:
 | LLM por função | Entregue; recomendações iniciais adiadas (benchmarks do mantenedor) |
 | Troca de modelo sem perder a tela | Entregue; a principal no Kimi espera a correção da ponte e a preservação efetiva do perfil de leitura nas versões 2.4 |
 | Suíte de regressão liga/desliga | Entregue (PRs #53 a #56) |
-| Equipe com várias IAs | Plano aprovado em 08/11/2026; muda duas invariantes da principal (somente leitura por padrão e visão de CLI e modelo) |
+| Equipe com várias IAs | Entregue (PRs #59 a #69); mudou duas invariantes da principal (somente leitura por padrão e visão de CLI e modelo) |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |

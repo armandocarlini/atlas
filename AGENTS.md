@@ -63,7 +63,7 @@ Não quebre estas regras sem plano e decisão explícita do mantenedor.
   - **Gemini:** a entrada `atlas` só vai para o `settings.json` do Gemini com consentimento explícito na interface e sai pelo mesmo diálogo. Ela guarda só as referências `$ATLAS_MCP_ENDPOINT` e `$ATLAS_MCP_TOKEN`, nunca o token. A política e o prompt da principal entram só pela run (`--policy`, `GEMINI_SYSTEM_MD`). O ATLAS não passa `--skip-trust`: confiar na pasta é decisão do usuário.
   - **Codex:** só agente. A ponte entra por `-c mcp_servers.atlas.*` só na run, com endpoint e token repassados do ambiente (`env_vars`), sem gravar no `config.toml`. A principal Codex é recusada até haver prova de somente leitura (`docs/diagnosticos/CLAUDE_CODEX_FASE1.md`).
   - **Escopo:** a ponte fica inerte fora do ATLAS. Dentro dele, oferece só dados do projeto, com identidade vinda do token da run.
-  - **Funções:** `agent_functions_list` não expõe CLI nem modelo à principal; ela escolhe a função pelo trabalho, e o usuário confirma ou troca no cartão.
+  - **Funções e revisão cruzada:** `agent_functions_list` mostra à principal o CLI e o modelo de cada função, e `tasks_list` mostra em `workedBy` quem já trabalhou em cada tarefa (registro do ATLAS, não do agente). Ela escolhe a função pelo trabalho e, para revisar, prefere outra IA; **não escolhe sozinha**: o cartão vem preenchido pela função, avisa quando a IA escolhida já trabalhou na tarefa com outra função, e o usuário confirma ou troca.
 - **Abrir no ATLAS:**
   - `--atlas-open=<pasta>` é validado e canonicalizado, nunca interpolado em shell;
   - pasta nova pede confirmação, e nunca roda `git init`;

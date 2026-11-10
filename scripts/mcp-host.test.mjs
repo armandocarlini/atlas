@@ -443,6 +443,7 @@ test('delegação pela ponte real: oferta, pendência não confiável, aceite, p
   const blocked = await manual.call('tasks_update', { taskId: created.id, kind: 'blocked', note: 'Sem fixture.' });
   assert.deepEqual(blocked.value, { taskId: created.id, state: 'blocked', blockedReason: 'Sem fixture.' });
   const listed = (await orchestrator.call('tasks_list', {})).value;
+  assert(listed.tasks.every((item) => Array.isArray(item.workedBy)), 'tasks_list traz workedBy em toda tarefa');
   assert.match(listed.notice, /não confiável/);
   assert.deepEqual(listed.tasks.map(({ state, assignedSessionId, assigneeName, blockedReason, openHandoff, mine }) => ({ state, assignedSessionId, assigneeName, blockedReason, openHandoff, mine })), [
     { state: 'blocked', assignedSessionId: 'manual-a', assigneeName: 'sessao-manual-a', blockedReason: 'Sem fixture.', openHandoff: null, mine: false },
@@ -479,7 +480,7 @@ test('regressão: a principal vê claim perdido, recusa com motivo e repetição
   assert.deepEqual(tasks.get('Recusada').lastClosedHandoff, { id: rejectedOffer.value.handoffId, toSessionId: 'manual-a', state: 'rejected', reason: 'Fora do escopo.' });
 });
 
-test('funções pela ponte: lista sem CLI nem modelo, pedido com função e função de cada sessão', async (t) => {
+test('funções pela ponte: lista com CLI e modelo de cada função, pedido com função e função de cada sessão', async (t) => {
   const { store, host, tokens, children } = await harness(t);
   const revisar = store.getFunctionBySlug('revisar');
   store.updateFunction({ id: revisar.id, expectedVersion: revisar.version, adapterId: 'opencode', model: 'prov/segredo-local' });
@@ -492,7 +493,10 @@ test('funções pela ponte: lista sem CLI nem modelo, pedido com função e fun�
   assert.equal(listed.isError, false, listed.text);
   assert.deepEqual(listed.value.functions.map((item) => item.slug), ['planejar', 'explorar', 'implementar', 'revisar', 'testes'], 'sem a função reservada da principal');
   assert.equal(listed.value.functions.find((item) => item.slug === 'revisar').configured, true);
-  assert(!listed.text.includes('opencode') && !listed.text.includes('segredo-local'), 'CLI e modelo ficam com o usuário');
+  // Revisão cruzada (decisão do mantenedor, 06/11/2026): a principal vê CLI e modelo para evitar a mesma IA; quem decide é o usuário no cartão.
+  const revisarListed = listed.value.functions.find((item) => item.slug === 'revisar');
+  assert.deepEqual([revisarListed.adapter, revisarListed.model], ['opencode', 'prov/segredo-local']);
+  assert(listed.value.functions.filter((item) => !item.configured).every((item) => item.adapter === null && item.model === null));
   const unknown = await orchestrator.call('agents_request', { name: 'revisor', purpose: 'Revisar.', function: 'auditar' });
   assert.equal(unknown.isError, true);
   assert.match(unknown.text, /Função desconhecida: auditar\. Use uma de: planejar, explorar, implementar, revisar, testes\./);

@@ -27,6 +27,7 @@ test('perfil principal é estático, local ao perfil do app e limitado à leitur
   assert(PROFILE.includes('worktree: true') && PROFILE.includes('remover worktrees'), 'principal conhece a worktree por tarefa e seus limites');
   assert(PROFILE.includes('só o usuário conclui') && PROFILE.includes('estado done'), 'principal não afirma conclusão antes do aceite');
   assert(PROFILE.includes('lastReview.regression') && PROFILE.includes('uma suíte verde não conclui a tarefa'), 'principal lê a suíte como verificação que só informa');
+  assert(PROFILE.includes('diferente das que aparecem em workedBy') && PROFILE.includes('pode manter a mesma IA'), 'principal prefere outra IA para revisar, e o usuário decide');
   fs.writeFileSync(filename, 'modified prompt');
   assert.equal(ensureOrchestratorProfile(directory), filename);
   assert.equal(fs.readFileSync(filename, 'utf8'), PROFILE);

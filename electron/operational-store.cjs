@@ -304,6 +304,16 @@ const AGENT_REQUEST_SELECT = `SELECT r.*, s.name AS requester_name, t.title AS t
   LEFT JOIN tasks t ON t.id = r.task_id
   LEFT JOIN worktrees w ON w.request_id = r.id`;
 
+// IAs que já detiveram o claim de cada tarefa, na ordem em que o pegaram: CLI,
+// modelo (o informado na troca, se houver) e função da run. Vem dos registros do
+// ATLAS (`task.assigned` + `agent_runs`), nunca do que o agente diz de si.
+const TASK_WORKERS_SELECT = `SELECT json_extract(e.payload, '$.taskId') AS task_id, r.adapter_id AS adapter,
+    COALESCE(r.current_model, r.model) AS model, r.function_slug AS function_slug, MIN(e.sequence) AS first_sequence
+  FROM audit_events e JOIN agent_runs r ON r.id = e.run_id
+  WHERE e.project_id = ? AND e.type = 'task.assigned'
+  GROUP BY task_id, adapter, model, function_slug
+  ORDER BY first_sequence`;
+
 function agentRequestRow(row) {
   return row && {
     id: row.id, projectId: row.project_id, requestedBy: row.requested_by, requesterName: row.requester_name || null, name: row.name, purpose: row.purpose,
@@ -416,6 +426,15 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       loseClaims(runId, at);
       return true;
     });
+  }
+
+  // { taskId: [{ adapter, model, function }] } para a revisão cruzada.
+  function listTaskWorkers(projectId) {
+    const workers = {};
+    for (const row of db.prepare(TASK_WORKERS_SELECT).all(projectId)) {
+      (workers[row.task_id] ||= []).push({ adapter: row.adapter || null, model: row.model || null, function: row.function_slug || null });
+    }
+    return workers;
   }
 
   return {
@@ -557,9 +576,17 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(id));
       });
     },
+    listTaskWorkers,
+
     listAgentRequests(projectId) {
       transaction(db, () => expirePending(projectId, now()));
-      return db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.project_id = ? ORDER BY r.created_at, r.id`).all(projectId).map(agentRequestRow);
+      return db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.project_id = ? ORDER BY r.created_at, r.id`).all(projectId).map(agentRequestRow)
+        // O cartão avisa quando a IA escolhida já trabalhou na tarefa com outra função.
+        .map((request, index, all) => {
+          if (!request.taskId) return request;
+          all.workers ||= listTaskWorkers(projectId);
+          return { ...request, taskWorkedBy: all.workers[request.taskId] || [] };
+        });
     },
     getAgentRequest(projectId, requestId) {
       transaction(db, () => expirePending(projectId, now()));
