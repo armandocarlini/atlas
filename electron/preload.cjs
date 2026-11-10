@@ -14,8 +14,9 @@ function subscribe(channel, callback, filter = () => true) {
 contextBridge.exposeInMainWorld('atlasDesktop', {
   isDesktop: true,
   windowKind,
-  // 'overlay': a barra nativa saiu e os controles da janela ficam sobre a barra do ATLAS.
-  windowChrome: windowKind === 'main' && query.get('chrome') === 'overlay' ? 'overlay' : 'native',
+  // 'overlay': a barra nativa saiu e os controles da janela ficam sobre a barra do ATLAS
+  // (principal, pop-up de terminal e Acompanhamento).
+  windowChrome: query.get('chrome') === 'overlay' ? 'overlay' : 'native',
   setTitleBarOverlay: (colors) => ipcRenderer.invoke('window-chrome:set-overlay', colors),
   sessionId: query.get('session'),
   openPanels: () => ipcRenderer.invoke('panels:open'),

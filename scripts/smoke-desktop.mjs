@@ -189,6 +189,27 @@ async function command(cdp, selector, input) {
   for (const char of input) await key(cdp, char, { text: char });
   await key(cdp, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
 }
+// Barra única nas janelas secundárias: controles do sistema sobre a barra do ATLAS, sem cobrir ações.
+async function assertOverlayBar(cdp, selector, label) {
+  if (process.platform !== 'win32') return;
+  const bar = await until(() => cdp.evaluate(`(() => {
+    const overlay = navigator.windowControlsOverlay;
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!overlay?.visible || !element) return null;
+    const area = overlay.getTitlebarAreaRect();
+    const rect = element.getBoundingClientRect();
+    const region = (node) => getComputedStyle(node).getPropertyValue('-webkit-app-region');
+    const controls = [...element.querySelectorAll('button, select')].filter((node) => node.getBoundingClientRect().width > 0);
+    return { classed: document.documentElement.classList.contains('window-overlay'), top: rect.top, height: rect.height, areaHeight: area.height, areaRight: area.x + area.width, controlsRight: Math.max(0, ...controls.map((node) => node.getBoundingClientRect().right)), region: region(element), controlRegions: controls.map(region) };
+  })()`), `barra única em ${label}`);
+  assert.equal(bar.classed, true, `${label}: janela marcada com overlay`);
+  assert.equal(bar.top, 0, `${label}: a barra do ATLAS é a primeira e única`);
+  assert.equal(bar.height, 32, `${label}: barra de 32px`);
+  assert.equal(bar.areaHeight, 31, `${label}: controles 1px abaixo da barra`);
+  assert(bar.controlsRight <= bar.areaRight, `${label}: ações sob os controles da janela: ${JSON.stringify(bar)}`);
+  assert.equal(bar.region, 'drag', `${label}: a barra arrasta a janela`);
+  assert(bar.controlRegions.length > 0 && bar.controlRegions.every((region) => region === 'no-drag'), `${label}: botões continuam clicáveis`);
+}
 async function screenshot(cdp, name) {
   const params = new URL(cdp.page.url).searchParams;
   const target = params.get('session') ? { session: params.get('session') } : params.get('window') === 'panels' ? { kind: 'panels' } : {};
@@ -563,6 +584,8 @@ try {
   const popupPage = await until(async () => (await pages()).find((item) => item.url.includes('window=terminal')), 'popup');
   const popup = await connect(popupPage);
   await until(() => popup.evaluate(`Boolean(document.querySelector('.terminal-view'))`), 'popup terminal');
+  await assertOverlayBar(popup, '.native-terminal-shell .session-header', 'pop-up de terminal');
+  console.log('PASS barra única no pop-up de terminal');
   await click(main, '.title-actions button', 'Aparência');
   await main.evaluate(`(() => { const field = document.querySelector('input[aria-label="Escolher cor de fundo personalizada"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, '#18222b'); field.dispatchEvent(new Event('input', { bubbles: true })); field.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await until(() => popup.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#18222b'`), 'custom background synced to terminal popup');
@@ -581,6 +604,8 @@ try {
   const panelPage = await until(async () => (await pages()).find((item) => item.url.includes('window=panels')), 'panel popup');
   const panel = await connect(panelPage);
   await until(() => panel.evaluate(`Boolean(document.querySelector('.native-inspector'))`), 'panel ready');
+  await assertOverlayBar(panel, '.native-inspector > .column-drag-bar', 'Acompanhamento');
+  console.log('PASS barra única no Acompanhamento');
   await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
   await until(() => panel.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa real · smoke')`), 'task snapshot synced to popup');
   assert.equal(await panel.evaluate(`document.querySelectorAll('.persistent-tasks button').length`), 1, 'Popup lists task selection but cannot create tasks');
