@@ -141,10 +141,10 @@ Esses itens não foram descartados; estão posicionados no roadmap para não imp
 
 Direção aprovada pelo mantenedor em 09/11/2026: o Alethe passa a ser a referência de organização do workspace. A identidade continua própria: mármore, marfim e ouro, com a estátua na marca e nos estados vazios. O protótipo anterior é contexto histórico.
 
-- Barra superior compacta de 42px com marca, contexto e ações; projetos ficam na navegação lateral recolhível.
-- Árvore de projetos, repositórios, worktrees e sessões; "Espera você" leva às aprovações e revisões existentes.
+- Barra superior compacta de 36px com marca, contexto e ações; projetos ficam na navegação lateral recolhível.
+- Árvore visualmente hierárquica de projetos, repositórios, worktrees e sessões; "Espera você" aparece só com decisões e leva às aprovações e revisões existentes.
 - Quatro layouts: Grade, Destaque, Principal + agentes e Abas. Os modos de sessão única mantêm as sessões visíveis em uma faixa navegável por teclado.
-- Terminais ocupam o espaço restante, com intervalos e raios de 3px, sem rodapé repetido nem sombras decorativas nos panes.
+- Terminais contíguos ocupam o espaço restante, sem intervalos, raios, bordas, rodapé repetido ou sombras decorativas nos panes. Cabeçalhos mostram só estado, função e menu; a seleção usa superfície e tipografia, sem filetes.
 - Painéis e estado de integrações ficam sob demanda. Avisos que exigem decisão continuam visíveis.
 - Ocultar uma sessão desmonta sua visualização, sem encerrar ou criar PTY. Restaurar reconecta ao processo e ao scrollback em memória.
 - Layout, sessões ocultas e visibilidade das colunas persistem localmente. Isso não significa persistência de saída de terminal nem sobrevivência do processo ao fechamento do app.

@@ -297,11 +297,65 @@ function HarnessIntro({ harness, session }) {
   );
 }
 
+function SessionActions({ session, onFocus, onPopup, onHide, onRestart, onSendDiscovery, onSwitchModel, focused, detached, popup }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  const actions = [
+    session.roleKind === 'orchestrator' && session.exited && onRestart && { id: 'restart', label: 'Nova execução', run: () => onRestart(session) },
+    onSwitchModel && session.ptyId && !session.exited && { id: 'model', label: 'Trocar modelo', run: () => onSwitchModel(session), disabled: !canSwitch(session).allowed, title: canSwitch(session).allowed ? 'Informe o modelo trocado no terminal' : canSwitch(session).reason },
+    onSendDiscovery && session.roleKind === 'agent' && !session.archived && { id: 'discovery', label: 'Enviar descoberta', run: () => onSendDiscovery(session) },
+    !session.archived && { id: 'popup', label: detached || popup ? 'Reintegrar' : 'Abrir em pop-up', run: () => onPopup(session) },
+    !popup && !detached && { id: 'focus', label: focused ? 'Voltar à grade' : 'Focar terminal', run: () => onFocus(session.id), ariaLabel: `Focar ${session.name}` },
+    !popup && !detached && onHide && { id: 'hide', label: 'Ocultar terminal', run: () => onHide(session.id), ariaLabel: `Ocultar ${session.name} sem encerrar o processo` },
+  ].filter(Boolean);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function closeOutside(event) {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    }
+    function closeEscape(event) {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setOpen(false);
+      triggerRef.current?.focus();
+    }
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeEscape);
+    };
+  }, [open]);
+
+  if (!actions.length) return null;
+  return <div className="session-menu" ref={rootRef}>
+    <button ref={triggerRef} type="button" className="session-control session-menu-trigger" aria-label={`Ações de ${session.name}`} title="Ações do terminal" aria-expanded={open} aria-controls={`session-actions-${session.id}`} onClick={(event) => { event.stopPropagation(); setOpen((current) => !current); }}><MoreHorizontal size={15} aria-hidden="true" /></button>
+    {open && <div id={`session-actions-${session.id}`} className="session-menu-popover" aria-label={`Ações de ${session.name}`}>
+      {actions.map((action) => <button
+        type="button"
+        className="session-menu-item"
+        key={action.id}
+        data-action={action.id}
+        disabled={action.disabled}
+        title={action.title}
+        aria-label={action.ariaLabel}
+        onClick={(event) => { event.stopPropagation(); setOpen(false); action.run(); }}
+      >{action.label}</button>)}
+    </div>}
+  </div>;
+}
+
 function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, tabbed = false }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
   const harness = cli.includes('claude') ? 'claude' : cli.includes('kimi') ? 'kimi' : cli.includes('codex') ? 'codex' : 'shell';
+  const agentFunctions = (functions?.items || []).filter((item) => item.kind !== 'orchestrator');
+  const functionLabel = (functions?.items || []).find((item) => item.slug === session.functionSlug)?.name || session.functionSlug;
+  const displayName = session.roleKind === 'orchestrator' ? 'Principal' : functionLabel || session.name;
+  const headerDetails = [session.name, session.origin, session.status, session.version ? `${session.cli} ${session.version}` : session.cli, modelLabel(session), atlasConnected && !session.exited ? 'ATLAS conectado' : ''].filter(Boolean).join(' · ');
 
   function submit(event) {
     event.preventDefault();
@@ -318,41 +372,24 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
       role={tabbed ? 'tabpanel' : undefined}
       aria-labelledby={tabbed ? `terminal-tab-${session.id}` : undefined}
       data-session-id={session.id}
+      data-session-name={session.name}
       className={`session-card ${selected ? 'selected' : ''} ${focused ? 'focused' : ''} ${detached ? 'terminal-detached' : ''} ${popup ? 'terminal-popup-card' : ''}`}
       style={{ '--session-color': session.color }}
       onClick={() => onSelect(session.id)}
     >
-      <header className="session-header" title={session.role}>
+      <header className="session-header" title={headerDetails}>
         <div className="session-identity">
           <StatusDot color={session.color} pulse={session.status === 'trabalhando'} />
-          <h3>{session.name}</h3>
-          <span className={`origin-badge ${session.origin}`}>{session.origin}</span>
-          {session.demo && <span className="origin-badge demo">ilustrativo</span>}
-          <span className="session-cli" title={modelLabel(session) ? `Modelo: ${modelLabel(session)}` : undefined}>{session.version ? `${session.cli} ${session.version}` : session.cli}{modelLabel(session) ? ` · ${modelLabel(session)}` : ''}</span>
-          {(() => {
-            const agentFunctions = (functions?.items || []).filter((item) => item.kind !== 'orchestrator');
-            const label = (functions?.items || []).find((item) => item.slug === session.functionSlug)?.name || session.functionSlug;
-            // Agente em execução: o usuário troca a função (rótulo usado pela principal nas próximas delegações).
-            if (onSetFunction && session.roleKind === 'agent' && !session.exited && agentFunctions.length) return <select className="session-function" aria-label={`Função de ${session.name}`} value={session.functionSlug || ''} onClick={(event) => event.stopPropagation()} onChange={(event) => onSetFunction(session, event.target.value)}>
+          {onSetFunction && session.roleKind === 'agent' && !session.exited && agentFunctions.length
+            ? <select className="session-function" aria-label={`Função de ${session.name}`} value={session.functionSlug || ''} onClick={(event) => event.stopPropagation()} onChange={(event) => onSetFunction(session, event.target.value)}>
               <option value="">Sem função</option>
               {agentFunctions.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}
-            </select>;
-            return label ? <span className="origin-badge function-badge" title="Função do agente">{label}</span> : null;
-          })()}
-          {atlasConnected && !session.exited && <span className="origin-badge atlas-tools" title="Ferramentas do ATLAS conectadas a esta sessão pelo MCP">ATLAS conectado</span>}
+            </select>
+            : <h3>{displayName}</h3>}
+          {session.demo && <span className="origin-badge demo">ilustrativo</span>}
         </div>
         <div className="session-actions">
-          <span className="session-state" title={session.ptyId || session.archived ? session.worktree : session.task}><span>{session.status}</span></span>
-          {!session.ptyId && !session.archived && <span className="token-count">{session.tokens} <span>tokens</span></span>}
-          {session.roleKind === 'orchestrator' && session.exited && onRestart && <button className="session-control" onClick={(event) => { event.stopPropagation(); onRestart(session); }}>Nova execução</button>}
-          {onSwitchModel && session.ptyId && !session.exited && (() => {
-            const check = canSwitch(session);
-            return <button className="session-control" disabled={!check.allowed} title={check.allowed ? 'Trocou o modelo no terminal? Veja como e informe aqui' : check.reason} onClick={(event) => { event.stopPropagation(); onSwitchModel(session); }}>Trocar modelo</button>;
-          })()}
-          {onSendDiscovery && session.roleKind === 'agent' && !session.archived && <button className="session-control" title="Enviar descoberta estruturada à sessão principal" onClick={(event) => { event.stopPropagation(); onSendDiscovery(session); }}>Descoberta</button>}
-          {!session.archived && <button className="session-control" onClick={(event) => { event.stopPropagation(); onPopup(session); }}>{detached || popup ? 'Reintegrar' : 'Pop-up'}</button>}
-          {!popup && !detached && <button className="session-control" title="Alternar foco" aria-label={`Focar ${session.name}`} onClick={(event) => { event.stopPropagation(); onFocus(session.id); }}>{focused ? 'Grid' : 'Foco'}</button>}
-          {!popup && !detached && onHide && <button className="session-control" title="Ocultar sem encerrar o processo" aria-label={`Ocultar ${session.name} sem encerrar o processo`} onClick={(event) => { event.stopPropagation(); onHide(session.id); }}>Ocultar</button>}
+          <SessionActions session={session} onFocus={onFocus} onPopup={onPopup} onHide={onHide} onRestart={onRestart} onSendDiscovery={onSendDiscovery} onSwitchModel={onSwitchModel} focused={focused} detached={detached} popup={popup} />
         </div>
       </header>
 
@@ -1787,11 +1824,10 @@ export default function App() {
           data-column-id="center"
         >
           <div className="cockpit-toolbar">
-            <button type="button" className="terminal-column-handle" onPointerDown={(event) => beginColumnDrag(event, 'center')} title="Arrastar coluna de terminais">Terminais</button>
-            <div className="terminal-project-title"><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{workingDirectory}</small></div>
+            <div className="terminal-project-title" onPointerDown={(event) => beginColumnDrag(event, 'center')} title="Arrastar coluna de terminais"><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{workingDirectory}</small></div>
             <div className="toolbar-actions">
-              {hiddenColumns.left && <button className="button secondary compact" onClick={() => toggleHiddenColumn('left')} aria-expanded="false" aria-controls="atlas-navigation">Navegação</button>}
-              {hiddenColumns.right && <button className="button secondary compact" onClick={() => toggleHiddenColumn('right')} aria-expanded="false" aria-controls="atlas-panels">Painéis</button>}
+              <button className="workspace-panel-toggle" data-panel="left" aria-label={`${hiddenColumns.left ? 'Mostrar' : 'Ocultar'} navegação`} aria-pressed={!hiddenColumns.left} aria-expanded={!hiddenColumns.left} aria-controls="atlas-navigation" onClick={() => toggleHiddenColumn('left')}>Navegação</button>
+              <button className="workspace-panel-toggle" data-panel="right" aria-label={`${hiddenColumns.right ? 'Mostrar' : 'Ocultar'} painéis`} aria-pressed={!hiddenColumns.right} aria-expanded={!hiddenColumns.right} aria-controls="atlas-panels" onClick={() => toggleHiddenColumn('right')}>Painéis</button>
               <select className="terminal-layout-select" aria-label="Layout dos terminais" value={terminalLayout} onChange={(event) => changeTerminalLayout(event.target.value)}>
                 <option value="grid">Grade</option>
                 <option value="spotlight">Destaque</option>

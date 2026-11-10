@@ -17,7 +17,7 @@ O ATLAS tem o titã do logo como personagem: a estátua de mármore que sustenta
 
 - **Marca:** `src/assets/atlas-statue.webp`, recorte do logo com fundo transparente, local e sem rede. Aparece na barra de título (`AtlasMark`) e grande na tela do projeto sem sessões (`AtlasWelcome`).
 - **Wordmark:** "ATLAS" em Jost 300, espaçamento de .5em a .6em, sempre em maiúsculas.
-- **Ouro (`--gold`):** marca, rótulos de seção, aba ativa, seleção e órbitas. Não é cor de estado nem de ação.
+- **Ouro (`--gold`):** marca, rótulos de seção e órbitas. Seleção de terminais e abas usa superfície e tipografia; ouro não é cor de estado nem de ação.
 - Estilos da identidade ficam em `src/identity.css`; a densidade e os layouts ficam em `src/workspace.css`, carregado por último.
 
 ### Color Palette
@@ -72,8 +72,8 @@ O ATLAS tem o titã do logo como personagem: a estátua de mármore que sustenta
 
 ### Elevation
 
-- Panes de sessão: raio e intervalos de 3px, borda discreta, sem sombra decorativa.
-- Seleção: borda e anel em ouro, além do estado textual.
+- Panes de sessão são contíguos: zero intervalo, raio, borda ou sombra. O terminal começa logo abaixo do cabeçalho de 32px.
+- Seleção usa superfície e peso tipográfico, sem filetes, sublinhados ou anéis decorativos; o foco de teclado continua visível.
 - Modais: material elevado (raio de 16px), scrim com desfoque, que vira fundo sólido com `prefers-reduced-transparency`.
 - Gradientes só como luz quente sutil no topo da barra de título e da navegação. Sem glow em controles.
 
@@ -106,18 +106,18 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 
 ### Terminal e session cards
 
-- O terminal real ocupa quase todo o card; o ATLAS fornece apenas moldura, identidade e ações essenciais.
+- O terminal real ocupa quase todo o card; o ATLAS fornece apenas identidade e ações essenciais.
 - A interface interna pertence ao harness/PTY: não adicionar composer paralelo, introdução sintética ou statusbar falsa.
-- Cada card oferece Pop-up e Foco; o pop-up permite Reintegrar sem encerrar o processo.
-- O cabeçalho usa uma linha para nome, origem, CLI e ações. Tokens fictícios e metadados redundantes não competem com o terminal.
+- O cabeçalho de 32px mostra estado, função (ou nome, quando não houver função) e um menu discreto. CLI, modelo e conexão ficam na descrição do cabeçalho; Pop-up, Foco, modelo, descoberta, ocultação e nova execução ficam no menu conforme o estado da sessão.
+- O menu mantém o gatilho no mesmo lugar, devolve o foco ao fechar e não deixa Escape atravessar para os painéis ao fundo.
 - Seleção, foco e estado não dependem apenas de cor.
 - A linha da grade define a altura do cartão: piso de 300px, crescendo com a área disponível. Cartões não têm altura mínima própria, para nunca se sobreporem. No Foco, o cartão ocupa toda a área.
 - A barra de status inferior foi retirada para dar altura aos terminais; projeto e diretório continuam na árvore e no contexto da área de trabalho.
 
 ### Navegação e painéis
 
-- Barra superior de 42px: marca, contexto e ações. Projetos ficam na árvore lateral; não há barra de status permanente.
-- A árvore organiza projetos, repositórios, worktrees e sessões. "Espera você" reúne principal parada, pedidos e revisões do projeto ativo. Cada item leva ao lugar da decisão; o painel não duplica aprovações. Estado das sessões por ponto e texto (para leitores de tela, "ativa" fica oculto visualmente).
+- Barra superior de 36px: marca, contexto e ações. Projetos ficam na árvore lateral; não há barra de status permanente.
+- A árvore organiza visualmente projetos, repositórios, worktrees e sessões com chevrons, ícones e indentação. Clicar no nome do projeto também o expande; trocar de projeto não recolhe a árvore anterior. "Espera você" aparece somente quando há decisões e leva à principal parada, aos pedidos e às revisões do projeto ativo. Cada item leva ao lugar da decisão; o painel não duplica aprovações. Estado das sessões por ponto e texto (para leitores de tela, "ativa" fica oculto visualmente).
 - A paleta de comandos (Ctrl Shift P ou F1) reúne as ações, os projetos e os terminais. O atalho vale com o foco no terminal, e o que se digita nela nunca chega ao PTY. Toda ação nova entra também na paleta.
 
 - Navegação e Painéis podem ser ocultados independentemente e recuperados pela toolbar. Painéis começam recolhidos numa instalação nova. Estado do projeto e integrações abre sob demanda.
