@@ -4,10 +4,14 @@
 const PASTE_START = '\x1b[200~';
 const PASTE_END = '\x1b[201~';
 // Só imagem no clipboard: o ATLAS repassa ao CLI o atalho de colar imagem, e o próprio CLI lê o
-// clipboard e anexa. No Windows o Claude Code usa Alt+V (ESC v); com ^V cru ele não anexa
-// (verificado no Claude Code real, com configuração isolada). Nos outros sistemas, ^V.
-export const IMAGE_PASTE_KEYS = { win32: '\x1bv', default: '\x16' };
-export const imagePasteKey = (platform) => IMAGE_PASTE_KEYS[platform] || IMAGE_PASTE_KEYS.default;
+// clipboard e anexa. No Windows o Claude Code só anexa com Alt+V (ESC v); com ^V cru ele não faz
+// nada (verificado no Claude Code real, com configuração isolada). ESC v não vai a mais ninguém:
+// no PowerShell (PSReadLine) ele digita um "v". Os outros recebem o ^V, como num terminal comum.
+const CTRL_V = '\x16';
+const ALT_V = '\x1bv';
+export function imagePasteKey({ platform, cli } = {}) {
+  return platform === 'win32' && cli === 'claude' ? ALT_V : CTRL_V;
+}
 
 const countFormat = new Intl.NumberFormat('pt-BR');
 
@@ -19,6 +23,8 @@ function lines(text) {
 
 // Ctrl+C só interrompe sem seleção; com seleção, copia. Ctrl+Shift+C sempre copia.
 // Ctrl+V e Ctrl+Shift+V colam pelo ATLAS. Shift+F10 abre o menu de contexto, como no Windows.
+// F6 com seleção leva às ações do trecho (no Windows, F6 alterna entre áreas); sem seleção,
+// F6 continua indo para o programa.
 // Vale para keydown, keypress e keyup: nenhum evento de uma combinação do ATLAS chega ao PTY.
 export function clipboardKeyAction(event, hasSelection) {
   if (!event || event.altKey || event.metaKey) return null;
@@ -26,7 +32,18 @@ export function clipboardKeyAction(event, hasSelection) {
   if (event.ctrlKey && key === 'c') return event.shiftKey || hasSelection ? 'copy' : null;
   if (event.ctrlKey && key === 'v') return 'paste';
   if (!event.ctrlKey && event.shiftKey && key === 'f10') return 'menu';
+  if (!event.ctrlKey && !event.shiftKey && key === 'f6' && hasSelection) return 'bar';
   return null;
+}
+
+// Aviso de foco do terminal (modo 1004): ESC [ I ao ganhar e ESC [ O ao perder o foco.
+export const isFocusReport = (data) => data === '\x1b[I' || data === '\x1b[O';
+
+// Movimento por teclado numa barra de ferramentas: setas e Home/End, circulando.
+export function toolbarFocusIndex(key, index, count) {
+  if (!count) return null;
+  const next = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: count - 1 }[key];
+  return next === undefined ? null : (next + count) % count;
 }
 
 export function copiedLabel(count) {
@@ -77,14 +94,14 @@ export function pasteSequence(text, bracketed) {
 }
 
 // O que fazer com o conteúdo do clipboard lido pelo processo principal.
-export function pasteFromClipboard(content, platform) {
+export function pasteFromClipboard(content, context) {
   const files = Array.isArray(content?.files) ? content.files : [];
   if (files.length) {
     const text = quotePaths(files);
     if (text) return { kind: 'text', text };
   }
   if (typeof content?.text === 'string' && content.text) return { kind: 'text', text: content.text };
-  if (content?.image) return { kind: 'forward', data: imagePasteKey(platform) };
+  if (content?.image) return { kind: 'forward', data: imagePasteKey(context) };
   return { kind: 'none' };
 }
 

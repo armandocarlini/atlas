@@ -458,7 +458,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
             <p>{session.status}. Nenhum processo está conectado.</p>
             <p>O conteúdo do terminal não foi salvo. Abra uma nova sessão para continuar o trabalho.</p>
             <dl><dt>Diretório</dt><dd>{session.worktree}</dd><dt>Início</dt><dd>{session.createdAt}</dd><dt>Fim registrado</dt><dd>{session.endedAt || 'sem confirmação'}</dd></dl>
-          </div> : session.ptyId ? <TerminalView terminalId={session.ptyId} desktop={desktop} theme={{ ...theme, color: visibleAccent(theme.color, theme.background), ink: getAccentInk(theme.background) }} onExit={(exit) => onExit(session.id, { ...exit, ptyId: session.ptyId })} pasteTargets={pasteTargets} /> : <>
+          </div> : session.ptyId ? <TerminalView terminalId={session.ptyId} desktop={desktop} theme={{ ...theme, color: visibleAccent(theme.color, theme.background), ink: getAccentInk(theme.background) }} onExit={(exit) => onExit(session.id, { ...exit, ptyId: session.ptyId })} pasteTargets={pasteTargets} cli={harness} /> : <>
             <div className="terminal-lines">
               <HarnessIntro harness={harness} session={session} />
               {[...session.lines, ...localLines].map((line, index) => (

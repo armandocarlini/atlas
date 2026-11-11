@@ -89,12 +89,35 @@
   pointer-events: none;
 }
 .terminal-notice {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   padding: 5px 10px;
   border-radius: 8px;
   font-size: 11.5px;
+  line-height: 1.4;
   animation: terminal-float-in 180ms var(--ease-out, ease-out) both, terminal-notice-out 220ms ease-in 1580ms both;
 }
+/* Aviso com ação (recusa de colar várias linhas): fica até 7s, aceita clique e quebra linha. */
+.terminal-notice.has-action {
+  max-width: 420px;
+  pointer-events: auto;
+  animation: terminal-float-in 180ms var(--ease-out, ease-out) both, terminal-notice-out 220ms ease-in 6780ms both;
+}
+.terminal-notice > button {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--surface-hover);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.terminal-notice > button:hover { background: var(--surface); }
+.terminal-notice > button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
 
 /* Arquivos arrastados do Explorer sobre o terminal. */
 .terminal-view-shell.dropping::after {
@@ -113,6 +136,7 @@
   .terminal-selection-bar,
   .terminal-context-menu { animation: atlas-fade 120ms ease both; }
   .terminal-notice { animation: atlas-fade 120ms ease both, terminal-notice-out 120ms ease 1680ms both; }
+  .terminal-notice.has-action { animation: atlas-fade 120ms ease both, terminal-notice-out 120ms ease 6880ms both; }
   .terminal-selection-bar > button:active { transform: none; }
 }
 

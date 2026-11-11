@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import {
   characterCount, clipboardKeyAction, copiedLabel, imagePasteKey, menuPosition, pasteFromClipboard,
   pasteSequence, pasteTargets, planPaste, quotePaths, quoteSelection, rewriteSelection, sanitizePaste,
-  selectionBarPosition,
+  isFocusReport, selectionBarPosition, toolbarFocusIndex,
 } from '../src/terminal-clipboard.js';
 
 const require = createRequire(import.meta.url);
@@ -24,6 +24,33 @@ test('Ctrl+V e Ctrl+Shift+V colam pelo ATLAS; Shift+F10 abre o menu', () => {
   assert.equal(clipboardKeyAction(key('v', { ctrlKey: true }), false), 'paste');
   assert.equal(clipboardKeyAction(key('V', { ctrlKey: true, shiftKey: true }), true), 'paste');
   assert.equal(clipboardKeyAction(key('F10', { shiftKey: true }), false), 'menu');
+});
+
+test('F6 com seleção leva à barra; sem seleção, F6 continua indo para o programa', () => {
+  assert.equal(clipboardKeyAction(key('F6'), true), 'bar');
+  assert.equal(clipboardKeyAction(key('F6'), false), null);
+  for (const modifiers of [{ shiftKey: true }, { ctrlKey: true }, { altKey: true }]) {
+    assert.equal(clipboardKeyAction(key('F6', modifiers), true), null, JSON.stringify(modifiers));
+  }
+});
+
+test('aviso de foco do terminal (modo 1004) não conta como digitação', () => {
+  // Regressão: com o PowerShell ligando o modo 1004, levar o foco à lista "Enviar para" emitia
+  // ESC [ O e a barra sumia antes de o usuário escolher a sessão.
+  assert.equal(isFocusReport('\x1b[O'), true);
+  assert.equal(isFocusReport('\x1b[I'), true);
+  for (const data of ['a', '\r', '\x1b[OA', '\x1b', '\x1b[0', '']) assert.equal(isFocusReport(data), false, JSON.stringify(data));
+});
+
+test('barra por teclado: setas e Home/End circulam entre os botões', () => {
+  assert.equal(toolbarFocusIndex('ArrowRight', 0, 3), 1);
+  assert.equal(toolbarFocusIndex('ArrowRight', 2, 3), 0);
+  assert.equal(toolbarFocusIndex('ArrowLeft', 0, 3), 2);
+  assert.equal(toolbarFocusIndex('Home', 2, 3), 0);
+  assert.equal(toolbarFocusIndex('End', 0, 3), 2);
+  assert.equal(toolbarFocusIndex('ArrowRight', -1, 3), 0, 'sem foco num botão, começa pelo primeiro');
+  assert.equal(toolbarFocusIndex('Enter', 0, 3), null);
+  assert.equal(toolbarFocusIndex('ArrowRight', 0, 0), null);
 });
 
 test('a decisão vale para keyup da mesma combinação, para nada dela chegar ao PTY', () => {
@@ -93,9 +120,16 @@ test('do clipboard: arquivos antes de texto; só imagem repassa ao CLI o atalho 
   assert.deepEqual(pasteFromClipboard({ files: ['C:\\a b.png'], text: 'ignorado', image: true }), { kind: 'text', text: '"C:\\a b.png"' });
   assert.deepEqual(pasteFromClipboard({ files: [], text: 'log\r\nlinha 2', image: false }), { kind: 'text', text: 'log\r\nlinha 2' });
   // Windows: Alt+V (ESC v), o atalho com que o Claude Code anexa imagem; ^V cru ele ignora.
-  assert.deepEqual(pasteFromClipboard({ files: [], text: '', image: true }, 'win32'), { kind: 'forward', data: '\x1bv' });
-  assert.deepEqual(pasteFromClipboard({ files: [], text: '', image: true }, 'linux'), { kind: 'forward', data: '\x16' });
-  assert.equal(imagePasteKey(undefined), '\x16');
+  assert.deepEqual(pasteFromClipboard({ files: [], text: '', image: true }, { platform: 'win32', cli: 'claude' }), { kind: 'forward', data: '\x1bv' });
+  assert.deepEqual(pasteFromClipboard({ files: [], text: '', image: true }, { platform: 'win32', cli: 'shell' }), { kind: 'forward', data: '\x16' });
+});
+
+test('ESC v (Alt+V) só vai ao Claude Code no Windows; os demais recebem o ^V de um terminal comum', () => {
+  assert.equal(imagePasteKey({ platform: 'win32', cli: 'claude' }), '\x1bv');
+  // No PowerShell (PSReadLine), ESC v digita um "v" na linha; ^V com só imagem não faz nada.
+  for (const cli of ['shell', 'codex', 'kimi', undefined]) assert.equal(imagePasteKey({ platform: 'win32', cli }), '\x16', String(cli));
+  assert.equal(imagePasteKey({ platform: 'linux', cli: 'claude' }), '\x16');
+  assert.equal(imagePasteKey(), '\x16');
   assert.deepEqual(pasteFromClipboard({ files: [], text: '', image: false }), { kind: 'none' });
   assert.deepEqual(pasteFromClipboard(null), { kind: 'none' });
 });

@@ -6,11 +6,16 @@ import '@xterm/xterm/css/xterm.css';
 import './terminal-clipboard.css';
 import {
   characterCount, clipboardKeyAction, copiedLabel, menuPosition, pasteFromClipboard, pasteSequence,
-  planPaste, quotePaths, quoteSelection, rewriteSelection, sanitizePaste, selectionBarPosition,
+  isFocusReport, planPaste, quotePaths, quoteSelection, rewriteSelection, sanitizePaste, selectionBarPosition,
+  toolbarFocusIndex,
 } from './terminal-clipboard.js';
 
 const NOTICE_MS = 1800;
-const MULTILINE_REFUSED = 'o terminal não está em colagem protegida e cada linha seria executada. Use Ctrl+V para colar assim mesmo.';
+// Aviso com ação fica mais tempo, para dar tempo de ler e escolher.
+const ACTION_NOTICE_MS = 7000;
+// Sem colagem protegida (o Windows PowerShell não tem), cada linha viraria um comando. Nenhum
+// substituto é seguro para qualquer programa, então o ATLAS recusa e oferece copiar o trecho.
+const multilineRefused = (where) => `Não colado: ${where} executaria cada linha, porque não está em colagem protegida. Copie o trecho (Copiar ou Ctrl+C) e cole onde aceite várias linhas.`;
 
 function useLatest(value) {
   const ref = useRef(value);
@@ -76,7 +81,7 @@ function MenuList({ menuRef, label, items, className, style, onClose, autoFocus 
   </div>;
 }
 
-export default function TerminalView({ terminalId, desktop, theme, onExit, pasteTargets = [] }) {
+export default function TerminalView({ terminalId, desktop, theme, onExit, pasteTargets = [], cli = 'shell' }) {
   const shellRef = useRef(null);
   const containerRef = useRef(null);
   const terminalRef = useRef(null);
@@ -89,6 +94,7 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
   const [dropping, setDropping] = useState(false);
   const targets = pasteTargets.filter((target) => target.ptyId !== terminalId);
   const onExitRef = useLatest(onExit);
+  const cliRef = useLatest(cli);
   const [barRef, barStyle] = useFloating(bar, selectionBarPosition);
   const [menuRef, menuStyle] = useFloating(menu, menuPosition);
 
@@ -119,10 +125,10 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
     terminal.open(container);
     terminalRef.current = terminal;
 
-    const announce = (text) => {
+    const announce = (text, action = null) => {
       clearTimeout(noticeTimer);
-      setNotice({ text, key: Date.now() });
-      noticeTimer = setTimeout(() => { if (!disposed) setNotice(null); }, NOTICE_MS);
+      setNotice({ text, action, key: Date.now() });
+      noticeTimer = setTimeout(() => { if (!disposed) setNotice(null); }, action ? ACTION_NOTICE_MS : NOTICE_MS);
     };
     const hideBar = () => {
       setBar(null);
@@ -163,20 +169,21 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
       };
     };
 
-    const copySelection = () => {
-      const text = terminal.getSelection();
+    const copyText = (text) => {
       if (!text) return;
       desktop.writeClipboardText(text)
         .then((ok) => { if (!disposed && ok) announce(copiedLabel(characterCount(text))); })
         .catch(() => { if (!disposed) announce('Não foi possível copiar para a área de transferência.'); });
     };
+    const copySelection = () => copyText(terminal.getSelection());
+    const refuseMultiline = (where, text) => announce(multilineRefused(where), { label: 'Copiar', run: () => copyText(text) });
     // Ctrl+V e "Colar": arquivos viram caminhos entre aspas, texto vai como colagem do terminal,
     // e só imagem repassa ao CLI o atalho de colar imagem; o CLI lê o clipboard e anexa.
     const pasteClipboard = () => {
       if (!attached) return;
       desktop.readClipboardForPaste().then((content) => {
         if (disposed) return;
-        const plan = pasteFromClipboard(content, desktop.platform);
+        const plan = pasteFromClipboard(content, { platform: desktop.platform, cli: cliRef.current });
         if (plan.kind === 'text') terminal.paste(sanitizePaste(plan.text));
         else if (plan.kind === 'forward') desktop.writeTerminal(terminalId, plan.data);
       }).catch(() => { if (!disposed) announce('Não foi possível ler a área de transferência.'); });
@@ -186,7 +193,7 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
       if (!attached) return;
       const plan = planPaste(text, terminal.modes.bracketedPasteMode);
       if (!plan.ok) {
-        if (plan.reason === 'multiline') announce(`Não colado: ${MULTILINE_REFUSED}`);
+        if (plan.reason === 'multiline') refuseMultiline('este terminal', text);
         return;
       }
       terminal.clearSelection();
@@ -204,11 +211,12 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
         }
         const plan = planPaste(text, mode.bracketedPaste);
         if (!plan.ok) {
-          if (plan.reason === 'multiline') announce(`Não colado em ${target.name}: ${MULTILINE_REFUSED}`);
+          if (plan.reason === 'multiline') refuseMultiline(target.name, text);
           return;
         }
         desktop.writeTerminal(target.ptyId, pasteSequence(plan.text, mode.bracketedPaste));
         terminal.clearSelection();
+        terminal.focus();
         announce(`Citação colada em ${target.name}, sem enviar.`);
       } catch {
         if (!disposed) announce(`Não foi possível colar em ${target.name}.`);
@@ -217,6 +225,13 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
     const openMenu = (point) => {
       hideBar();
       setMenu({ ...point, hasSelection: terminal.hasSelection() });
+    };
+    // F6 com seleção: a barra aparece (se ainda não estava) junto da seleção e recebe o foco.
+    const openBarFromKeyboard = () => {
+      setMenu(null);
+      setSendOpen(false);
+      const { width, height } = area();
+      setBar({ ...selectionAnchor({ x: width / 2, y: 0, width, height }), keyboard: Date.now() });
     };
     actionsRef.current = {
       copy: copySelection,
@@ -238,6 +253,7 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
           // Como no Windows Terminal: depois de copiar, o próximo Ctrl+C volta a interromper.
           terminal.clearSelection();
         } else if (action === 'paste') pasteClipboard();
+        else if (action === 'bar') openBarFromKeyboard();
         else openMenu(cursorPoint());
       }
       return false;
@@ -258,7 +274,9 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
     // attributes). Their automatic xterm replies must not become new shell input.
     const inputDisposable = terminal.onData((data) => {
       if (attached) desktop.writeTerminal(terminalId, data);
-      hideBar();
+      // Digitar some com a barra; o aviso de foco (modo 1004, que PowerShell e CLIs ligam) não é
+      // digitação: ele sai justamente quando o foco vai para a barra ou para a lista.
+      if (!isFocusReport(data)) hideBar();
     });
     const selectionDisposable = terminal.onSelectionChange(() => {
       if (!terminal.hasSelection()) hideBar();
@@ -385,10 +403,40 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
     return () => document.removeEventListener('pointerdown', closeOutside);
   }, [menu]);
 
+  // F6 abriu a barra: o foco vai para o primeiro botão assim que ela estiver posicionada.
+  const barPlaced = barStyle.visibility !== 'hidden';
+  useEffect(() => {
+    if (bar?.keyboard && barPlaced) barRef.current?.querySelector('button')?.focus();
+  }, [bar?.keyboard, barPlaced]);
+
   const run = (name, ...args) => actionsRef.current[name]?.(...args);
   const closeMenu = () => {
     setMenu(null);
     run('focus');
+  };
+  // Barra como barra de ferramentas do Windows: setas e Home/End entre os botões; Escape e Tab
+  // devolvem o foco ao terminal (a seleção continua); seta para baixo abre "Enviar para".
+  const onBarKeyDown = (event) => {
+    if (event.target.closest('[role="menu"]')) return;
+    const buttons = [...barRef.current.querySelectorAll(':scope > button')];
+    const next = toolbarFocusIndex(event.key, buttons.indexOf(document.activeElement), buttons.length);
+    if (next !== null) {
+      event.preventDefault();
+      buttons[next].focus();
+    } else if (event.key === 'Escape' || event.key === 'Tab') {
+      event.preventDefault();
+      event.stopPropagation();
+      setSendOpen(false);
+      run('focus');
+    } else if (event.key === 'ArrowDown' && event.target.getAttribute('aria-haspopup') === 'menu') {
+      event.preventDefault();
+      setSendOpen('keyboard');
+    }
+  };
+  const closeSendMenu = () => {
+    const viaKeyboard = sendOpen === 'keyboard';
+    setSendOpen(false);
+    if (viaKeyboard) barRef.current?.querySelector('[aria-haspopup="menu"]')?.focus();
   };
   const sendItems = targets.map((target) => ({ key: `send-${target.id}`, label: `Enviar para ${target.name}`, title: target.detail, run: () => run('send', target) }));
   const menuItems = menu ? [
@@ -405,30 +453,35 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
 
   return (
     <div ref={shellRef} className={`terminal-view-shell ${dropping ? 'dropping' : ''}`}>
-      <div ref={containerRef} className="terminal-view" aria-label="Terminal interativo. Shift+F10 abre o menu de copiar e colar." />
+      <div ref={containerRef} className="terminal-view" aria-label="Terminal interativo. Shift+F10 abre o menu de copiar e colar; com texto selecionado, F6 leva às ações do trecho." />
       {bar && <div
         ref={barRef}
         role="toolbar"
         aria-label="Ações do trecho selecionado"
+        aria-keyshortcuts="F6"
         className="terminal-selection-bar"
         style={barStyle}
         onMouseDown={(event) => event.preventDefault()}
         onClick={(event) => event.stopPropagation()}
+        onKeyDown={onBarKeyDown}
       >
         <button type="button" onClick={() => run('reply')} title="Colar como citação na entrada deste terminal, sem enviar"><span>Responder</span><Reply size={14} aria-hidden="true" /></button>
         <button type="button" onClick={() => run('rewrite')} title="Colar o trecho na entrada deste terminal, sem enviar"><span>Reescrever</span><PenLine size={13} aria-hidden="true" /></button>
-        {targets.length > 0 && <button type="button" aria-haspopup="menu" aria-expanded={sendOpen} onClick={() => setSendOpen((open) => !open)} title="Colar como citação na entrada de outra sessão, sem enviar"><span>Enviar para</span><ChevronDown size={13} aria-hidden="true" /></button>}
+        {targets.length > 0 && <button type="button" aria-haspopup="menu" aria-expanded={Boolean(sendOpen)} onClick={(event) => setSendOpen((open) => (open ? false : event.detail === 0 ? 'keyboard' : 'mouse'))} title="Colar como citação na entrada de outra sessão, sem enviar"><span>Enviar para</span><ChevronDown size={13} aria-hidden="true" /></button>}
         {sendOpen && <MenuList
           label="Enviar a citação para"
           className="terminal-context-menu terminal-send-menu"
           items={targets.map((target) => ({ key: target.id, label: target.name, title: target.detail, run: () => run('send', target) }))}
-          onClose={() => setSendOpen(false)}
-          autoFocus={false}
+          onClose={closeSendMenu}
+          autoFocus={sendOpen === 'keyboard'}
         />}
       </div>}
       {menu && <MenuList menuRef={menuRef} label="Copiar e colar" className="terminal-context-menu" style={menuStyle} items={menuItems} onClose={closeMenu} />}
       <div className="terminal-notice-region" role="status" aria-live="polite">
-        {notice && <span key={notice.key} className="terminal-notice">{notice.text}</span>}
+        {notice && <span key={notice.key} className={`terminal-notice ${notice.action ? 'has-action' : ''}`}>
+          <span>{notice.text}</span>
+          {notice.action && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { notice.action.run(); run('focus'); }}>{notice.action.label}</button>}
+        </span>}
       </div>
       {error && <div className="terminal-error" role="alert">{error}</div>}
     </div>
