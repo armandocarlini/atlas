@@ -69,9 +69,11 @@ export function terminalCli(name) {
   return CLI_KINDS.find((kind) => value.includes(kind)) || 'shell';
 }
 
-// Caminhos de arquivos (arrastados ou copiados no Explorer) entre aspas, separados por espaço.
+// Caminhos de arquivos (arrastados ou copiados no Explorer), como literais de PowerShell. O
+// terminal local do ATLAS é Windows PowerShell: aspas duplas expandiriam $, ` e subexpressões.
+// Aspas simples preservam o caminho e uma aspa simples interna é representada por duas delas.
 export function quotePaths(paths) {
-  return (paths || []).filter((item) => typeof item === 'string' && item && !item.includes('"')).map((item) => `"${item}"`).join(' ');
+  return (paths || []).filter((item) => typeof item === 'string' && item && !item.includes('"')).map((item) => `'${item.replaceAll("'", "''")}'`).join(' ');
 }
 
 // O que fazer com o conteúdo do clipboard lido pelo processo principal.

@@ -95,8 +95,9 @@ test('Reescrever cola exatamente a seleção: espaços, recuo e linhas finais fi
   assert.equal(typeof (await import('../src/terminal-clipboard.js')).rewriteSelection, 'undefined', 'sem função que altere o trecho');
 });
 
-test('caminhos de arquivos vão entre aspas, separados por espaço', () => {
-  assert.equal(quotePaths(['C:\\Projetos\\um arquivo.txt', 'C:\\dois.txt']), '"C:\\Projetos\\um arquivo.txt" "C:\\dois.txt"');
+test('caminhos de arquivos vão como literais do PowerShell, separados por espaço', () => {
+  assert.equal(quotePaths(['C:\\Projetos\\um arquivo.txt', 'C:\\dois.txt']), "'C:\\Projetos\\um arquivo.txt' 'C:\\dois.txt'");
+  assert.equal(quotePaths(["C:\\tmp\\$(Get-Process).txt", "C:\\Ana's;`arquivo.txt"]), "'C:\\tmp\\$(Get-Process).txt' 'C:\\Ana''s;`arquivo.txt'", 'expansões e metacaracteres ficam literais');
   assert.equal(quotePaths(['', null, 'C:\\a"b']), '', 'vazio, não texto e aspas no nome são descartados');
   assert.equal(quotePaths(undefined), '');
 });
@@ -120,7 +121,7 @@ test('colar sem Enter: sem colagem protegida, só uma linha e sem a quebra final
 });
 
 test('do clipboard: arquivos antes de texto; só imagem repassa ao CLI o atalho de colar imagem', () => {
-  assert.deepEqual(pasteFromClipboard({ files: ['C:\\a b.png'], text: 'ignorado', image: true }), { kind: 'text', text: '"C:\\a b.png"' });
+  assert.deepEqual(pasteFromClipboard({ files: ['C:\\a b.png'], text: 'ignorado', image: true }), { kind: 'text', text: "'C:\\a b.png'" });
   assert.deepEqual(pasteFromClipboard({ files: [], text: 'log\r\nlinha 2', image: false }), { kind: 'text', text: 'log\r\nlinha 2' });
   // Windows: Alt+V (ESC v), o atalho com que o Claude Code anexa imagem; ^V cru ele ignora.
   assert.deepEqual(pasteFromClipboard({ files: [], text: '', image: true }, { platform: 'win32', cli: 'claude' }), { kind: 'forward', data: '\x1bv' });

@@ -739,11 +739,11 @@ process.stdin.on('data', (data) => {
     await key(main, 'V', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 10 });
     await expectBytes(mark, '\x1b[200~COPIA_L1\rCOPIA_L2\x1b[201~', 'Ctrl+Shift+V também cola');
 
-    // 4. Arquivos copiados no Explorer: os caminhos entre aspas.
+    // 4. Arquivos copiados no Explorer: literais do PowerShell, sem expansão de nomes maliciosos.
     setClipboard(`Set-Clipboard -Path '${fileA}','${fileB}'`);
     mark = (await received()).length;
     await key(main, 'v', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
-    await expectBytes(mark, `\x1b[200~"${fileA}" "${fileB}"\x1b[201~`, 'Ctrl+V com arquivos cola os caminhos');
+    await expectBytes(mark, `\x1b[200~'${fileA}' '${fileB}'\x1b[201~`, 'Ctrl+V com arquivos cola os caminhos');
     // Imagem: num terminal que não é do Claude Code vai o ^V de um terminal comum; o ESC v
     // (Alt+V, o atalho do Claude Code no Windows) digitaria um "v" no PowerShell.
     setClipboard('Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $image = New-Object System.Drawing.Bitmap 4,4; [System.Windows.Forms.Clipboard]::SetImage($image)');
@@ -756,7 +756,7 @@ process.stdin.on('data', (data) => {
     for (const type of ['dragEnter', 'dragOver', 'drop']) {
       await main.call('Input.dispatchDragEvent', { type, ...dropAt, data: { items: [], files: [fileA], dragOperationsMask: 1 } });
     }
-    await expectBytes(mark, `\x1b[200~"${fileA}"\x1b[201~`, 'arquivo arrastado vira caminho entre aspas');
+    await expectBytes(mark, `\x1b[200~'${fileA}'\x1b[201~`, 'arquivo arrastado vira caminho literal do PowerShell');
     assert.equal(await main.evaluate(`${terminalOf('smoke-dois')}.classList.contains('dropping')`), false, 'destaque de soltar some');
 
     // 2. Ctrl+C com seleção copia e não interrompe; o menu de contexto oferece as ações.
