@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   TERMINAL_MIN,
   boundaryOffsets,
+  columnTracksToTemplate,
   gridColumnBoundaries,
   gridPlacement,
   gridShape,
@@ -92,4 +93,19 @@ test('conversões de trilhas para CSS e de volta', () => {
   assert.deepEqual(pixelTracks('612.5px 300px'), [612.5, 300]);
   assert.deepEqual(pixelTracks(undefined), []);
   assert.deepEqual(boundaryOffsets([100, 200, 300]), [100, 300]);
+});
+
+test('trilhas de colunas mantêm 320px com pesos padrão, salvos ou ajustados', () => {
+  const sidebar = sidebarShape(3, 640);
+  assert.equal(columnTracksToTemplate(tracksFor({}, 'sidebar', sidebar).columns), 'minmax(320px, 1.3333fr) minmax(320px, 0.6667fr)');
+  const grid = gridShape(3, 1680);
+  const saved = saveTracks({}, 'grid', grid, { columns: [1, 1, 4], rows: [1] });
+  assert.equal(columnTracksToTemplate(tracksFor(saved, 'grid', grid).columns), 'minmax(320px, 0.5fr) minmax(320px, 0.5fr) minmax(320px, 2fr)');
+  assert.equal(columnTracksToTemplate(resizeTracks([700, 350], 0, 30, TERMINAL_MIN.width)), 'minmax(320px, 730fr) minmax(320px, 320fr)');
+});
+
+test('trilha única pode encolher abaixo de 320px', () => {
+  const grid = gridShape(3, 300);
+  const sidebar = sidebarShape(3, 300);
+  for (const [layout, shape] of [['grid', grid], ['sidebar', sidebar]]) assert.equal(columnTracksToTemplate(tracksFor({}, layout, shape).columns), 'minmax(0px, 1fr)');
 });

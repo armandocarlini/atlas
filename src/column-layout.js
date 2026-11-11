@@ -120,6 +120,35 @@ function fitSide(column, width, max) {
 
 // Divisória entre visible[index] e visible[index + 1]. Lateral com Terminais: só a lateral muda.
 // Duas laterais vizinhas: uma cede para a outra e Terminais ficam como estão.
+function sidePairRanges({ before, after }, total) {
+  const expandedMin = (column) => column === 'left' ? COLUMN_LIMITS.left.compact : COLUMN_LIMITS.right.full;
+  const expandedLow = Math.max(expandedMin(before), total - COLUMN_LIMITS[after].max);
+  const expandedHigh = Math.min(COLUMN_LIMITS[before].max, total - expandedMin(after));
+  const remainder = total - RAIL_WIDTH;
+  const ranges = [];
+
+  // A faixa expandida divide o total sem encaixes. Cada trilho viável acrescenta um ponto isolado.
+  if (snapColumnWidth(after, remainder) === remainder) ranges.push([RAIL_WIDTH, RAIL_WIDTH]);
+  if (expandedLow <= expandedHigh) ranges.push([expandedLow, expandedHigh]);
+  if (remainder > RAIL_WIDTH && snapColumnWidth(before, remainder) === remainder) ranges.push([remainder, remainder]);
+  return ranges;
+}
+
+function fitSidePair({ before, after }, total, width, ranges) {
+  let target = snapColumnWidth(before, width);
+  if (target !== RAIL_WIDTH && snapColumnWidth(after, total - width) === RAIL_WIDTH) target = total - RAIL_WIDTH;
+  let fitted = ranges[0][0];
+  for (const [min, max] of ranges) {
+    const candidate = Math.max(min, Math.min(max, target));
+    if (Math.abs(candidate - target) < Math.abs(fitted - target)) fitted = candidate;
+  }
+  return fitted;
+}
+
+function sidePairWidths({ before, after }, total, width) {
+  return { [before]: width, [after]: total - width };
+}
+
 export function dividerColumns(visible, index) {
   const before = visible[index];
   const after = visible[index + 1];
@@ -140,10 +169,9 @@ export function resizeAtDivider({ visible, index, start, delta, available }) {
   }
   const { before, after } = divider;
   const total = start[before] + start[after];
-  const room = finite(available) ? available - COLUMN_LIMITS.center.min : Infinity;
-  const nextBefore = fitSide(before, start[before] + delta, Math.max(RAIL_WIDTH, Math.min(COLUMN_LIMITS[before].max, total - RAIL_WIDTH)));
-  const nextAfter = fitSide(after, total - nextBefore, Math.max(RAIL_WIDTH, Math.min(COLUMN_LIMITS[after].max, room - nextBefore)));
-  return { [before]: nextBefore, [after]: nextAfter };
+  const ranges = sidePairRanges(divider, total);
+  if (!ranges.length) return {};
+  return sidePairWidths(divider, total, fitSidePair(divider, total, start[before] + delta, ranges));
 }
 
 // Passo do teclado: atravessa os encaixes (do trilho para compacta ou completa, e de volta).
@@ -162,16 +190,33 @@ export function keyboardResize({ visible, index, start, key, shift = false, avai
   if (!divider) return null;
   const size = shift ? KEYBOARD_STEP_LARGE : KEYBOARD_STEP;
   const [primary] = divider.controls;
+  const direction = key === 'ArrowRight' ? 1 : key === 'ArrowLeft' ? -1 : 0;
+  if (divider.controls.length === 2) {
+    const total = start[divider.before] + start[divider.after];
+    const ranges = sidePairRanges(divider, total);
+    if (!ranges.length) return null;
+    let width;
+    if (key === 'Home') width = ranges[0][0];
+    else if (key === 'End') width = ranges.at(-1)[1];
+    else if (direction) {
+      const current = start[primary];
+      const target = stepColumnWidth(primary, current, direction * size);
+      width = fitSidePair(divider, total, target, ranges);
+      // Se a seta encontra um vão entre encaixes, avança até a próxima faixa.
+      if (width === current) {
+        width = direction > 0
+          ? ranges.find(([min]) => min > current)?.[0] ?? current
+          : ranges.findLast(([, max]) => max < current)?.[1] ?? current;
+      }
+    } else return null;
+    return sidePairWidths(divider, total, width);
+  }
   const sides = visible.filter((column) => column !== 'center');
-  const others = sides.filter((item) => item !== primary && !divider.controls.includes(item)).reduce((sum, item) => sum + (start[item] || 0), 0);
-  const max = divider.controls.length === 1
-    ? maxSideWidth(primary, available, others)
-    : Math.max(RAIL_WIDTH, Math.min(COLUMN_LIMITS[primary].max, start[divider.before] + start[divider.after] - RAIL_WIDTH));
+  const others = sides.filter((item) => item !== primary).reduce((sum, item) => sum + (start[item] || 0), 0);
+  const max = maxSideWidth(primary, available, others);
   let target;
-  if (key === 'ArrowLeft' || key === 'ArrowRight') {
-    const delta = (key === 'ArrowRight' ? 1 : -1) * size;
-    target = stepColumnWidth(primary, start[primary], divider.sign * delta);
-  } else if (key === 'Home') target = RAIL_WIDTH;
+  if (direction) target = stepColumnWidth(primary, start[primary], divider.sign * direction * size);
+  else if (key === 'Home') target = RAIL_WIDTH;
   else if (key === 'End') target = max;
   else return null;
   const delta = divider.sign * (Math.min(target, max) - start[primary]);
@@ -182,10 +227,12 @@ export function dividerRange({ visible, index, start, available }) {
   const divider = dividerColumns(visible, index);
   if (!divider) return null;
   const [primary] = divider.controls;
+  if (divider.controls.length === 2) {
+    const ranges = sidePairRanges(divider, start[divider.before] + start[divider.after]);
+    if (!ranges.length) return null;
+    return { column: primary, min: ranges[0][0], max: ranges.at(-1)[1], now: start[primary] };
+  }
   const sides = visible.filter((column) => column !== 'center');
-  const others = sides.filter((item) => !divider.controls.includes(item)).reduce((sum, item) => sum + (start[item] || 0), 0);
-  const max = divider.controls.length === 1
-    ? maxSideWidth(primary, available, others)
-    : Math.max(RAIL_WIDTH, Math.min(COLUMN_LIMITS[primary].max, start[divider.before] + start[divider.after] - RAIL_WIDTH));
-  return { column: primary, min: RAIL_WIDTH, max, now: start[primary] };
+  const others = sides.filter((item) => item !== primary).reduce((sum, item) => sum + (start[item] || 0), 0);
+  return { column: primary, min: RAIL_WIDTH, max: maxSideWidth(primary, available, others), now: start[primary] };
 }

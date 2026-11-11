@@ -110,13 +110,49 @@ test('a ordem atual decide o lado: Navegação à direita cresce ao arrastar par
   assert.deepEqual(resizeAtDivider({ visible, index: 1, start: { left: 248, right: 292 }, delta: -52, available: 1440 }), { left: 300 });
 });
 
-test('entre duas laterais, uma cede para a outra', () => {
+test('entre duas laterais, os encaixes mantêm a largura dos Terminais', () => {
   const visible = ['left', 'right', 'center'];
-  const start = { left: 248, right: 292 };
-  assert.deepEqual(resizeAtDivider({ visible, index: 0, start, delta: 30, available: 1440 }), { left: 278, right: 262 });
-  const squeezed = resizeAtDivider({ visible, index: 0, start, delta: 60, available: 1440 });
-  assert.equal(squeezed.right, 250, 'Painéis param no mínimo antes de virar trilho');
-  assert.deepEqual(resizeAtDivider({ visible, index: 0, start, delta: 200, available: 1440 }), { left: 448, right: RAIL_WIDTH }, 'Terminais absorvem a sobra do encaixe');
+  const available = 1000;
+  const start = { left: 220, right: 260, center: 520 };
+  const resize = (delta) => resolveColumnWidths({
+    widths: resizeAtDivider({ visible, index: 0, start, delta, available }),
+    available,
+  });
+  assert.deepEqual(resize(10), { left: 230, right: 250, center: 520 });
+  assert.deepEqual(resize(60), { left: 230, right: 250, center: 520 });
+  assert.deepEqual(resize(61), { left: 424, right: RAIL_WIDTH, center: 520 });
+  assert.deepEqual(resize(120), { left: 424, right: RAIL_WIDTH, center: 520 });
+  assert.deepEqual(resize(-90), { left: 130, right: 350, center: 520 });
+  assert.deepEqual(resize(-91), { left: RAIL_WIDTH, right: 424, center: 520 });
+});
+
+test('a divisão entre laterais respeita os máximos e funciona na ordem inversa', () => {
+  const visible = ['center', 'right', 'left'];
+  const available = 1200;
+  const start = { left: 350, right: 350, center: 500 };
+  const resize = (delta) => resizeAtDivider({ visible, index: 1, start, delta, available });
+  assert.deepEqual(resize(-400), { right: 250, left: 450 });
+  assert.deepEqual(resize(220), { right: 570, left: 130 });
+  assert.deepEqual(resize(221), { right: 570, left: 130 });
+  assert.deepEqual(resize(800), { right: 570, left: 130 });
+  assert.deepEqual(resizeAtDivider({ visible, index: 1, start: { left: 220, right: 260 }, delta: -70, available }), { right: RAIL_WIDTH, left: 424 });
+  assert.deepEqual(resizeAtDivider({ visible, index: 1, start: { left: 220, right: 260 }, delta: 91, available }), { right: 424, left: RAIL_WIDTH });
+});
+
+test('teclado da divisão entre laterais atravessa encaixes e anuncia limites alcançáveis', () => {
+  const visible = ['left', 'right', 'center'];
+  const available = 1000;
+  const resize = (key, start) => keyboardResize({ visible, index: 0, start, key, available });
+  assert.deepEqual(resize('ArrowRight', { left: 220, right: 260 }), { left: 230, right: 250 });
+  assert.deepEqual(resize('ArrowRight', { left: 230, right: 250 }), { left: 424, right: RAIL_WIDTH });
+  assert.deepEqual(resize('ArrowLeft', { left: 424, right: RAIL_WIDTH }), { left: 230, right: 250 });
+  assert.deepEqual(resize('ArrowRight', { left: RAIL_WIDTH, right: 424 }), { left: 130, right: 350 });
+  assert.deepEqual(resize('Home', { left: 220, right: 260 }), { left: RAIL_WIDTH, right: 424 });
+  assert.deepEqual(resize('End', { left: 220, right: 260 }), { left: 424, right: RAIL_WIDTH });
+  const tight = { visible, index: 0, start: { left: 350, right: 350 }, available: 1200 };
+  assert.deepEqual(dividerRange(tight), { column: 'left', min: 130, max: 450, now: 350 });
+  assert.deepEqual(keyboardResize({ ...tight, key: 'Home' }), { left: 130, right: 570 });
+  assert.deepEqual(keyboardResize({ ...tight, key: 'End' }), { left: 450, right: 250 });
 });
 
 test('teclado move a divisória, atravessa os encaixes e Home/End vão aos limites', () => {

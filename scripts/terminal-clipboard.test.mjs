@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import {
   characterCount, clipboardKeyAction, copiedLabel, imagePasteKey, menuPosition, pasteFromClipboard,
   pasteSequence, pasteTargets, planPaste, quotePaths, quoteSelection, sanitizePaste,
-  isFocusReport, selectionBarPosition, terminalCli, toolbarFocusIndex,
+  isFocusReport, selectionBarPosition, sendMenuPosition, terminalCli, toolbarFocusIndex,
 } from '../src/terminal-clipboard.js';
 
 const require = createRequire(import.meta.url);
@@ -195,6 +195,30 @@ test('o menu de contexto vira para caber no terminal', () => {
   assert.deepEqual(menuPosition({ x: 500, y: 250 }, area, menu), { left: 290, top: 130 });
 });
 
+test('o menu de contexto fica dentro do cartão baixo mesmo com muitas ações', () => {
+  const area = { width: 160, height: 138 };
+  const menu = { width: 208, height: 300 };
+  assert.deepEqual(menuPosition({ x: 75, y: 100 }, area, menu), { left: 6, top: 6 });
+  assert.deepEqual(menuPosition({ x: 0, y: 0 }, area, { width: 100, height: 60 }), { left: 6, top: 6 });
+});
+
+test('a lista de destinos se alinha à barra e usa o espaço disponível no terminal', () => {
+  const area = { width: 240, height: 138 };
+  const menu = { width: 180, height: 40, minHeight: 40 };
+  const highBar = { right: 130, top: 6, bottom: 40 };
+  const lowBar = { right: 234, top: 98, bottom: 132 };
+  assert.deepEqual(sendMenuPosition(highBar, area, menu), { left: 6, top: 44, maxHeight: 88 });
+  assert.deepEqual(sendMenuPosition(lowBar, area, menu), { left: 54, top: 54, maxHeight: 88 });
+  assert.deepEqual(sendMenuPosition(lowBar, area, { ...menu, height: 240 }), { left: 54, top: 6, maxHeight: 88 });
+});
+
+test('a lista usa a altura do terminal quando não há espaço para um destino ao lado da barra', () => {
+  const area = { width: 220, height: 138 };
+  const bar = { right: 114, top: 52, bottom: 86 };
+  const menu = { width: 180, height: 220, minHeight: 54 };
+  assert.deepEqual(sendMenuPosition(bar, area, menu), { left: 6, top: 6 });
+});
+
 test('colagem protegida: acompanha liga/desliga do modo 2004, mesmo partido entre chunks', () => {
   let state = { enabled: false, tail: '' };
   state = trackBracketedPaste(state, 'prompt \x1b[?2004h');
@@ -210,6 +234,17 @@ test('colagem protegida: acompanha liga/desliga do modo 2004, mesmo partido entr
   state = trackBracketedPaste(state, '\x1b[?1049l\x1b[?20045l');
   assert.equal(state.enabled, true, 'outros modos não mexem na colagem protegida');
   assert.ok(state.tail.length <= 32);
+});
+
+test('reset do terminal desliga a colagem protegida, inclusive em chunks separados', () => {
+  for (const chunks of [['\x1b', 'c'], ['\x1b[!', 'p'], ['\x9b!', 'p']]) {
+    let state = trackBracketedPaste({ enabled: false, tail: '' }, '\x1b[?2004h');
+    assert.equal(state.enabled, true);
+    for (const chunk of chunks) state = trackBracketedPaste(state, chunk);
+    assert.equal(state.enabled, false);
+  }
+  const state = trackBracketedPaste({ enabled: false, tail: '' }, '\x1b[?2004h\x1bc\x1b[?2004h');
+  assert.equal(state.enabled, true, 'a última mudança válida prevalece');
 });
 
 test('lista de arquivos do Explorer (text/uri-list) vira caminhos locais', () => {
@@ -269,7 +304,7 @@ test('fiação: preload expõe só leitura para colar, gravação de texto e cam
   assert.match(view, /attachCustomKeyEventHandler/);
 });
 
-test('terminal:input-mode informa a colagem protegida só a quem pode escrever naquele terminal', () => {
+test('consultar e colar no PTY respeitam o modo observado e a janela de origem', () => {
   // O transporte carrega o node-pty nativo; o canal não precisa dele.
   const ptyPath = require.resolve('node-pty');
   const cached = require.cache[ptyPath];
@@ -278,11 +313,14 @@ test('terminal:input-mode informa a colagem protegida só a quem pode escrever n
     delete require.cache[require.resolve('../electron/pty-transport.cjs')];
     const { registerTransportChannels } = require('../electron/pty-transport.cjs');
     const handlers = new Map();
+    const writes = [];
     const records = new Map([
       ['vivo', { bracketedPaste: { enabled: true, tail: '' }, exit: null, closing: false }],
       ['sem-modo', { bracketedPaste: { enabled: false, tail: '' }, exit: null, closing: false }],
       ['fim', { bracketedPaste: { enabled: true, tail: '' }, exit: { exitCode: 0 }, closing: false }],
+      ['fechando', { bracketedPaste: { enabled: true, tail: '' }, exit: null, closing: true }],
     ]);
+    for (const [id, record] of records) record.process = { write: (text) => writes.push([id, text]) };
     registerTransportChannels({
       ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), on: () => {} },
       transport: { get: (id) => records.get(id) },
@@ -298,6 +336,25 @@ test('terminal:input-mode informa a colagem protegida só a quem pode escrever n
     assert.equal(mode(main, 'inexistente'), null);
     assert.deepEqual(mode({ main: false, sender: { pty: 'vivo' } }, 'vivo'), { bracketedPaste: true }, 'pop-up do próprio terminal');
     assert.equal(mode({ main: false, sender: { pty: 'vivo' } }, 'sem-modo'), null, 'pop-up não alcança outra sessão');
+
+    const paste = handlers.get('terminal:paste');
+    assert.deepEqual(paste(main, { terminalId: 'vivo', text: 'linha 1\r\nlinha 2' }), { ok: true });
+    assert.deepEqual(writes, [['vivo', '\x1b[200~linha 1\rlinha 2\x1b[201~']]);
+
+    const record = records.get('vivo');
+    record.bracketedPaste = trackBracketedPaste(record.bracketedPaste, '\x1bc');
+    assert.deepEqual(paste(main, { terminalId: 'vivo', text: 'linha 1\r\nlinha 2' }), { ok: false, reason: 'multiline' });
+    assert.deepEqual(paste(main, { terminalId: 'vivo', text: 'uma linha\r\n' }), { ok: true });
+    assert.deepEqual(writes.at(-1), ['vivo', 'uma linha']);
+
+    for (const terminalId of ['inexistente', 'fim', 'fechando']) {
+      assert.deepEqual(paste(main, { terminalId, text: 'texto' }), { ok: false, reason: 'unavailable' });
+    }
+    const popup = { main: false, sender: { pty: 'vivo' } };
+    assert.deepEqual(paste(popup, { terminalId: 'sem-modo', text: 'texto' }), { ok: false, reason: 'unavailable' });
+    assert.deepEqual(paste(popup, { terminalId: 'vivo', text: 'no pop-up' }), { ok: true });
+    assert.deepEqual(writes.at(-1), ['vivo', 'no pop-up']);
+    assert.equal(writes.length, 3, 'só colagens aceitas chegam ao PTY');
   } finally {
     if (cached) require.cache[ptyPath] = cached;
     else delete require.cache[ptyPath];

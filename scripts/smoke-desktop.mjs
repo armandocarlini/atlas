@@ -109,6 +109,7 @@ let createdTaskId = null;
 let offeredTaskId = null;
 let blockedTaskId = null;
 let terminalBeforeRestart;
+let restoreClipboard = false;
 let stderr = '';
 child.stderr.on('data', (data) => { stderr = (stderr + data).slice(-12000); });
 child.stdout.resume();
@@ -482,6 +483,58 @@ try {
   const input = '.real-terminal .xterm-helper-textarea';
   const raw = async (id) => main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(id)}).then(item => item.scrollback)`);
   const output = async (marker, id = first.id) => until(async () => (await raw(id)).includes(marker), marker);
+  // Espera a saída do terminal parar: uma linha nova rolaria a tela entre medir e arrastar.
+  const quiet = async (name, id) => {
+    let last = null;
+    await until(async () => {
+      const current = await raw(id);
+      const stable = current === last;
+      last = current;
+      if (!stable) await delay(250);
+      return stable;
+    }, `saída de ${name} parada`);
+    await main.evaluate(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
+  };
+  // Arrasta o mouse de verdade (CDP) do começo de uma linha até o fim de outra.
+  const dragSelect = async (name, fromText, toText, id = name === 'smoke-um' ? first.id : second.id, allowPartialRow = false) => {
+    await quiet(name, id);
+    const points = await main.evaluate(`(() => {
+      const rows = [...${card(name)}.querySelectorAll('.xterm-rows > div')];
+      const textRect = (text) => {
+        const row = rows.findLast((item) => ${allowPartialRow} ? item.textContent.includes(text) : item.textContent.trim() === text);
+        if (!row) return null;
+        const range = document.createRange();
+        if (${allowPartialRow}) {
+          const boundary = (offset) => {
+            const nodes = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+            let node;
+            while ((node = nodes.nextNode())) {
+              if (offset <= node.length) return [node, offset];
+              offset -= node.length;
+            }
+            throw new Error('Texto fora da linha do terminal');
+          };
+          const start = row.textContent.indexOf(text);
+          range.setStart(...boundary(start));
+          range.setEnd(...boundary(start + text.length));
+        } else {
+          range.selectNodeContents(row);
+        }
+        const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
+        return { left: rects[0].left, right: rects.at(-1).right, middle: rects[0].top + rects[0].height / 2 };
+      };
+      const from = textRect(${JSON.stringify(fromText)});
+      const to = textRect(${JSON.stringify(toText)});
+      return from && to ? { from: { x: from.left + 1, y: from.middle }, to: { x: to.right - 2, y: to.middle } } : null;
+    })()`);
+    assert(points, `linhas para selecionar em ${name}: ${fromText} → ${toText}`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.from.x, y: points.from.y });
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: points.from.x, y: points.from.y, button: 'left', buttons: 1, clickCount: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: (points.from.x + points.to.x) / 2, y: (points.from.y + points.to.y) / 2, button: 'left', buttons: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.to.x, y: points.to.y, button: 'left', buttons: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: points.to.x, y: points.to.y, button: 'left', buttons: 0, clickCount: 1 });
+    return points;
+  };
   await focus('smoke-um');
   await command(main, input, `Write-Output ('ATLAS_' + 'UNICODE_OK · continuação'); Write-Output ('CWD:' + (Get-Location).Path); Write-Output ('PID:' + $PID)`);
   await output('ATLAS_UNICODE_OK · continuação');
@@ -529,9 +582,10 @@ try {
 
   // Copiar e colar (docs/ROADMAP.md, T0): um eco em smoke-dois liga a colagem protegida e
   // imprime em hexadecimal os bytes que recebe; assim cada caminho é conferido byte a byte.
-  // Usa o clipboard real do Windows e devolve o texto que estava nele ao final.
+  // Usa o clipboard real do Windows. O smoke restaura os formatos originais no finally.
   if (process.platform === 'win32') {
-    const savedClipboard = await native('invoke', { channel: 'clipboard:read-paste' });
+    await native('save-clipboard');
+    restoreClipboard = true;
     const clipDir = path.join(fixture, 'clipboard');
     fs.mkdirSync(clipDir, { recursive: true });
     const echoScript = path.join(clipDir, 'echo-input.cjs');
@@ -558,44 +612,6 @@ process.stdin.on('data', (data) => {
     const terminalOf = (name) => `${card(name)}.querySelector('.terminal-view-shell')`;
     const noticeOf = (name) => main.evaluate(`${terminalOf(name)}.querySelector('.terminal-notice')?.textContent || ''`);
     const focusInput = (name) => main.evaluate(`${card(name)}.querySelector('.xterm-helper-textarea').focus()`);
-    // Espera a saída do terminal parar: uma linha nova rolaria a tela entre medir e arrastar.
-    const quiet = async (name) => {
-      const id = name === 'smoke-um' ? first.id : second.id;
-      let last = null;
-      await until(async () => {
-        const current = await raw(id);
-        const stable = current === last;
-        last = current;
-        if (!stable) await delay(250);
-        return stable;
-      }, `saída de ${name} parada`);
-      await main.evaluate(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
-    };
-    // Arrasta o mouse de verdade (CDP) do começo de uma linha até o fim de outra.
-    const dragSelect = async (name, fromText, toText) => {
-      await quiet(name);
-      const points = await main.evaluate(`(() => {
-        const rows = [...${card(name)}.querySelectorAll('.xterm-rows > div')];
-        const textRect = (text) => {
-          const row = rows.findLast((item) => item.textContent.trim() === text);
-          if (!row) return null;
-          const range = document.createRange();
-          range.selectNodeContents(row);
-          const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
-          return { left: rects[0].left, right: rects.at(-1).right, middle: rects[0].top + rects[0].height / 2 };
-        };
-        const from = textRect(${JSON.stringify(fromText)});
-        const to = textRect(${JSON.stringify(toText)});
-        return from && to ? { from: { x: from.left + 1, y: from.middle }, to: { x: to.right - 2, y: to.middle } } : null;
-      })()`);
-      assert(points, `linhas para selecionar em ${name}: ${fromText} → ${toText}`);
-      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.from.x, y: points.from.y });
-      await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: points.from.x, y: points.from.y, button: 'left', buttons: 1, clickCount: 1 });
-      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: (points.from.x + points.to.x) / 2, y: (points.from.y + points.to.y) / 2, button: 'left', buttons: 1 });
-      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.to.x, y: points.to.y, button: 'left', buttons: 1 });
-      await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: points.to.x, y: points.to.y, button: 'left', buttons: 0, clickCount: 1 });
-      return points;
-    };
     // Captura só depois da entrada do elemento flutuante (opacidade final, sem animação em curso).
     // A saída do aviso espera no atraso dela: animação que ainda não começou não conta.
     const settled = (expression, label) => until(() => main.evaluate(`(() => {
@@ -682,6 +698,34 @@ process.stdin.on('data', (data) => {
       await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...blank, button: 'left', buttons: 1, clickCount: 1 });
       await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...blank, button: 'left', buttons: 0, clickCount: 1 });
       await until(() => main.evaluate(`!${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar')`), 'clique limpa a seleção');
+    }
+    // Ctrl+V e o menu Colar também recusam várias linhas no shell sem modo 2004.
+    if (shellMode && !shellMode.bracketedPaste) {
+      const marker = 'ATLAS_PASTE_SEM_ENTER';
+      await native('invoke', { channel: 'clipboard:write-text', args: [`# ${marker}_1\r\n# ${marker}_2`] });
+      const before = (await raw(first.id)).length;
+      const refusalKey = () => main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action')?.textContent || ''`);
+      await focusInput('smoke-um');
+      await key(main, 'v', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+      await until(async () => /^Não colado: este terminal executaria cada linha/.test(await refusalKey()), 'Ctrl+V recusa colagem multilinha sem modo 2004');
+      assert(!(await raw(first.id)).slice(before).includes(marker), 'Ctrl+V não enviou texto ao shell');
+      await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action button').click()`);
+      await until(async () => !(await refusalKey()), 'aviso anterior substituído pelo aviso de cópia');
+      await key(main, 'F10', { code: 'F10', windowsVirtualKeyCode: 121, modifiers: 8 });
+      await until(() => main.evaluate(`Boolean(${terminalOf('smoke-um')}.querySelector('.terminal-context-menu'))`), 'menu para colagem multilinha sem modo 2004');
+      await main.evaluate(`[...${terminalOf('smoke-um')}.querySelectorAll('.terminal-context-menu [role=menuitem]')].find((item) => item.querySelector('span').textContent === 'Colar').click()`);
+      await until(async () => /^Não colado: este terminal executaria cada linha/.test(await refusalKey()), 'menu Colar recusa colagem multilinha sem modo 2004');
+      assert(!(await raw(first.id)).slice(before).includes(marker), 'menu Colar não enviou texto ao shell');
+      await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action button').click()`);
+      await until(async () => !(await refusalKey()), 'aviso do menu substituído pelo aviso de cópia');
+      await main.evaluate(`(() => {
+        const data = new DataTransfer();
+        data.setData('text/plain', ${JSON.stringify(`# ${marker}_1\r\n# ${marker}_2`)});
+        const input = ${terminalOf('smoke-um')}.querySelector('.xterm-helper-textarea');
+        input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+      })()`);
+      await until(async () => /^Não colado: este terminal executaria cada linha/.test(await refusalKey()), 'evento nativo também recusa colagem multilinha');
+      assert(!(await raw(first.id)).slice(before).includes(marker), 'evento nativo não enviou texto ao shell');
     }
     // O clipboard volta ao log copiado, para os passos de Ctrl+V abaixo.
     await native('invoke', { channel: 'clipboard:write-text', args: ['COPIA_L1\r\nCOPIA_L2'] });
@@ -798,7 +842,6 @@ process.stdin.on('data', (data) => {
     await key(main, 'c', { code: 'KeyC', windowsVirtualKeyCode: 67, modifiers: 2 });
     await output('ECHO_DONE', second.id);
     await until(() => main.evaluate(`window.atlasDesktop.getTerminalInputMode(${JSON.stringify(second.id)}).then((mode) => mode?.bracketedPaste === false)`), 'colagem protegida desligada ao sair do eco');
-    if (savedClipboard?.text) await native('invoke', { channel: 'clipboard:write-text', args: [savedClipboard.text] });
     console.log('PASS copiar ao selecionar, Ctrl+C/Ctrl+V, arquivos, imagem, arrastar, menu de contexto e barra de seleção');
   }
 
@@ -942,6 +985,16 @@ process.stdin.on('data', (data) => {
   await screenshot(main, 'columns-nav-icons');
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('#navigation-flyout') && document.activeElement?.classList.contains('rail-project')`), 'Esc fecha o flyout e devolve o foco');
+  const activateFocusedButton = (selector) => main.evaluate(`(() => {
+    const button = document.querySelector(${JSON.stringify(selector)});
+    if (!button) return false;
+    button.focus();
+    if (document.activeElement !== button) return false;
+    button.click();
+    return true;
+  })()`);
+  assert(await activateFocusedButton('.navigation-rail [aria-label="Expandir navegação"]'), 'botão de expansão da Navegação recebe foco e é ativado');
+  await until(() => main.evaluate(`document.activeElement?.matches('[data-column-id="left"]:not([data-mode="icons"]) .column-drag-bar .detach-control')`), 'expandir a Navegação transfere o foco');
   await doubleClick(navSeparator);
   await until(async () => (await columnWidth('left')) === navStart, 'duplo clique volta ao padrão');
   assert.equal(await ptySize('COLS_C'), sizeBefore, 'PTY volta ao tamanho original com a largura padrão');
@@ -963,6 +1016,10 @@ process.stdin.on('data', (data) => {
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('#panels-overlay')`), 'Esc fecha o painel sobreposto');
   assert.deepEqual(await main.evaluate(`JSON.parse(localStorage.getItem('atlas-docks')).widths`), { left: null, right: 56 }, 'larguras salvas em atlas-docks');
+  await main.evaluate(`document.querySelector('.rail-panel[data-panel="task"]').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('#panels-overlay'))`), 'painel aberto para expandir');
+  assert(await activateFocusedButton('#panels-overlay [aria-label="Expandir painéis"]'), 'botão de expansão de Painéis recebe foco e é ativado');
+  await until(() => main.evaluate(`!document.querySelector('#panels-overlay') && document.activeElement?.matches('#atlas-panels .inspector-tabs button.active')`), 'expandir o painel transfere o foco à aba aberta');
   await doubleClick(panelSeparator);
   await until(async () => (await columnWidth('right')) === panelStart, 'Painéis voltam ao padrão');
   await native('resize', { width: 940, height: 700 });
@@ -1026,16 +1083,28 @@ process.stdin.on('data', (data) => {
   assert.equal(await main.evaluate(`document.querySelector(${JSON.stringify(verticalTrack)}).getAttribute('aria-valuenow')`), String(gridKeyboard[0].width));
   await screenshot(main, 'tracks-grid');
   // Ocultar um terminal muda a forma; restaurar devolve os tamanhos salvos daquela forma.
-  // As trilhas são proporcionais: com a Navegação de volta, a proporção se mantém.
+  // A proporção salva vale enquanto as duas trilhas puderem respeitar o mínimo.
   const share = (boxes) => boxes[0].width / (boxes[0].width + boxes[1].width);
+  const savedGrid = (await savedTracks()).grid['2x1'];
+  const fitsSavedGrid = async () => {
+    const boxes = await cardBoxes();
+    if (boxes.length !== 2) return false;
+    const width = await main.evaluate("document.querySelector('.session-grid').clientWidth");
+    const firstWidth = Math.max(320, Math.min(width - 320, width * share(gridKeyboard)));
+    return Math.abs(boxes[0].width - firstWidth) <= 2 && boxes.every((box) => box.width >= 318);
+  };
   await click(main, '.workspace-panel-toggle[data-panel=left]');
-  await until(async () => (await cardBoxes()).length === 2 && Math.abs(share(await cardBoxes()) - share(gridKeyboard)) < 0.01, 'proporção mantida ao mostrar a Navegação');
+  await until(fitsSavedGrid, 'ao mostrar a Navegação, as trilhas mantêm o mínimo');
+  assert.deepEqual((await savedTracks()).grid['2x1'], savedGrid, 'janela estreita preserva a proporção salva');
   await sessionAction(main, card('smoke-dois'), 'hide');
   await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 1 && !document.querySelector('.track-resizer')`), 'um terminal: sem divisórias e ocupando tudo');
   await main.evaluate(`[...document.querySelectorAll('.tree-session')].find(item => item.dataset.state === 'oculta' && item.innerText.includes('smoke-dois')).click()`);
   await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 2`), 'terminal restaurado');
-  const gridRestored = await cardBoxes();
-  assert(Math.abs(share(gridRestored) - share(gridKeyboard)) < 0.01, `forma 2x1 volta com os tamanhos salvos: ${JSON.stringify(gridRestored)}`);
+  await until(fitsSavedGrid, 'forma 2x1 volta com os tamanhos salvos e o mínimo');
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await until(async () => Math.abs(share(await cardBoxes()) - share(gridKeyboard)) < 0.01, 'a proporção volta quando há espaço');
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await until(fitsSavedGrid, 'Grade volta a respeitar o mínimo ao mostrar a Navegação');
   await main.evaluate(`document.querySelector(${JSON.stringify(verticalTrack)}).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
   await until(async () => { const boxes = await cardBoxes(); return Math.abs(boxes[0].width - boxes[1].width) <= 2; }, 'duplo clique divide igualmente');
   // Linhas: com Navegação e Painéis visíveis em 1180px, a Grade empilha os terminais.
@@ -1166,9 +1235,7 @@ process.stdin.on('data', (data) => {
     const stackKeyboard = split(await cardBoxes());
     assert(Math.abs(stackKeyboard.agents[0].height - (stackDragged.agents[0].height - 16)) <= 2, `seta para cima move a divisória 16px: ${JSON.stringify(stackKeyboard)}`);
     await screenshot(main, 'tracks-sidebar-stack');
-    // Integração: barra de seleção e aviso de cópia num terminal estreito (agente empilhado em
-    // Principal + agentes, com a Navegação visível). Clicar num agente o torna o principal, mais
-    // largo; o caminho sem clique é o do teclado e do botão direito: Selecionar tudo, Copiar e F6.
+    // Integração: arrastar para selecionar texto no agente estreito não promove o terminal.
     await setColumn('left', true);
     let settledBoxes = null;
     await until(async () => {
@@ -1180,51 +1247,37 @@ process.stdin.on('data', (data) => {
     }, 'layout assentado com a Navegação');
     const narrowName = split(JSON.parse(settledBoxes)).agents.reduce((thin, box) => (box.width < thin.width ? box : thin)).name;
     const narrowShell = `${card(narrowName)}.querySelector('.terminal-view-shell')`;
-    const keptClipboard = await native('invoke', { channel: 'clipboard:read-paste' });
     assert(await main.evaluate(`${narrowShell}.getBoundingClientRect().width <= 480`), `agente empilhado estreito: ${settledBoxes}`);
-    const row = null;
-    const contextAction = async (label) => {
-      const point = await main.evaluate(`(() => { const box = ${narrowShell}.querySelector('.xterm-screen').getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2 }; })()`);
-      await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'right', buttons: 2, clickCount: 1 });
-      await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'right', buttons: 0, clickCount: 1 });
-      await until(() => main.evaluate(`Boolean(${narrowShell}.querySelector('.terminal-context-menu'))`), `menu de contexto para ${label}`);
-      await main.evaluate(`[...${narrowShell}.querySelectorAll('.terminal-context-menu [role=menuitem]')].find((item) => item.textContent.startsWith(${JSON.stringify(label)})).click()`);
-    };
-    await contextAction('Selecionar tudo');
-    await contextAction('Copiar');
-    const noticeBox = await until(() => main.evaluate(`(() => { const shell = ${narrowShell}; const notice = shell.querySelector('.terminal-notice'); if (!notice) return null; const a = notice.getBoundingClientRect(); const b = shell.getBoundingClientRect(); return { inside: a.left >= b.left - 0.5 && a.right <= b.right + 0.5 && a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5, text: notice.textContent }; })()`), 'aviso de cópia no terminal estreito');
-    assert(noticeBox.inside && /caracteres? copiados?$/.test(noticeBox.text), `aviso de cópia dentro do terminal estreito: ${JSON.stringify(noticeBox)}`);
-    assert.deepEqual(split(await cardBoxes()).agents.map((box) => box.name).includes(narrowName), true, 'o agente continua empilhado (sem clique, sem troca de principal)');
-    await main.evaluate(`${card(narrowName)}.querySelector('.xterm-helper-textarea').focus()`);
-    await key(main, 'F6', { code: 'F6', windowsVirtualKeyCode: 117 });
-    const narrowState = () => main.evaluate(`(() => { const shell = ${narrowShell}; const bar = shell?.querySelector('.terminal-selection-bar'); return { shell: Boolean(shell), width: shell && Math.round(shell.getBoundingClientRect().width), bar: Boolean(bar), barVisibility: bar && getComputedStyle(bar).visibility, notice: shell?.querySelector('.terminal-notice')?.textContent || null, selection: [...(shell?.querySelectorAll('.xterm-selection div') || [])].length, row: ${JSON.stringify(row)}, active: document.activeElement?.className || null }; })()`);
-    try {
-      await until(() => main.evaluate(`Boolean(${narrowShell}.querySelector('.terminal-selection-bar'))`), 'barra no terminal estreito', 8000);
-    } catch (error) {
-      await screenshot(main, 'selection-bar-narrow-erro');
-      throw new Error(`${error.message}: ${JSON.stringify(await narrowState())}`);
+    const narrowId = ptyOf[narrowName];
+    const marker = 'ATLAS_STACK_SELECT';
+    const lead = split(JSON.parse(settledBoxes)).principal.name;
+    await command(main, `.session-card[data-session-name=${JSON.stringify(narrowName)}] .xterm-helper-textarea`, `Write-Output ('ATLAS_' + 'STACK_SELECT')`);
+    await output(marker, narrowId);
+    await until(() => main.evaluate(`[...${card(narrowName)}.querySelectorAll('.xterm-rows > div')].some((line) => line.textContent.includes(${JSON.stringify(marker)}))`), 'texto visível no agente empilhado');
+    {
+      await dragSelect(narrowName, marker, marker, narrowId, true);
+      await until(async () => (await native('invoke', { channel: 'clipboard:read-paste' })).text === marker, 'seleção com mouse copiada no terminal estreito');
+      assert.equal(split(await cardBoxes()).principal.name, lead, 'selecionar texto não promove o terminal empilhado');
+      const narrowLayout = await until(() => main.evaluate(`(() => {
+        const shell = ${narrowShell};
+        const bar = shell.querySelector('.terminal-selection-bar');
+        const notice = shell.querySelector('.terminal-notice');
+        if (!bar || !notice || getComputedStyle(bar).visibility === 'hidden') return null;
+        const box = (element) => element.getBoundingClientRect();
+        const inside = (element) => box(element).left >= box(shell).left - 0.5 && box(element).right <= box(shell).right + 0.5 && box(element).top >= box(shell).top - 0.5 && box(element).bottom <= box(shell).bottom + 0.5;
+        return {
+          shellWidth: Math.round(box(shell).width),
+          barInside: inside(bar),
+          noticeInside: inside(notice),
+          labelsHidden: [...bar.querySelectorAll(':scope > button > span')].every((span) => span.getBoundingClientRect().width <= 1),
+          names: [...bar.querySelectorAll(':scope > button')].map((button) => button.textContent.trim()),
+        };
+      })()`), 'barra e aviso no terminal estreito', 4000);
+      assert(narrowLayout.barInside && narrowLayout.noticeInside, `barra e aviso dentro do terminal estreito: ${JSON.stringify(narrowLayout)}`);
+      assert(narrowLayout.labelsHidden, `terminal estreito mostra só os ícones: ${JSON.stringify(narrowLayout)}`);
+      assert.deepEqual(narrowLayout.names, ['Responder', 'Reescrever', 'Colar em outra sessão'], 'os nomes continuam acessíveis');
+      await screenshot(main, 'selection-bar-narrow');
     }
-    const narrowLayout = await until(() => main.evaluate(`(() => {
-      const shell = ${narrowShell};
-      const bar = shell.querySelector('.terminal-selection-bar');
-      const notice = shell.querySelector('.terminal-notice');
-      if (!bar || getComputedStyle(bar).visibility === 'hidden') return null;
-      const box = (element) => element.getBoundingClientRect();
-      const inside = (element) => box(element).left >= box(shell).left - 0.5 && box(element).right <= box(shell).right + 0.5 && box(element).top >= box(shell).top - 0.5 && box(element).bottom <= box(shell).bottom + 0.5;
-      return {
-        shellWidth: Math.round(box(shell).width),
-        barInside: inside(bar),
-        noticeInside: notice ? inside(notice) : true,
-        labelsHidden: [...bar.querySelectorAll(':scope > button > span')].every((span) => span.getBoundingClientRect().width <= 1),
-        names: [...bar.querySelectorAll(':scope > button')].map((button) => button.textContent.trim()),
-      };
-    })()`), 'barra e aviso no terminal estreito', 4000).catch(async (error) => { throw new Error(`${error.message}: ${JSON.stringify(await narrowState())}`); });
-    assert(narrowLayout.barInside && narrowLayout.noticeInside, `barra e aviso dentro do terminal estreito: ${JSON.stringify(narrowLayout)}`);
-    assert(narrowLayout.labelsHidden, `terminal estreito mostra só os ícones: ${JSON.stringify(narrowLayout)}`);
-    assert.deepEqual(narrowLayout.names, ['Responder', 'Reescrever', 'Colar em outra sessão'], 'os nomes continuam acessíveis');
-    await screenshot(main, 'selection-bar-narrow');
-    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
-    if (keptClipboard?.text) await native('invoke', { channel: 'clipboard:write-text', args: [keptClipboard.text] });
     await main.call('Emulation.clearDeviceMetricsOverride');
 
     // 3. Laterais vizinhas: Painéis arrastados para antes dos Terminais ficam ao lado da Navegação,
@@ -2077,10 +2130,15 @@ process.stdin.on('data', (data) => {
   console.error(stderr);
   throw error;
 } finally {
-  connections.forEach((item) => item.ws.close());
-  await native('quit').catch(() => child.kill());
-  child.stdin.end();
-  try { execFileSync('reg.exe', ['delete', explorerRoot, '/f'], { stdio: 'ignore', windowsHide: true }); } catch { /* chave de fixture já ausente */ }
+  try {
+    if (restoreClipboard) await native('restore-clipboard');
+  } finally {
+    connections.forEach((item) => item.ws.close());
+    await native('quit').catch(() => child.kill());
+
+    child.stdin.end();
+    try { execFileSync('reg.exe', ['delete', explorerRoot, '/f'], { stdio: 'ignore', windowsHide: true }); } catch { /* chave de fixture já ausente */ }
+  }
 }
 await until(() => pids.every((pid) => { try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; } }), 'child PowerShell processes stopped');
 async function waitForExit(exited) {

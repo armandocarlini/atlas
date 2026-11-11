@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   attachTerminal: (terminalId) => ipcRenderer.invoke('terminal:attach', terminalId),
   writeTerminal: (terminalId, data) => ipcRenderer.send('terminal:write', { terminalId, data }),
   resizeTerminal: (terminalId, cols, rows) => ipcRenderer.send('terminal:resize', { terminalId, cols, rows }),
+  pasteTerminal: (terminalId, text) => ipcRenderer.invoke('terminal:paste', { terminalId, text }),
   getTerminalInputMode: (terminalId) => ipcRenderer.invoke('terminal:input-mode', terminalId),
   // Clipboard dos terminais: o renderer lê só o que a colagem usa e grava só texto.
   readClipboardForPaste: () => ipcRenderer.invoke('clipboard:read-paste'),

@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import {
-  TERMINAL_MIN, gridPlacement, gridShape, pixelTracks, saveTracks, shapeKey, sidebarShape, tracksFor, tracksToTemplate,
+  TERMINAL_MIN, columnTracksToTemplate, gridPlacement, gridShape, pixelTracks, saveTracks, shapeKey, sidebarShape, tracksFor, tracksToTemplate,
 } from './track-layout.js';
 
 const sameNumbers = (left, right) => left.length === right.length && left.every((value, index) => Math.abs(value - right[index]) < 0.5);
@@ -18,7 +18,7 @@ export default function useTerminalTracks({ layout, count, saved, onSave }) {
   const base = shape ? tracksFor(saved, layout, shape) : null;
   const tracks = live?.key === key ? live.tracks : base;
   const style = tracks ? {
-    gridTemplateColumns: tracksToTemplate(tracks.columns, 0),
+    gridTemplateColumns: columnTracksToTemplate(tracks.columns),
     gridTemplateRows: tracksToTemplate(tracks.rows, TERMINAL_MIN.height),
     gridAutoRows: `minmax(${TERMINAL_MIN.height}px, 1fr)`,
   } : undefined;

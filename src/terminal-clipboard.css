@@ -58,13 +58,17 @@
 .terminal-context-menu {
   position: absolute;
   z-index: 21;
-  min-width: 208px;
+  width: max-content;
+  min-width: min(208px, calc(100% - 12px));
   max-width: min(320px, calc(100% - 12px));
+  max-height: calc(100% - 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   border-radius: 8px;
   animation: terminal-float-in 160ms var(--ease-out, ease-out) both;
 }
-.terminal-send-menu { top: calc(100% + 4px); right: 0; min-width: 180px; }
+.terminal-send-menu { min-width: min(180px, calc(100% - 12px)); }
 .terminal-menu-item {
   display: flex;
   align-items: center;
@@ -82,6 +86,8 @@
   cursor: pointer;
 }
 .terminal-menu-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-menu-item > .terminal-menu-target { white-space: normal; overflow-wrap: anywhere; }
+.terminal-menu-target small { display: block; color: var(--muted); font-size: inherit; }
 .terminal-menu-item:hover:not(:disabled) { background: var(--surface-hover); }
 .terminal-menu-item:disabled { color: var(--muted); opacity: .6; cursor: default; }
 .terminal-menu-item kbd { color: var(--muted); font: 11px var(--mono, Consolas, monospace); background: none; border: 0; padding: 0; }

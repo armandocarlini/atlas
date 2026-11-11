@@ -11,10 +11,11 @@ const MODE_TAIL = 32;
 function trackBracketedPaste(state, chunk) {
   const text = `${state.tail}${chunk}`;
   let enabled = state.enabled;
-  for (const match of text.matchAll(/\x1b\[\?([\d;]+)([hl])/g)) {
+  for (const match of text.matchAll(/\x1bc|(?:\x1b\[|\x9b)(?:!p|\?([\d;]+)([hl]))/g)) {
     // Sequência inteira no resto do chunk anterior: já foi contada.
     if (match.index + match[0].length <= state.tail.length) continue;
-    if (match[1].split(';').includes('2004')) enabled = match[2] === 'h';
+    if (!match[1]) enabled = false;
+    else if (match[1].split(';').some((mode) => Number(mode) === 2004)) enabled = match[2] === 'h';
   }
   return { enabled, tail: text.slice(-MODE_TAIL) };
 }

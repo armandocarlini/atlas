@@ -1,8 +1,7 @@
 // Copiar e colar no terminal: decisões puras, testadas em scripts/terminal-clipboard.test.mjs.
 // O componente (TerminalView) só liga estas decisões ao xterm e ao clipboard do sistema.
 
-const PASTE_START = '\x1b[200~';
-const PASTE_END = '\x1b[201~';
+export { pasteSequence, planPaste, sanitizePaste } from '../electron/terminal-paste.js';
 // Só imagem no clipboard: o ATLAS repassa ao CLI o atalho de colar imagem, e o próprio CLI lê o
 // clipboard e anexa. No Windows o Claude Code só anexa com Alt+V (ESC v); com ^V cru ele não faz
 // nada (verificado no Claude Code real, com configuração isolada). ESC v não vai a mais ninguém:
@@ -75,29 +74,6 @@ export function quotePaths(paths) {
   return (paths || []).filter((item) => typeof item === 'string' && item && !item.includes('"')).map((item) => `"${item}"`).join(' ');
 }
 
-// O conteúdo colado não pode fechar a colagem protegida antes da hora.
-export function sanitizePaste(text) {
-  return String(text ?? '').replaceAll(PASTE_START, '').replaceAll(PASTE_END, '');
-}
-
-// Colar sem Enter: com colagem protegida (bracketed paste), quebras de linha ficam dentro do
-// trecho e o CLI não envia nada. Sem ela, cada quebra executaria uma linha, então só passa
-// texto de uma linha, sem a quebra final.
-export function planPaste(text, bracketed) {
-  const clean = sanitizePaste(text);
-  if (!clean) return { ok: false, reason: 'empty' };
-  if (bracketed) return { ok: true, text: clean };
-  const single = clean.replace(/\r?\n$/, '');
-  if (/[\r\n]/.test(single)) return { ok: false, reason: 'multiline' };
-  return { ok: true, text: single };
-}
-
-// Sequência enviada ao PTY de outra sessão, no mesmo formato do terminal.paste do xterm.
-export function pasteSequence(text, bracketed) {
-  const body = sanitizePaste(text).replace(/\r?\n/g, '\r');
-  return bracketed ? `${PASTE_START}${body}${PASTE_END}` : body;
-}
-
 // O que fazer com o conteúdo do clipboard lido pelo processo principal.
 export function pasteFromClipboard(content, context) {
   const files = Array.isArray(content?.files) ? content.files : [];
@@ -123,22 +99,43 @@ export function pasteTargets(sessions, functions) {
     }));
 }
 
-// Menu de contexto: abre no ponto e vira para a esquerda/para cima quando não cabe.
-export function menuPosition({ x, y }, { width, height }, menu) {
-  const margin = 6;
-  const left = x + menu.width + margin > width ? Math.max(margin, x - menu.width) : x;
-  const top = y + menu.height + margin > height ? Math.max(margin, y - menu.height) : y;
-  return { left: Math.round(left), top: Math.round(top) };
+const FLOAT_MARGIN = 6;
+
+function clampFloatingOffset(offset, length, available) {
+  const last = Math.max(FLOAT_MARGIN, available - length - FLOAT_MARGIN);
+  return Math.round(Math.min(Math.max(FLOAT_MARGIN, offset), last));
 }
 
-// Posição da barra de seleção: centrada no ponto onde o mouse soltou, acima da primeira linha
-// selecionada (`top`) ou, sem espaço, abaixo da última (`bottom`), sem cobrir o trecho nem sair
-// do terminal.
+function pointerOffset(offset, length, available) {
+  const preferred = offset + length + FLOAT_MARGIN > available ? offset - length : offset;
+  return clampFloatingOffset(preferred, length, available);
+}
+
+// O menu abre junto ao ponto e vira para a esquerda ou para cima quando falta espaço.
+export function menuPosition({ x, y }, { width, height }, menu) {
+  return { left: pointerOffset(x, menu.width, width), top: pointerOffset(y, menu.height, height) };
+}
+
+// A barra fica centrada na seleção, acima da primeira linha ou abaixo da última.
 export function selectionBarPosition({ x, top, bottom }, { width, height }, bar) {
-  const margin = 6;
   const gap = 6;
-  const left = Math.min(Math.max(margin, x - bar.width / 2), Math.max(margin, width - bar.width - margin));
   const above = top - bar.height - gap;
-  const below = Math.min(bottom + gap, Math.max(margin, height - bar.height - margin));
-  return { left: Math.round(left), top: Math.round(above >= margin ? above : below) };
+  return {
+    left: clampFloatingOffset(x - bar.width / 2, bar.width, width),
+    top: clampFloatingOffset(above >= FLOAT_MARGIN ? above : bottom + gap, bar.height, height),
+  };
+}
+
+export function sendMenuPosition({ right, top, bottom }, { width, height }, menu) {
+  const gap = 4;
+  const above = top - gap - FLOAT_MARGIN;
+  const below = height - bottom - gap - FLOAT_MARGIN;
+  const opensBelow = below >= menu.height || below >= above;
+  const maxHeight = Math.floor(opensBelow ? below : above);
+  const left = clampFloatingOffset(right - menu.width, menu.width, width);
+
+  // Se nem a primeira opção couber perto da barra, a lista pode ocupar o terminal.
+  if (maxHeight < menu.minHeight) return { left, top: clampFloatingOffset(top, menu.height, height) };
+  const visibleHeight = Math.min(menu.height, maxHeight);
+  return { left, top: Math.round(opensBelow ? bottom + gap : top - gap - visibleHeight), maxHeight };
 }

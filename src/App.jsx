@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AppWindow,
@@ -828,6 +828,17 @@ export default function App() {
     order: columnOrder,
     hidden: { left: hiddenColumns.left, right: hiddenColumns.right || panelsDetached },
   });
+  const expandingColumn = useRef(null);
+  useLayoutEffect(() => {
+    const column = expandingColumn.current;
+    if (!column) return;
+    expandingColumn.current = null;
+    const dock = document.querySelector(`[data-column-id="${column}"]:not([data-mode="icons"])`);
+    if (dock) {
+      const control = dock.querySelector('.inspector-tabs button.active') || dock.querySelector('.column-drag-bar .detach-control');
+      control?.focus();
+    }
+  }, [columnLayout.widths]);
   const [popupPosition, setPopupPosition] = useState({ x: Math.max(16, window.innerWidth - 388), y: 96 });
   const popupDragRef = useRef(null);
   const [modal, setModal] = useState(null);
@@ -1848,6 +1859,11 @@ export default function App() {
     setInspectorTab('task');
   }
 
+  function expandColumn(column) {
+    expandingColumn.current = column;
+    columnLayout.apply({ [column]: defaultColumnWidth(column, columnLayout.available) });
+  }
+
   function toggleHiddenColumn(column) {
     setHiddenColumns((current) => ({ ...current, [column]: !current[column] }));
   }
@@ -2072,7 +2088,7 @@ export default function App() {
                     loading: projectsLoading || projects.some((project) => project.scanning),
                   };
                   return columnLayout.modes.left === 'icons'
-                    ? <NavigationRail {...navigation} onExpand={() => columnLayout.apply({ left: defaultColumnWidth('left', columnLayout.available) })} />
+                    ? <NavigationRail {...navigation} onExpand={() => expandColumn('left')} />
                     : <WorkspaceTree {...navigation} />;
                 })()}
               </aside>
@@ -2215,7 +2231,7 @@ export default function App() {
                 tab: inspectorTab, onTabChange: setInspectorTab,
                 panels: docks.right, onReorderPanel: reorderPanel,
               };
-              const expandPanels = () => columnLayout.apply({ right: defaultColumnWidth('right', columnLayout.available) });
+              const expandPanels = () => expandColumn('right');
               return columnLayout.modes.right === 'icons'
                 ? <PanelsRail
                   panels={docks.right}

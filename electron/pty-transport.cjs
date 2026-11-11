@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const pty = require('node-pty');
 const { trackBracketedPaste } = require('./terminal-clipboard.cjs');
+const { pasteSequence, planPaste } = require('./terminal-paste.js');
 
 const SCROLLBACK_LIMIT = 512 * 1024;
 
@@ -111,6 +112,18 @@ function registerTransportChannels({ ipcMain, transport, isMainSender, getPopupP
     const record = transport.get(terminalId);
     if (!record || record.exit || record.closing || !canAccess(event, terminalId) || typeof data !== 'string') return;
     record.process.write(data);
+  });
+
+  // Valida o modo observado e escreve no mesmo handler.
+  ipcMain.handle('terminal:paste', (event, { terminalId, text } = {}) => {
+    const record = transport.get(terminalId);
+    if (!record || record.exit || record.closing || !canAccess(event, terminalId)) return { ok: false, reason: 'unavailable' };
+    if (typeof text !== 'string') return { ok: false, reason: 'empty' };
+    const bracketed = Boolean(record.bracketedPaste?.enabled);
+    const plan = planPaste(text, bracketed);
+    if (!plan.ok) return plan;
+    record.process.write(pasteSequence(plan.text, bracketed));
+    return { ok: true };
   });
 
   ipcMain.handle('terminal:input-mode', (event, terminalId) => {

@@ -117,6 +117,10 @@ export function tracksToTemplate(tracks, min = 0) {
   return tracks.map((value) => `minmax(${min}px, ${Number(value.toFixed(4))}fr)`).join(' ');
 }
 
+export function columnTracksToTemplate(tracks) {
+  return tracksToTemplate(tracks, tracks.length > 1 ? TERMINAL_MIN.width : 0);
+}
+
 export function pixelTracks(template) {
   if (typeof template !== 'string') return [];
   return template.trim().split(/\s+/).map((value) => Number.parseFloat(value)).filter((value) => finite(value));
