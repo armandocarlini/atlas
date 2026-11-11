@@ -6,7 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { auditInterface } from './audit-interface.mjs';
+import { auditGlyphs, auditInterface, focusIndicator } from './audit-interface.mjs';
 import { DatabaseSync } from 'node:sqlite';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -800,6 +800,254 @@ try {
   await ensurePanels(main);
   await focus('smoke-dois');
   console.log('PASS terminais redimensionáveis: Grade em colunas e linhas, Principal + agentes, mínimos, teclado, reajuste ao ocultar, PTY e persistência');
+
+  // Lacunas do layout: Grade com 3 colunas, pilha de agentes, laterais vizinhas reordenadas,
+  // throttle do PTY no arraste e contraste/foco no tema claro e em forced-colors.
+  {
+    const third = await createTerminal('smoke-tres');
+    const ptyOf = { 'smoke-um': first.id, 'smoke-dois': second.id, 'smoke-tres': third.id };
+    await native('resize', { width: 1440, height: 900 });
+    await chooseTerminalLayout(main, 'grid');
+    const setColumn = async (panel, visible) => {
+      const shown = () => main.evaluate(`Boolean(document.querySelector('[data-column-id=${panel}]'))`);
+      if ((await shown()) !== visible) await click(main, `.workspace-panel-toggle[data-panel=${panel}]`);
+      await until(async () => (await shown()) === visible, `${panel} ${visible ? 'visível' : 'oculta'}`);
+    };
+    // Arraste lento (30ms por passo), para medir quantos resizes o PTY recebe enquanto dura.
+    async function slowDrag(selector, dx, dy, steps = 24, pause = 30) {
+      const start = await main.evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...start });
+      await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...start, button: 'left', buttons: 1, clickCount: 1 });
+      const began = Date.now();
+      for (let step = 1; step <= steps; step += 1) {
+        await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + dx * step / steps, y: start.y + dy * step / steps, button: 'left', buttons: 1 });
+        await delay(pause);
+      }
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: start.x + dx, y: start.y + dy, button: 'left', buttons: 0, clickCount: 1 });
+      const elapsed = Date.now() - began;
+      await delay(400);
+      return elapsed;
+    }
+
+    // 1. Três colunas: a Grade decide pela largura do contêiner (3 x 560px). A tela de quem roda o
+    // teste pode não caber 1800px; a emulação de viewport dá a largura sem depender do monitor.
+    await setColumn('left', false);
+    await setColumn('right', false);
+    await main.call('Emulation.setDeviceMetricsOverride', { width: 1800, height: 900, deviceScaleFactor: 1, mobile: false });
+    try {
+      await until(() => main.evaluate(`document.querySelector('.session-grid').clientWidth >= 1680 && document.querySelectorAll('.track-resizer.vertical').length === 2`), 'Grade com 3 colunas a partir de 1680px');
+      const three = await cardBoxes();
+      assert.equal(three.length, 3, 'três terminais na Grade');
+      assert(three.every((box) => Math.abs(box.top - three[0].top) <= 1), `três colunas na mesma linha: ${JSON.stringify(three)}`);
+      assert(Math.max(...three.map((box) => box.width)) - Math.min(...three.map((box) => box.width)) <= 2, `colunas iguais: ${JSON.stringify(three)}`);
+      // 4. Throttle: durante o arraste, cada PTY recebe no máximo um resize a cada 120ms (mais o
+      // final ao soltar); sem throttle seriam ~24, um por passo.
+      const boundary = '.track-resizer[aria-label="Divisão entre as colunas de terminais 2 e 3"]';
+      const before = await native('resize-counts');
+      const elapsed = await slowDrag(boundary, -150, 0);
+      const after = await native('resize-counts');
+      const dragged = await cardBoxes();
+      assert(Math.abs(dragged[0].width - three[0].width) <= 2, `a primeira coluna não muda: ${JSON.stringify(dragged)}`);
+      assert(Math.abs(dragged[1].width - (three[1].width - 150)) <= 2 && Math.abs(dragged[2].width - (three[2].width + 150)) <= 2, `a fronteira 2|3 acompanha o ponteiro: ${JSON.stringify(dragged)}`);
+      assert(Object.keys((await savedTracks()).grid || {}).includes('3x1'), 'forma 3x1 salva');
+      const delta = (name) => (after[ptyOf[name]] || 0) - (before[ptyOf[name]] || 0);
+      const ceiling = Math.ceil(elapsed / 120) + 2;
+      assert.equal(delta(three[0].name), 0, 'o terminal que não mudou de largura não recebe resize');
+      for (const box of three.slice(1)) {
+        const count = delta(box.name);
+        assert(count >= 1 && count <= ceiling && count < 24, `throttle em ${box.name}: ${count} resizes em ${elapsed}ms (teto ${ceiling})`);
+      }
+      console.log(`  resizes do PTY no arraste de ${elapsed}ms: ${three.slice(1).map((box) => `${box.name}=${delta(box.name)}`).join(', ')} (teto ${ceiling})`);
+      await screenshot(main, 'tracks-grid-3');
+    } finally {
+      await main.call('Emulation.clearDeviceMetricsOverride');
+    }
+
+    // 2. Principal + agentes com três terminais: divisória entre os agentes empilhados.
+    await chooseTerminalLayout(main, 'sidebar');
+    const agentsBoundary = '.track-resizer[aria-label="Divisão entre os agentes 1 e 2"]';
+    await until(() => main.evaluate(`document.querySelectorAll('.track-resizer.horizontal').length === 1 && document.querySelectorAll('.track-resizer.vertical').length === 1 && Boolean(document.querySelector(${JSON.stringify(agentsBoundary)}))`), 'pilha de dois agentes com divisória');
+    const split = (boxes) => {
+      const principal = boxes.reduce((wide, box) => (box.width > wide.width ? box : wide));
+      return { principal, agents: boxes.filter((box) => box !== principal).sort((a, b) => a.top - b.top) };
+    };
+    const stackBefore = split(await cardBoxes());
+    assert(Math.abs(stackBefore.agents[1].top - (stackBefore.agents[0].top + stackBefore.agents[0].height)) <= 1, `agentes empilhados e contíguos: ${JSON.stringify(stackBefore)}`);
+    await dragBy(agentsBoundary, 0, 70);
+    const stackDragged = split(await cardBoxes());
+    assert(Math.abs(stackDragged.agents[0].height - (stackBefore.agents[0].height + 70)) <= 2 && Math.abs(stackDragged.agents[1].height - (stackBefore.agents[1].height - 70)) <= 2, `a divisória entre agentes acompanha o ponteiro: ${JSON.stringify({ stackBefore, stackDragged })}`);
+    assert(Math.abs(stackDragged.principal.height - stackBefore.principal.height) <= 1 && Math.abs(stackDragged.principal.width - stackBefore.principal.width) <= 1, 'a principal não muda');
+    assert(Math.abs(stackDragged.agents[1].top - (stackDragged.agents[0].top + stackDragged.agents[0].height)) <= 1, 'agentes continuam contíguos');
+    assert((await savedTracks()).sidebar?.stack2?.rows, 'pilha de dois agentes salva à parte');
+    await main.evaluate(`document.querySelector(${JSON.stringify(agentsBoundary)}).focus()`);
+    await key(main, 'ArrowUp', { code: 'ArrowUp', windowsVirtualKeyCode: 38 });
+    const stackKeyboard = split(await cardBoxes());
+    assert(Math.abs(stackKeyboard.agents[0].height - (stackDragged.agents[0].height - 16)) <= 2, `seta para cima move a divisória 16px: ${JSON.stringify(stackKeyboard)}`);
+    await screenshot(main, 'tracks-sidebar-stack');
+
+    // 3. Laterais vizinhas: Painéis arrastados para antes dos Terminais ficam ao lado da Navegação,
+    // e a divisória entre as duas troca largura entre elas sem mexer nos Terminais.
+    await chooseTerminalLayout(main, 'grid');
+    await setColumn('left', true);
+    await setColumn('right', true);
+    const grip = await main.evaluate(`(() => { const bar = document.querySelector('[data-column-id=right] .column-drag-bar').getBoundingClientRect(); const center = document.querySelector('[data-column-id=center]').getBoundingClientRect(); return { from: { x: bar.left + bar.width / 2, y: bar.top + bar.height / 2 }, to: { x: center.left + 40, y: center.top + center.height / 2 } }; })()`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...grip.from });
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...grip.from, button: 'left', buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 12; step += 1) {
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: grip.from.x + (grip.to.x - grip.from.x) * step / 12, y: grip.from.y + (grip.to.y - grip.from.y) * step / 12, button: 'left', buttons: 1 });
+      await delay(20);
+    }
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...grip.to, button: 'left', buttons: 0, clickCount: 1 });
+    const domOrder = () => main.evaluate(`[...document.querySelectorAll('.workspace-body [data-column-id]')].sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left).map((item) => item.dataset.columnId)`);
+    await until(async () => JSON.stringify(await domOrder()) === JSON.stringify(['left', 'right', 'center']), 'Painéis reordenados para junto da Navegação');
+    assert.deepEqual(await main.evaluate(`JSON.parse(localStorage.getItem('atlas-docks')).order`), ['left', 'right', 'center'], 'ordem salva');
+    const neighbors = '.column-resizer[aria-label="Divisão entre Navegação e Painéis"]';
+    await until(() => main.evaluate(`Boolean(document.querySelector(${JSON.stringify(neighbors)}))`), 'divisória entre as duas laterais');
+    const widths = async () => ({ left: await columnWidth('left'), right: await columnWidth('right'), center: await columnWidth('center') });
+    const sidesBefore = await widths();
+    await dragBy(neighbors, -40, 0);
+    const sidesDragged = await widths();
+    assert(Math.abs(sidesDragged.left - (sidesBefore.left - 40)) <= 1 && Math.abs(sidesDragged.right - (sidesBefore.right + 40)) <= 1, `uma lateral cede para a outra: ${JSON.stringify({ sidesBefore, sidesDragged })}`);
+    assert(Math.abs(sidesDragged.center - sidesBefore.center) <= 1, 'Terminais ficam como estão');
+    await main.evaluate(`document.querySelector(${JSON.stringify(neighbors)}).focus()`);
+    await key(main, 'ArrowRight', { code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    const sidesKeyboard = await widths();
+    assert(Math.abs(sidesKeyboard.left - (sidesDragged.left + 16)) <= 1 && Math.abs(sidesKeyboard.right - (sidesDragged.right - 16)) <= 1 && Math.abs(sidesKeyboard.center - sidesDragged.center) <= 1, `teclado troca 16px entre as laterais: ${JSON.stringify(sidesKeyboard)}`);
+    await screenshot(main, 'columns-neighbors');
+
+    // 5. Contraste e foco visível em trilhos, flyouts e menu ⋯: tema claro e forced-colors.
+    await click(main, appearance);
+    await click(main, '.background-presets button', 'Névoa');
+    await click(main, '.appearance-content footer button', 'Concluir');
+    await until(() => main.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#eef1f4'`), 'tema claro');
+    const shrinkTo = async (column, separator) => {
+      const width = await columnWidth(column);
+      await drag(separator, column === 'left' ? 90 - width : width - 90);
+      await until(async () => (await columnWidth(column)) === 56, `${column} no trilho`);
+    };
+    const navToRail = '.column-resizer[aria-label="Largura de Navegação"], .column-resizer[aria-label="Divisão entre Navegação e Painéis"]';
+    // Volta à ordem padrão antes dos trilhos: cada lateral encosta nos Terminais.
+    await main.evaluate(`document.querySelector('.cockpit').focus()`);
+    await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+    await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette input'))`), 'paleta aberta');
+    for (const char of 'layout padrao') await key(main, char, { text: char });
+    await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão');
+    await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+    // O layout padrão também oculta Painéis: a ordem confere pelo que foi salvo.
+    await until(() => main.evaluate(`JSON.stringify(JSON.parse(localStorage.getItem('atlas-docks')).order) === '["left","center","right"]'`), 'ordem padrão de volta');
+    await ensurePanels(main);
+    await until(async () => JSON.stringify(await domOrder()) === JSON.stringify(['left', 'center', 'right']), 'Painéis de volta à direita');
+    assert(await main.evaluate(`!document.querySelector(${JSON.stringify(navToRail.split(', ')[1])})`), 'sem laterais vizinhas, sem divisória entre elas');
+    await shrinkTo('left', navSeparator);
+    await shrinkTo('right', panelSeparator);
+    const scoped = (root) => main.evaluate(`(${auditInterface.toString()})(${root})`);
+    const glyphs = (selector) => main.evaluate(`(${auditGlyphs.toString()})(${JSON.stringify(selector)})`);
+    // Foco pelo teclado: uma tecla antes faz o Chromium tratar o foco programático como de teclado
+    // (:focus-visible). Mede depois da transição de 150ms do indicador das divisórias.
+    const keyboardFocus = async (expression) => {
+      await key(main, 'Shift', { code: 'ShiftLeft', windowsVirtualKeyCode: 16 });
+      const measured = await main.evaluate(`new Promise((resolve) => {
+        const element = ${expression};
+        if (!element) return resolve({ kind: 'missing' });
+        element.focus();
+        setTimeout(() => {
+          const active = document.activeElement;
+          const indicator = (${focusIndicator.toString()})(element);
+          resolve(active === element ? indicator : { ...indicator, movedTo: active ? active.tagName + '.' + String(active.className).replaceAll(' ', '.') : 'nada' });
+        }, 250);
+      })`);
+      assert(!measured.movedTo, `o foco ficou em ${expression}: ${JSON.stringify(measured)}`);
+      return measured;
+    };
+    // Coluna de Terminais estreita (menu ⋯): a janela não desce de 940px, então a largura vem da
+    // emulação de viewport.
+    const narrowViewport = () => main.call('Emulation.setDeviceMetricsOverride', { width: 640, height: 700, deviceScaleFactor: 1, mobile: false });
+    const focusTargets = {
+      'trilho de Navegação': `document.querySelector('.navigation-rail .rail-project')`,
+      'trilho de Painéis': `document.querySelector('.panels-rail .rail-panel')`,
+      'divisória de coluna': `document.querySelector(${JSON.stringify(navSeparator)})`,
+      'divisória de terminais': `document.querySelector('.track-resizer')`,
+    };
+    const checkFocus = async (scheme) => {
+      for (const [label, expression] of Object.entries(focusTargets)) {
+        const indicator = await keyboardFocus(expression);
+        assert(indicator.kind !== 'none' && indicator.ratio >= 3, `${scheme}: foco visível em ${label}: ${JSON.stringify(indicator)}`);
+      }
+    };
+    const checkContrast = async (scheme) => {
+      const glyphFindings = await glyphs('.navigation-rail .rail-button, .panels-rail .rail-button, .toolbar-overflow-trigger');
+      assert.deepEqual(glyphFindings, [], `${scheme}: ícones dos trilhos com 3:1`);
+      for (const root of [`document.querySelector('[data-column-id=left]')`, `document.querySelector('[data-column-id=right]')`]) {
+        assert.deepEqual(await scoped(root), [], `${scheme}: texto dos trilhos com 4.5:1`);
+      }
+    };
+    await checkContrast('tema claro');
+    await checkFocus('tema claro');
+    // Flyout da Navegação: conteúdo legível e foco visível dentro dele.
+    await main.evaluate(`document.querySelector('.rail-project.active').click()`);
+    await until(() => main.evaluate(`Boolean(document.querySelector('#navigation-flyout')) && document.querySelector('#navigation-flyout').getAnimations().every((item) => item.playState === 'finished')`), 'flyout aberto');
+    assert.deepEqual(await scoped(`document.querySelector('#navigation-flyout')`), [], 'tema claro: texto do flyout com 4.5:1');
+    const flyoutFocus = await keyboardFocus(`document.querySelector('#navigation-flyout :is(button, [tabindex="0"], a[href])')`);
+    assert(flyoutFocus.kind !== 'none' && flyoutFocus.ratio >= 3, `tema claro: foco visível no flyout: ${JSON.stringify(flyoutFocus)}`);
+    await screenshot(main, 'rails-light-flyout');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    // Menu ⋯ na coluna de Terminais estreita.
+    await narrowViewport();
+    await until(() => main.evaluate(`document.querySelector('.cockpit-toolbar')?.dataset.mode === 'compact' && Boolean(document.querySelector('.toolbar-overflow-trigger'))`), 'barra compacta com menu ⋯');
+    const triggerFocus = await keyboardFocus(`document.querySelector('.toolbar-overflow-trigger')`);
+    assert(triggerFocus.kind !== 'none' && triggerFocus.ratio >= 3, `tema claro: foco visível no gatilho ⋯: ${JSON.stringify(triggerFocus)}`);
+    await main.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
+    await until(() => main.evaluate(`Boolean(document.querySelector('#toolbar-overflow-popover'))`), 'menu ⋯ aberto');
+    assert.deepEqual(await scoped(`document.querySelector('#toolbar-overflow-popover')`), [], 'tema claro: texto do menu ⋯ com 4.5:1');
+    const menuFocus = await keyboardFocus(`document.querySelector('#toolbar-overflow-popover .session-menu-item')`);
+    assert(menuFocus.kind !== 'none' && menuFocus.ratio >= 3, `tema claro: foco visível no menu ⋯: ${JSON.stringify(menuFocus)}`);
+    await screenshot(main, 'overflow-menu-light');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    await main.call('Emulation.clearDeviceMetricsOverride');
+    // forced-colors (Alto Contraste do Windows): indicadores com cores do sistema.
+    await main.call('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
+    try {
+      await until(() => main.evaluate(`matchMedia('(forced-colors: active)').matches`), 'forced-colors ativo');
+      await until(async () => (await columnWidth('left')) === 56 && (await columnWidth('right')) === 56, 'trilhos mantidos em 1440px');
+      await checkFocus('forced-colors');
+      assert.deepEqual(await glyphs('.navigation-rail .rail-button, .panels-rail .rail-button'), [], 'forced-colors: ícones dos trilhos com 3:1');
+      await screenshot(main, 'rails-forced-colors');
+      await narrowViewport();
+      await until(() => main.evaluate(`Boolean(document.querySelector('.toolbar-overflow-trigger'))`), 'menu ⋯ em forced-colors');
+      await main.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
+      await until(() => main.evaluate(`Boolean(document.querySelector('#toolbar-overflow-popover'))`), 'menu ⋯ aberto em forced-colors');
+      const forcedMenu = await keyboardFocus(`document.querySelector('#toolbar-overflow-popover .session-menu-item')`);
+      assert(forcedMenu.kind !== 'none' && forcedMenu.ratio >= 3, `forced-colors: foco visível no menu ⋯: ${JSON.stringify(forcedMenu)}`);
+      await screenshot(main, 'overflow-menu-forced-colors');
+      await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    } finally {
+      await main.call('Emulation.setEmulatedMedia', { features: [] });
+      await main.call('Emulation.clearDeviceMetricsOverride');
+      await native('resize', { width: 1440, height: 900 });
+    }
+    console.log('PASS lacunas do layout: Grade com 3 colunas, pilha de agentes, laterais vizinhas, throttle do PTY e contraste/foco em tema claro e forced-colors');
+
+    // Volta ao estado que o restante do roteiro espera: tema escuro, layout padrão, dois terminais.
+    await click(main, appearance);
+    await click(main, '.background-presets button', 'Obsidiana');
+    await click(main, '.appearance-content footer button', 'Concluir');
+    await main.evaluate(`document.querySelector('.cockpit').focus()`);
+    await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+    await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette input'))`), 'paleta aberta');
+    for (const char of 'layout padrao') await key(main, char, { text: char });
+    await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão');
+    await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+    await until(async () => (await columnWidth('left')) === 248, 'larguras padrão de volta');
+    await chooseTerminalLayout(main, 'grid');
+    await sessionAction(main, card('smoke-tres'), 'stop');
+    await click(main, '.modal form button[type=submit]', 'Encerrar');
+    await until(() => main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(third.id)}).then((item) => Boolean(item.exit))`), 'smoke-tres encerrado');
+    await sessionAction(main, card('smoke-tres'), 'remove');
+    await click(main, '.modal form button[type=submit]', 'Excluir');
+    await until(() => main.evaluate(`!(${card('smoke-tres')})`), 'smoke-tres excluído');
+    await ensurePanels(main);
+    await focus('smoke-dois');
+  }
 
   // Paleta de comandos: abre com o foco dentro do terminal (o xterm não pode engolir o atalho),
   // filtra, leva ao terminal escolhido e fecha com Esc.

@@ -14,10 +14,16 @@ const terminals = [];
 let defaultsResolved = false;
 const ipcHandlers = new Map();
 const ipcListeners = new Map();
+// Quantos resizes cada PTY recebeu (somente teste): mede o throttle durante o arraste.
+const resizeCounts = {};
 const registerOn = ipcMain.on.bind(ipcMain);
 ipcMain.on = (channel, handler) => {
   ipcListeners.set(channel, handler);
-  return registerOn(channel, handler);
+  if (channel !== 'terminal:resize') return registerOn(channel, handler);
+  return registerOn(channel, (event, request = {}) => {
+    resizeCounts[request.terminalId] = (resizeCounts[request.terminalId] || 0) + 1;
+    return handler(event, request);
+  });
 };
 const register = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, handler) => {
@@ -54,6 +60,7 @@ const server = http.createServer(async (request, response) => {
     if (command.action === 'windows') result = windows.map((item) => ({ url: item.webContents.getURL(), bounds: item.getBounds(), alwaysOnTop: item.isAlwaysOnTop() }));
     if (command.action === 'terminals') result = terminals;
     if (command.action === 'defaults-resolved') result = defaultsResolved;
+    if (command.action === 'resize-counts') result = { ...resizeCounts };
     if (command.action === 'focus') { window.restore(); window.show(); window.focus(); }
     // Reenvia um aviso do processo principal à janela (somente teste).
     if (command.action === 'send') window.webContents.send(command.channel, command.payload);

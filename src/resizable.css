@@ -48,12 +48,14 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .rail-session.active .session-glyph, .rail-session:hover .session-glyph { --glyph-ring: var(--surface-hover); }
 .rail-badge, .rail-attention {
   position: absolute; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
-  font: 600 9.5px/15px var(--mono); text-align: center; pointer-events: none;
+  font: 600 10px/15px var(--mono); text-align: center; pointer-events: none;
   box-shadow: 0 0 0 2px var(--surface);
 }
 .rail-badge { right: 1px; bottom: 2px; background: var(--surface-raised); color: var(--text); }
 .rail-badge.attention { top: 2px; bottom: auto; background: var(--accent); color: var(--accent-ink); }
-.rail-attention { right: 1px; top: 1px; background: var(--warning); color: #17120a; }
+/* --warning é calibrado para 5.5:1 contra as superfícies, nos dois temas: a superfície como tinta
+   do selo mantém o mesmo contraste (no tema claro o âmbar escurece e a tinta escura sumia). */
+.rail-attention { right: 1px; top: 1px; background: var(--warning); color: var(--surface); }
 
 /* Painel que sai do trilho: ao lado dele, sobre os terminais, sem escurecer o resto. */
 .rail-flyout {
