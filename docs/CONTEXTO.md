@@ -1,6 +1,6 @@
 # Contexto atual do ATLAS
 
-Última revisão em 10/11/2026, após a entrega da retomada, do encerramento e da exclusão de sessões.
+Última revisão em 11/11/2026, após o redimensionamento do workspace e a cópia e colagem nativas dos terminais.
 
 Este arquivo descreve **o que existe hoje**. Ele é reescrito a cada marco: não acrescente diário aqui. A história de como chegamos até este ponto fica em `docs/historico/`. O que vem depois fica em `docs/ROADMAP.md`.
 
@@ -36,6 +36,12 @@ O ATLAS é um cockpit desktop local para Windows (Electron + React) que coordena
 | Abrir no ATLAS | `--atlas-open=<pasta>` com instância única. A entrada do Explorador (HKCU) só é gravada com consentimento | `electron/open-path-host.cjs`, `electron/explorer-integration.cjs`, `src/OpenFolder.jsx` |
 | Interface | Identidade mármore, marfim e ouro, com estátua na marca e no projeto vazio. Uma barra superior só, de 36px: no Windows e no Linux a janela principal não tem barra nativa, e minimizar, maximizar e fechar ficam sobre a barra do ATLAS, na cor do tema; pop-ups de terminal e Acompanhamento também têm uma barra só, no cabeçalho da sessão e na faixa do painel (no macOS a barra nativa continua). Terminais contíguos, sem gaps, bordas ou raios. Na abertura, só sessões vivas ocupam a área de trabalho: uma run sem processo ("resultado incerto") fica na árvore e abre somente leitura quando escolhida; projeto sem sessões vivas mostra "Como começar?", com a sessão principal e as funções de agente, e cada escolha abre o diálogo preenchido pela função, sem iniciar nada sem confirmação. Todo select abre uma lista no material do ATLAS (`base-select`), sem perder teclado nem leitor de tela. A árvore lateral usa chevrons, ícones e indentação entre projetos, repositórios, worktrees e sessões; clicar no projeto o expande, e trocar de projeto preserva a expansão anterior. "Espera você" aparece só com decisões e leva à principal parada, aos pedidos e às revisões. O cabeçalho de cada sessão tem o ícone oficial do CLI (Simple Icons, CC0; Codex neutro; terminal com ícone de terminal) com selo de estado (verde ativa, âmbar oculta), a função e um menu de ações; a árvore usa o mesmo ícone; metadados ficam na descrição. Seleção usa superfície e tipografia, sem filetes; Navegação e Painéis mantêm posição fixa. Painéis começam recolhidos em instalações novas; estado e integrações ficam sob demanda. Sessões ocultas continuam na árvore e podem ser restauradas sem novo processo; preferências de layout persistem localmente. Paleta (Ctrl Shift P ou F1) funciona com foco no terminal sem enviar texto ao PTY. Temas preservam contraste e Jost é local. Plano em `docs/planos/PLANO_WORKSPACE_TERMINAL_FIRST.md` | `src/WorkspaceTree.jsx`, `src/workspace-layout.js`, `src/workspace.css`, `src/identity.css`, `src/controls.css`, `src/window-overlay.js`, `src/SessionGlyph.jsx`, `src/cli-marks.js`, `electron/window-chrome.cjs`, `src/CommandPalette.jsx` |
 | Instalador | NSIS por usuário (`npm run dist:win`), pergunta antes de gravar a entrada do Explorador | `electron-builder.yml`, `scripts/smoke-installer.mjs` |
+
+## Workspace terminal-first
+
+Navegação, área de terminais e Painéis têm divisórias próprias, redimensionáveis por mouse e teclado, com tamanhos persistidos. Navegação vira modo compacto e depois trilho de ícones com árvore completa em flyout; Painéis viram abas compactas e depois trilho com painel sobreposto. Barras e ações de terminais se adaptam à largura sem perder rótulos no nome acessível. Na Grade e em Principal + agentes, divisórias redimensionam as trilhas com mínimos de terminal.
+
+Selecionar texto no terminal copia automaticamente e informa a contagem de caracteres. Ctrl+C copia quando há seleção e continua interrompendo sem ela; Ctrl+V cola sem Enter. A barra de seleção oferece Responder, Reescrever e Colar em outra sessão. Caminhos do Explorer e arquivos arrastados entram como literais seguros do PowerShell; imagem respeita o atalho do CLI. Implementação: `src/TerminalView.jsx`, `src/TrackResizers.jsx`, `src/terminal-clipboard.js`, `src/workspace.css` e `src/resizable.css`.
 
 Ferramentas MCP da ponte: `sessions_list`, `tasks_list`, `messages_unread`, `messages_mark_read`, `messages_send`, `agents_request`, `agents_request_status`, `agent_functions_list`, `tasks_delegate`, `handoffs_cancel`, `handoffs_pending`, `handoffs_accept`, `handoffs_reject`, `tasks_update`, `tasks_release` e `tasks_request_review`. A lista exposta depende do papel da sessão.
 
@@ -109,10 +115,9 @@ A CI (`.github/workflows/ci.yml`) roda Verify em Ubuntu e Windows, mais o job Pa
 
 ## Ambiente
 
-- Node.js 24 LTS. Git no `PATH`. Windows e Windows PowerShell para o desktop completo.
+- Node.js 24 LTS ou posterior. Git no `PATH`. Windows e Windows PowerShell para o desktop completo.
   - Confira com `node --version` antes dos testes.
-  - Nesta máquina, o PATH de alguns shells seleciona o Node 20. Nele, `npm test` falha com `Could not find '...\scripts\*.test.mjs'`, porque o Node 20 não expande o glob.
-  - Coloque `C:\Program Files\nodejs` (Node 24) primeiro no PATH da sessão.
+  - `npm test` enumera os arquivos `.test.mjs` em `scripts/` por `scripts/run-tests.mjs`, portanto funciona em PowerShell, `cmd.exe` e shells POSIX.
 - CLIs usados no desenvolvimento: Kimi Code, OpenCode, Codex e Claude Code. Os smokes do produto cobrem Kimi, OpenCode, Claude Code (`smoke:claude`, com servidor falso local) Codex (`smoke:codex`) e Gemini (`smoke:gemini`, com servidor falso local).
 - ai-memory: projeto `default/ATLAS` (veja a seção em `AGENTS.md`).
 
