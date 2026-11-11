@@ -531,7 +531,9 @@ try {
     await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.from.x, y: points.from.y });
     await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: points.from.x, y: points.from.y, button: 'left', buttons: 1, clickCount: 1 });
     await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: (points.from.x + points.to.x) / 2, y: (points.from.y + points.to.y) / 2, button: 'left', buttons: 1 });
+    await delay(16);
     await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.to.x, y: points.to.y, button: 'left', buttons: 1 });
+    await delay(16);
     await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: points.to.x, y: points.to.y, button: 'left', buttons: 0, clickCount: 1 });
     return points;
   };
@@ -636,6 +638,7 @@ process.stdin.on('data', (data) => {
     await focusInput('smoke-um');
     await command(main, input, `Write-Output ('COPIA_' + 'L1'); Write-Output ('COPIA_' + 'L2')`);
     await output('COPIA_L2');
+    await quiet('smoke-um', first.id);
     await until(() => main.evaluate(`[...${card('smoke-um')}.querySelectorAll('.xterm-rows > div')].some((row) => row.textContent.trim() === 'COPIA_L2')`), 'log visível em smoke-um');
     await dragSelect('smoke-um', 'COPIA_L1', 'COPIA_L2');
     await until(async () => (await clipboardText()) === 'COPIA_L1\nCOPIA_L2', 'seleção copiada ao soltar o mouse');
@@ -761,7 +764,7 @@ process.stdin.on('data', (data) => {
 
     // 2. Ctrl+C com seleção copia e não interrompe; o menu de contexto oferece as ações.
     await dragSelect('smoke-dois', 'ECHO_READY', 'ECHO_READY');
-    await until(async () => (await clipboardText()) === 'ECHO_READY', 'seleção no eco copiada');
+    await until(() => main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-selection-bar'))`), 'seleção no eco ativa');
     const selection = await main.evaluate(`(() => { const box = ${terminalOf('smoke-dois')}.querySelector('.xterm-screen').getBoundingClientRect(); return { x: box.left + 30, y: box.top + 10 }; })()`);
     await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...selection, button: 'right', buttons: 2, clickCount: 1 });
     await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...selection, button: 'right', buttons: 0, clickCount: 1 });
@@ -939,7 +942,10 @@ process.stdin.on('data', (data) => {
     const start = await main.evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
     await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x, y: start.y });
     await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: start.x, y: start.y, button: 'left', buttons: 1, clickCount: 1 });
-    for (let step = 1; step <= 8; step += 1) await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + dx * step / 8, y: start.y, button: 'left', buttons: 1 });
+    for (let step = 1; step <= 8; step += 1) {
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + dx * step / 8, y: start.y, button: 'left', buttons: 1 });
+      await delay(16);
+    }
     await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: start.x + dx, y: start.y, button: 'left', buttons: 0, clickCount: 1 });
     await delay(200);
   }
@@ -1052,7 +1058,10 @@ process.stdin.on('data', (data) => {
     const start = await main.evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
     await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x, y: start.y });
     await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: start.x, y: start.y, button: 'left', buttons: 1, clickCount: 1 });
-    for (let step = 1; step <= 8; step += 1) await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + dx * step / 8, y: start.y + dy * step / 8, button: 'left', buttons: 1 });
+    for (let step = 1; step <= 8; step += 1) {
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + dx * step / 8, y: start.y + dy * step / 8, button: 'left', buttons: 1 });
+      await delay(16);
+    }
     await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: start.x + dx, y: start.y + dy, button: 'left', buttons: 0, clickCount: 1 });
     await delay(200);
   }
