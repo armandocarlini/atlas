@@ -527,6 +527,271 @@ try {
   assert.equal(terminalGlyph.tree, 'terminal', 'árvore usa o mesmo ícone');
   console.log('PASS dois terminais com processos e streams independentes');
 
+  // Copiar e colar (docs/ROADMAP.md, T0): um eco em smoke-dois liga a colagem protegida e
+  // imprime em hexadecimal os bytes que recebe; assim cada caminho é conferido byte a byte.
+  // Usa o clipboard real do Windows e devolve o texto que estava nele ao final.
+  if (process.platform === 'win32') {
+    const savedClipboard = await native('invoke', { channel: 'clipboard:read-paste' });
+    const clipDir = path.join(fixture, 'clipboard');
+    fs.mkdirSync(clipDir, { recursive: true });
+    const echoScript = path.join(clipDir, 'echo-input.cjs');
+    const fileA = path.join(clipDir, 'um arquivo.txt');
+    const fileB = path.join(clipDir, 'dois.txt');
+    fs.writeFileSync(fileA, 'a');
+    fs.writeFileSync(fileB, 'b');
+    fs.writeFileSync(echoScript, `process.stdout.write('\\x1b[?2004hECHO_' + 'READY\\r\\n');
+process.stdin.setRawMode(true);
+process.stdin.on('data', (data) => {
+  process.stdout.write('HEX:' + data.toString('hex') + ':END\\r\\n');
+  if (data.includes(3)) { process.stdout.write('\\x1b[?2004lECHO_' + 'DONE\\r\\n'); process.exit(0); }
+  // A marca volta ao fim da tela: sempre há uma linha "ECHO_READY" visível para selecionar.
+  process.stdout.write('ECHO_' + 'READY\\r\\n');
+});
+`);
+    const hex = (text) => Buffer.from(text, 'utf8').toString('hex');
+    const bracketed = (text) => `HEX:${hex(`\x1b[200~${text}\x1b[201~`)}:END`;
+    const setClipboard = (script) => execFileSync('powershell.exe', ['-NoProfile', '-STA', '-Command', script], { stdio: 'ignore' });
+    const received = async () => [...(await raw(second.id)).matchAll(/HEX:[0-9a-f]*:END/g)].map((match) => match[0]);
+    // Junta o que o eco recebeu desde a marca: o ConPTY pode entregar uma colagem em mais de uma leitura.
+    const receivedSince = async (count) => (await received()).slice(count).map((item) => item.slice(4, -4)).join('');
+    const expectBytes = async (count, text, label) => until(async () => (await receivedSince(count)) === hex(text), label);
+    const terminalOf = (name) => `${card(name)}.querySelector('.terminal-view-shell')`;
+    const noticeOf = (name) => main.evaluate(`${terminalOf(name)}.querySelector('.terminal-notice')?.textContent || ''`);
+    const focusInput = (name) => main.evaluate(`${card(name)}.querySelector('.xterm-helper-textarea').focus()`);
+    // Espera a saída do terminal parar: uma linha nova rolaria a tela entre medir e arrastar.
+    const quiet = async (name) => {
+      const id = name === 'smoke-um' ? first.id : second.id;
+      let last = null;
+      await until(async () => {
+        const current = await raw(id);
+        const stable = current === last;
+        last = current;
+        if (!stable) await delay(250);
+        return stable;
+      }, `saída de ${name} parada`);
+      await main.evaluate(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
+    };
+    // Arrasta o mouse de verdade (CDP) do começo de uma linha até o fim de outra.
+    const dragSelect = async (name, fromText, toText) => {
+      await quiet(name);
+      const points = await main.evaluate(`(() => {
+        const rows = [...${card(name)}.querySelectorAll('.xterm-rows > div')];
+        const textRect = (text) => {
+          const row = rows.findLast((item) => item.textContent.trim() === text);
+          if (!row) return null;
+          const range = document.createRange();
+          range.selectNodeContents(row);
+          const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
+          return { left: rects[0].left, right: rects.at(-1).right, middle: rects[0].top + rects[0].height / 2 };
+        };
+        const from = textRect(${JSON.stringify(fromText)});
+        const to = textRect(${JSON.stringify(toText)});
+        return from && to ? { from: { x: from.left + 1, y: from.middle }, to: { x: to.right - 2, y: to.middle } } : null;
+      })()`);
+      assert(points, `linhas para selecionar em ${name}: ${fromText} → ${toText}`);
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.from.x, y: points.from.y });
+      await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: points.from.x, y: points.from.y, button: 'left', buttons: 1, clickCount: 1 });
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: (points.from.x + points.to.x) / 2, y: (points.from.y + points.to.y) / 2, button: 'left', buttons: 1 });
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.to.x, y: points.to.y, button: 'left', buttons: 1 });
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: points.to.x, y: points.to.y, button: 'left', buttons: 0, clickCount: 1 });
+      return points;
+    };
+    // Captura só depois da entrada do elemento flutuante (opacidade final, sem animação em curso).
+    // A saída do aviso espera no atraso dela: animação que ainda não começou não conta.
+    const settled = (expression, label) => until(() => main.evaluate(`(() => {
+      const element = ${expression};
+      if (!element) return false;
+      const started = (animation) => animation.currentTime >= (animation.effect?.getTiming().delay || 0);
+      return element.getAnimations().every((animation) => animation.playState === 'finished' || !started(animation)) && getComputedStyle(element).opacity === '1';
+    })()`), label);
+    const clipboardText = async () => (await native('invoke', { channel: 'clipboard:read-paste' })).text.replace(/\r\n/g, '\n');
+
+    await chooseTerminalLayout(main, 'grid');
+    await until(() => main.evaluate(`Boolean(${card('smoke-um')} && ${card('smoke-dois')})`), 'grade com os dois terminais');
+    await native('focus');
+    await focusInput('smoke-dois');
+    for (const char of `node '${echoScript}'`) await key(main, char, { text: char });
+    await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+    await output('ECHO_READY', second.id);
+    // O ATLAS acompanha o modo de colagem protegida que o programa ligou.
+    await until(() => main.evaluate(`window.atlasDesktop.getTerminalInputMode(${JSON.stringify(second.id)}).then((mode) => mode?.bracketedPaste === true)`), 'colagem protegida detectada no PTY');
+
+    // 1. Copiar ao selecionar: log de duas linhas em smoke-um, aviso discreto e anunciado.
+    await focusInput('smoke-um');
+    await command(main, input, `Write-Output ('COPIA_' + 'L1'); Write-Output ('COPIA_' + 'L2')`);
+    await output('COPIA_L2');
+    await until(() => main.evaluate(`[...${card('smoke-um')}.querySelectorAll('.xterm-rows > div')].some((row) => row.textContent.trim() === 'COPIA_L2')`), 'log visível em smoke-um');
+    await dragSelect('smoke-um', 'COPIA_L1', 'COPIA_L2');
+    await until(async () => (await clipboardText()) === 'COPIA_L1\nCOPIA_L2', 'seleção copiada ao soltar o mouse');
+    await until(async () => /^1[78] caracteres copiados$/.test(await noticeOf('smoke-um')), 'aviso "N caracteres copiados"');
+    const live = await main.evaluate(`(() => { const region = ${terminalOf('smoke-um')}.querySelector('.terminal-notice-region'); return { live: region.getAttribute('aria-live'), role: region.getAttribute('role') }; })()`);
+    assert.deepEqual(live, { live: 'polite', role: 'status' }, 'aviso anunciado ao leitor de tela');
+    // 6. Barra flutuante junto da seleção, dentro do terminal.
+    const barBox = await until(() => main.evaluate(`(() => {
+      const bar = ${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar');
+      if (!bar || getComputedStyle(bar).visibility === 'hidden') return null;
+      const box = bar.getBoundingClientRect();
+      const shell = ${terminalOf('smoke-um')}.getBoundingClientRect();
+      const selected = [...${card('smoke-um')}.querySelectorAll('.xterm-rows > div')].filter((row) => /^COPIA_L[12]$/.test(row.textContent.trim())).map((row) => row.getBoundingClientRect());
+      return {
+        inside: box.left >= shell.left && box.right <= shell.right && box.top >= shell.top && box.bottom <= shell.bottom,
+        covers: selected.some((row) => box.bottom > row.top + 1 && box.top < row.bottom - 1),
+        icons: [...bar.querySelectorAll('button svg')].map((icon) => getComputedStyle(icon).display),
+        labels: [...bar.querySelectorAll('button')].map((item) => item.textContent.trim()),
+      };
+    })()`), 'barra de seleção visível');
+    assert(barBox.inside, 'barra dentro do terminal');
+    assert.equal(barBox.covers, false, 'barra não cobre as linhas selecionadas');
+    assert(barBox.icons.length === 3 && barBox.icons.every((display) => display !== 'none'), `ícones visíveis na barra: ${barBox.icons}`);
+    assert.deepEqual(barBox.labels, ['Responder', 'Reescrever', 'Enviar para']);
+    await settled(`${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar')`, 'barra assentada');
+    await screenshot(main, 'terminal-selection-bar');
+    await until(async () => !(await noticeOf('smoke-um')), 'aviso some sozinho', 4000);
+
+    // Enviar para outra sessão: a citação chega à entrada do eco, protegida e sem Enter.
+    let mark = (await received()).length;
+    await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar [aria-haspopup=menu]').click()`);
+    await until(() => main.evaluate(`[...${terminalOf('smoke-um')}.querySelectorAll('.terminal-send-menu [role=menuitem]')].map((item) => item.textContent).join('|') === 'smoke-dois'`), 'lista de sessões para enviar');
+    await settled(`${terminalOf('smoke-um')}.querySelector('.terminal-send-menu')`, 'lista assentada');
+    await screenshot(main, 'terminal-send-menu');
+    await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-send-menu [role=menuitem]').click()`);
+    await expectBytes(mark, '\x1b[200~> COPIA_L1\r> COPIA_L2\r\x1b[201~', 'citação colada na outra sessão');
+    assert(!(await raw(second.id)).includes('HEX:0d:END'), 'nenhum Enter separado chegou à outra sessão');
+    await until(() => main.evaluate(`!${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar')`), 'barra some ao limpar a seleção');
+
+    // Sem colagem protegida (o Windows PowerShell não liga o modo 2004), Responder com várias
+    // linhas não chega ao shell: aviso com o motivo e "Copiar" no lugar.
+    const shellMode = await main.evaluate(`window.atlasDesktop.getTerminalInputMode(${JSON.stringify(first.id)})`);
+    if (shellMode && !shellMode.bracketedPaste) {
+      const before = await raw(first.id);
+      await dragSelect('smoke-um', 'COPIA_L1', 'COPIA_L2');
+      await until(() => main.evaluate(`Boolean(${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar'))`), 'barra para a recusa');
+      await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar button').click()`);
+      const refusal = await until(() => main.evaluate(`(() => { const notice = ${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action'); return notice ? { text: notice.textContent, button: notice.querySelector('button')?.textContent } : null; })()`), 'aviso de recusa com ação');
+      assert.match(refusal.text, /^Não colado: este terminal executaria cada linha/, 'o aviso explica o motivo');
+      assert.equal(refusal.button, 'Copiar');
+      await settled(`${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action')`, 'aviso de recusa assentado');
+      await screenshot(main, 'terminal-multiline-refused');
+      await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action button').click()`);
+      await until(async () => (await clipboardText()) === '> COPIA_L1\n> COPIA_L2\n', '"Copiar" copia a citação recusada');
+      await delay(300);
+      assert.equal((await raw(first.id)).slice(before.length).includes('COPIA_L1'), false, 'nenhuma linha chegou ao PowerShell');
+      // Um clique no terminal limpa a seleção (e a barra), como no Windows Terminal.
+      const blank = await main.evaluate(`(() => { const box = ${card('smoke-um')}.querySelector('.xterm-screen').getBoundingClientRect(); return { x: box.left + box.width - 12, y: box.bottom - 6 }; })()`);
+      await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...blank, button: 'left', buttons: 1, clickCount: 1 });
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...blank, button: 'left', buttons: 0, clickCount: 1 });
+      await until(() => main.evaluate(`!${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar')`), 'clique limpa a seleção');
+    }
+    // O clipboard volta ao log copiado, para os passos de Ctrl+V abaixo.
+    await native('invoke', { channel: 'clipboard:write-text', args: ['COPIA_L1\r\nCOPIA_L2'] });
+
+    // 3. Ctrl+V: texto multilinha vai como uma colagem protegida.
+    await focusInput('smoke-dois');
+    mark = (await received()).length;
+    await key(main, 'v', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+    await expectBytes(mark, '\x1b[200~COPIA_L1\rCOPIA_L2\x1b[201~', 'Ctrl+V cola o log multilinha protegido');
+    mark = (await received()).length;
+    await key(main, 'V', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 10 });
+    await expectBytes(mark, '\x1b[200~COPIA_L1\rCOPIA_L2\x1b[201~', 'Ctrl+Shift+V também cola');
+
+    // 4. Arquivos copiados no Explorer: os caminhos entre aspas.
+    setClipboard(`Set-Clipboard -Path '${fileA}','${fileB}'`);
+    mark = (await received()).length;
+    await key(main, 'v', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+    await expectBytes(mark, `\x1b[200~"${fileA}" "${fileB}"\x1b[201~`, 'Ctrl+V com arquivos cola os caminhos');
+    // Imagem: num terminal que não é do Claude Code vai o ^V de um terminal comum; o ESC v
+    // (Alt+V, o atalho do Claude Code no Windows) digitaria um "v" no PowerShell.
+    setClipboard('Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $image = New-Object System.Drawing.Bitmap 4,4; [System.Windows.Forms.Clipboard]::SetImage($image)');
+    mark = (await received()).length;
+    await key(main, 'v', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+    await expectBytes(mark, '\x16', 'imagem fora do Claude Code repassa o ^V');
+    // Arrastar do Explorer: o mesmo formato, sem Enter.
+    const dropAt = await main.evaluate(`(() => { const box = ${terminalOf('smoke-dois')}.getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2 }; })()`);
+    mark = (await received()).length;
+    for (const type of ['dragEnter', 'dragOver', 'drop']) {
+      await main.call('Input.dispatchDragEvent', { type, ...dropAt, data: { items: [], files: [fileA], dragOperationsMask: 1 } });
+    }
+    await expectBytes(mark, `\x1b[200~"${fileA}"\x1b[201~`, 'arquivo arrastado vira caminho entre aspas');
+    assert.equal(await main.evaluate(`${terminalOf('smoke-dois')}.classList.contains('dropping')`), false, 'destaque de soltar some');
+
+    // 2. Ctrl+C com seleção copia e não interrompe; o menu de contexto oferece as ações.
+    await dragSelect('smoke-dois', 'ECHO_READY', 'ECHO_READY');
+    await until(async () => (await clipboardText()) === 'ECHO_READY', 'seleção no eco copiada');
+    const selection = await main.evaluate(`(() => { const box = ${terminalOf('smoke-dois')}.querySelector('.xterm-screen').getBoundingClientRect(); return { x: box.left + 30, y: box.top + 10 }; })()`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...selection, button: 'right', buttons: 2, clickCount: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...selection, button: 'right', buttons: 0, clickCount: 1 });
+    const menuItems = await until(() => main.evaluate(`(() => { const menu = ${terminalOf('smoke-dois')}.querySelector('.terminal-context-menu'); return menu ? [...menu.querySelectorAll('[role=menuitem]')].map((item) => item.textContent + (item.disabled ? ':off' : '')) : null; })()`), 'menu de contexto');
+    assert.deepEqual(menuItems, ['CopiarCtrl+C', 'ColarCtrl+V', 'Selecionar tudo', 'Responder', 'Reescrever', 'Enviar para smoke-um'], 'botão direito mantém a seleção e oferece as ações');
+    assert.equal(await main.evaluate(`document.activeElement?.textContent`), 'CopiarCtrl+C', 'foco no primeiro item');
+    await settled(`${terminalOf('smoke-dois')}.querySelector('.terminal-context-menu')`, 'menu assentado');
+    await screenshot(main, 'terminal-context-menu');
+    await key(main, 'ArrowDown', { code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+    await key(main, 'ArrowDown', { code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+    await key(main, 'ArrowDown', { code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+    assert.equal(await main.evaluate(`document.activeElement?.textContent`), 'Responder', 'setas percorrem o menu');
+    mark = (await received()).length;
+    // Com `text`, como um teclado real: é o caractere que ativa o botão focado.
+    await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+    await expectBytes(mark, '\x1b[200~> ECHO_READY\r\x1b[201~', 'Responder cola a citação no próprio terminal');
+    assert(await main.evaluate(`!${terminalOf('smoke-dois')}.querySelector('.terminal-context-menu') && document.activeElement?.classList.contains('xterm-helper-textarea')`), 'menu fecha e o foco volta ao terminal');
+    // Shift+F10 abre o mesmo menu pelo teclado; Escape fecha sem chegar ao PTY.
+    mark = (await received()).length;
+    await key(main, 'F10', { code: 'F10', windowsVirtualKeyCode: 121, modifiers: 8 });
+    await until(() => main.evaluate(`document.activeElement?.closest('.terminal-context-menu') && document.activeElement.textContent === 'ColarCtrl+V'`), 'Shift+F10 abre o menu; sem seleção, Copiar fica desabilitado');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    assert(await main.evaluate(`!${terminalOf('smoke-dois')}.querySelector('.terminal-context-menu') && document.activeElement?.classList.contains('xterm-helper-textarea')`), 'Escape fecha o menu e devolve o foco');
+    await delay(300);
+    assert.equal(await receivedSince(mark), '', 'Shift+F10 e Escape do menu não chegam ao PTY');
+    // F6 com seleção leva à barra; setas, seta para baixo na lista e Escape, sem nada no PTY.
+    await dragSelect('smoke-dois', 'ECHO_READY', 'ECHO_READY');
+    await until(() => main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-selection-bar'))`), 'seleção para a barra por teclado');
+    await focusInput('smoke-dois');
+    mark = (await received()).length;
+    const focused = () => main.evaluate(`document.activeElement?.textContent || document.activeElement?.className || ''`);
+    await key(main, 'F6', { code: 'F6', windowsVirtualKeyCode: 117 });
+    await until(async () => (await focused()) === 'Responder', 'F6 leva o foco ao primeiro botão da barra');
+    await key(main, 'ArrowRight', { code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    assert.equal(await focused(), 'Reescrever');
+    await key(main, 'End', { code: 'End', windowsVirtualKeyCode: 35 });
+    assert.equal(await focused(), 'Enviar para');
+    await key(main, 'ArrowDown', { code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+    await until(async () => (await focused()) === 'smoke-um', 'seta para baixo abre a lista com foco na sessão');
+    await settled(`${terminalOf('smoke-dois')}.querySelector('.terminal-send-menu')`, 'lista por teclado assentada');
+    await screenshot(main, 'terminal-selection-bar-keyboard');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    await until(async () => (await focused()) === 'Enviar para' && !(await main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-send-menu'))`)), 'Escape fecha a lista e volta ao botão');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    await until(() => main.evaluate(`document.activeElement?.classList.contains('xterm-helper-textarea')`), 'Escape devolve o foco ao terminal');
+    assert(await main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-selection-bar'))`), 'a seleção e a barra continuam');
+    await delay(300);
+    assert.equal(await receivedSince(mark), '', 'F6, setas e Escape da barra não chegam ao PTY');
+    await key(main, 'F6', { code: 'F6', windowsVirtualKeyCode: 117 });
+    await until(async () => (await focused()) === 'Responder', 'F6 de novo volta à barra');
+    await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+    await expectBytes(mark, '\x1b[200~> ECHO_READY\r\x1b[201~', 'Responder pelo teclado cola a citação');
+    assert(await main.evaluate(`document.activeElement?.classList.contains('xterm-helper-textarea')`), 'depois da ação, o foco volta ao terminal');
+    // Sem seleção, F6 é do programa.
+    mark = (await received()).length;
+    await key(main, 'F6', { code: 'F6', windowsVirtualKeyCode: 117 });
+    await until(async () => (await receivedSince(mark)) === hex('\x1b[17~'), 'F6 sem seleção vai para o programa');
+    // Ctrl+C com seleção: copia e não interrompe o eco.
+    await dragSelect('smoke-dois', 'ECHO_READY', 'ECHO_READY');
+    await until(() => main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-selection-bar'))`), 'seleção no eco');
+    setClipboard(`Set-Clipboard -Value 'antes'`);
+    mark = (await received()).length;
+    await focusInput('smoke-dois');
+    await key(main, 'c', { code: 'KeyC', windowsVirtualKeyCode: 67, modifiers: 2 });
+    await until(async () => (await clipboardText()) === 'ECHO_READY', 'Ctrl+C com seleção copia');
+    await delay(300);
+    assert.equal(await receivedSince(mark), '', 'Ctrl+C com seleção não envia interrupção');
+    // Sem seleção, o Ctrl+C seguinte volta a ser interrupção.
+    await key(main, 'c', { code: 'KeyC', windowsVirtualKeyCode: 67, modifiers: 2 });
+    await output('ECHO_DONE', second.id);
+    await until(() => main.evaluate(`window.atlasDesktop.getTerminalInputMode(${JSON.stringify(second.id)}).then((mode) => mode?.bracketedPaste === false)`), 'colagem protegida desligada ao sair do eco');
+    if (savedClipboard?.text) await native('invoke', { channel: 'clipboard:write-text', args: [savedClipboard.text] });
+    console.log('PASS copiar ao selecionar, Ctrl+C/Ctrl+V, arquivos, imagem, arrastar, menu de contexto e barra de seleção');
+  }
+
   await chooseTerminalLayout(main, 'grid');
   await until(() => main.evaluate(`Boolean(${card('smoke-um')} && ${card('smoke-dois')})`), 'grid restores both terminals');
   const terminalSpace = await main.evaluate(`(() => { const cockpit = document.querySelector('.cockpit').getBoundingClientRect(); const grid = document.querySelector('.session-grid').getBoundingClientRect(); return { bottom: cockpit.bottom - grid.bottom, height: grid.height, available: cockpit.bottom - grid.top }; })()`);
