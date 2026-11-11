@@ -11,6 +11,16 @@
   box-shadow: 0 10px 28px -6px rgba(0, 0, 0, .55);
 }
 
+/* O terminal é o contêiner: a barra responde à largura dele (Grade com 3 colunas, modo compacto). */
+.terminal-view-shell { container: terminal-view / inline-size; }
+
+/* Terminal estreito: a barra mostra só os ícones. O nome continua no texto acessível e no title. */
+@container terminal-view (max-width: 480px) {
+  .terminal-selection-bar > button { padding: 0 7px; gap: 4px; }
+  .terminal-selection-bar > button > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .terminal-notice.has-action { flex-wrap: wrap; }
+}
+
 /* Pílula pequena junto da seleção, como a referência: texto + ícone. */
 .terminal-selection-bar {
   position: absolute;
@@ -43,6 +53,7 @@
 .terminal-selection-bar > button:active { transform: scale(.97); }
 /* .app-shell esconde svg por padrão; cada componente escolhe os ícones que mostra. */
 .terminal-view-shell .terminal-selection-bar svg { display: inline-block; flex: 0 0 auto; color: var(--muted); }
+.terminal-view-shell .terminal-selection-bar .terminal-bar-chevron { margin-left: -2px; }
 
 .terminal-context-menu {
   position: absolute;

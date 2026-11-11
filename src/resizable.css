@@ -20,7 +20,9 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 
 /* ---------- Navegação: completa, compacta e só ícones ---------- */
 @container nav (max-width: 199px) {
-  .tree-label small, .tree-state, .tree-change { display: none; }
+  /* Saem da vista, não da árvore de acessibilidade: CLI, modelo, estado e alterações continuam no
+     nome do botão para o leitor de tela (o title sozinho não é anunciado de forma confiável). */
+  .tree-label small, .tree-state, .tree-change { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   .tree-session { grid-template-columns: 16px minmax(0, 1fr); }
   .tree-project-content { padding-left: 6px; }
   .tree-sessions { margin-left: 6px !important; }

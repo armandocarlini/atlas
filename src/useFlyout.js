@@ -13,16 +13,33 @@ export function flyoutPosition(rail, width, viewportWidth = window.innerWidth, v
     : { top, left: rail.right, width: size, maxHeight: viewportHeight - top };
 }
 
+// Destino seguro quando o botão de origem sumiu (o trilho virou a árvore completa no resize):
+// a área dos terminais, que aceita foco.
+const SAFE_FOCUS = '#terminal-workspace';
+
 // Painel não modal aberto a partir de um botão: foco entra ao abrir, Esc fecha e devolve o foco
-// ao botão, clique fora fecha. O conteúdo atrás continua utilizável.
+// ao botão, clique fora fecha. O conteúdo atrás continua utilizável. Se o foco estava dentro do
+// painel quando ele fecha (clique fora sem destino focável, resize), ele volta ao botão ou ao
+// destino seguro, nunca ao body.
 export default function useFlyout({ initialFocus } = {}) {
   const [open, setOpen] = useState(null);
   const flyoutRef = useRef(null);
   const triggerRef = useRef(null);
 
-  function close(restoreFocus = true) {
+  function restoreFocus() {
+    const trigger = triggerRef.current;
+    if (trigger?.isConnected) trigger.focus();
+    else document.querySelector(SAFE_FOCUS)?.focus();
+  }
+
+  function close(returnFocus = true) {
+    const focusInside = Boolean(flyoutRef.current?.contains(document.activeElement));
     setOpen(null);
-    if (restoreFocus) triggerRef.current?.focus();
+    if (returnFocus) restoreFocus();
+    // Depois do render: o botão pode ter sido trocado (trilho -> árvore) e o foco, ter caído no body.
+    else if (focusInside) requestAnimationFrame(() => {
+      if (!document.activeElement || document.activeElement === document.body) restoreFocus();
+    });
   }
 
   function toggle(id, trigger) {

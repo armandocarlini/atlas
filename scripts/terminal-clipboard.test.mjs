@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import {
   characterCount, clipboardKeyAction, copiedLabel, imagePasteKey, menuPosition, pasteFromClipboard,
-  pasteSequence, pasteTargets, planPaste, quotePaths, quoteSelection, rewriteSelection, sanitizePaste,
-  isFocusReport, selectionBarPosition, toolbarFocusIndex,
+  pasteSequence, pasteTargets, planPaste, quotePaths, quoteSelection, sanitizePaste,
+  isFocusReport, selectionBarPosition, terminalCli, toolbarFocusIndex,
 } from '../src/terminal-clipboard.js';
 
 const require = createRequire(import.meta.url);
@@ -35,7 +35,7 @@ test('F6 com seleção leva à barra; sem seleção, F6 continua indo para o pro
 });
 
 test('aviso de foco do terminal (modo 1004) não conta como digitação', () => {
-  // Regressão: com o PowerShell ligando o modo 1004, levar o foco à lista "Enviar para" emitia
+  // Regressão: com o PowerShell ligando o modo 1004, levar o foco à lista "Colar em outra sessão" emitia
   // ESC [ O e a barra sumia antes de o usuário escolher a sessão.
   assert.equal(isFocusReport('\x1b[O'), true);
   assert.equal(isFocusReport('\x1b[I'), true);
@@ -87,9 +87,12 @@ test('Responder cita cada linha e termina com uma quebra, sem as linhas vazias d
   assert.equal(quoteSelection(''), '');
 });
 
-test('Reescrever cola o trecho cru, sem espaços e linhas vazias sobrando no fim', () => {
-  assert.equal(rewriteSelection('npm test   \r\nok\r\n\r\n'), 'npm test\nok');
-  assert.equal(rewriteSelection('  recuo preservado'), '  recuo preservado');
+test('Reescrever cola exatamente a seleção: espaços, recuo e linhas finais ficam como estão', async () => {
+  // Revisão: Reescrever não normaliza; só a colagem protegida embrulha o texto, sem Enter.
+  const selection = 'npm test   \r\n  recuo\r\n\r\n';
+  assert.deepEqual(planPaste(selection, true), { ok: true, text: selection });
+  assert.equal(pasteSequence(selection, true), '\x1b[200~npm test   \r  recuo\r\r\x1b[201~');
+  assert.equal(typeof (await import('../src/terminal-clipboard.js')).rewriteSelection, 'undefined', 'sem função que altere o trecho');
 });
 
 test('caminhos de arquivos vão entre aspas, separados por espaço', () => {
@@ -127,14 +130,36 @@ test('do clipboard: arquivos antes de texto; só imagem repassa ao CLI o atalho 
 test('ESC v (Alt+V) só vai ao Claude Code no Windows; os demais recebem o ^V de um terminal comum', () => {
   assert.equal(imagePasteKey({ platform: 'win32', cli: 'claude' }), '\x1bv');
   // No PowerShell (PSReadLine), ESC v digita um "v" na linha; ^V com só imagem não faz nada.
-  for (const cli of ['shell', 'codex', 'kimi', undefined]) assert.equal(imagePasteKey({ platform: 'win32', cli }), '\x16', String(cli));
+  for (const cli of ['shell', 'codex', 'kimi', 'gemini', 'opencode', undefined]) assert.equal(imagePasteKey({ platform: 'win32', cli }), '\x16', String(cli));
   assert.equal(imagePasteKey({ platform: 'linux', cli: 'claude' }), '\x16');
   assert.equal(imagePasteKey(), '\x16');
   assert.deepEqual(pasteFromClipboard({ files: [], text: '', image: false }), { kind: 'none' });
   assert.deepEqual(pasteFromClipboard(null), { kind: 'none' });
 });
 
-test('destinos de "Enviar para": só sessões com processo vivo, nomeadas como no cabeçalho', () => {
+test('Ctrl+V com só imagem, por CLI da sessão: só o Claude Code recebe ESC v', () => {
+  // Nome que o ATLAS mostra no cartão -> byte que o PTY recebe no Windows.
+  const expected = {
+    'Claude Code': '\x1bv', 'Codex': '\x16', 'Kimi Code': '\x16', 'Gemini': '\x16', 'OpenCode': '\x16', 'PowerShell': '\x16', '': '\x16',
+  };
+  for (const [name, data] of Object.entries(expected)) {
+    assert.deepEqual(pasteFromClipboard({ files: [], text: '', image: true }, { platform: 'win32', cli: terminalCli(name) }), { kind: 'forward', data }, name || 'sem nome');
+  }
+  assert.equal(terminalCli('claude-code'), 'claude');
+  assert.equal(terminalCli(undefined), 'shell');
+});
+
+test('Colar em outra sessão nunca executa: sem Enter fora da colagem protegida', () => {
+  const quote = quoteSelection('linha 1\nlinha 2\n');
+  const bracketed = pasteSequence(planPaste(quote, true).text, true);
+  assert.ok(bracketed.startsWith('\x1b[200~') && bracketed.endsWith('\x1b[201~'), 'tudo dentro da colagem protegida');
+  assert.ok(!/[\r\n]/.test(bracketed.slice(bracketed.lastIndexOf('\x1b[201~'))), 'nada depois do fim da colagem');
+  // Sem colagem protegida: uma linha vai sem a quebra final; várias linhas não vão.
+  assert.equal(pasteSequence(planPaste('> uma\n', false).text, false), '> uma');
+  assert.equal(planPaste(quote, false).ok, false);
+});
+
+test('destinos de "Colar em outra sessão": só sessões com processo vivo, nomeadas como no cabeçalho', () => {
   const functions = { items: [{ slug: 'revisor', name: 'Revisor' }] };
   const targets = pasteTargets([
     { id: 'p', ptyId: 'pty-p', roleKind: 'orchestrator', name: 'Principal ATLAS', cli: 'Claude Code' },

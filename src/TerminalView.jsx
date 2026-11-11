@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
-import { ChevronDown, PenLine, Reply } from 'lucide-react';
+import { ChevronDown, Forward, PenLine, Reply } from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
 import { createPtyResizer, isLayoutResizing, onLayoutResizing } from './pty-resize.js';
 import './terminal-clipboard.css';
 import {
   characterCount, clipboardKeyAction, copiedLabel, menuPosition, pasteFromClipboard, pasteSequence,
-  isFocusReport, planPaste, quotePaths, quoteSelection, rewriteSelection, sanitizePaste, selectionBarPosition,
+  isFocusReport, planPaste, quotePaths, quoteSelection, sanitizePaste, selectionBarPosition,
   toolbarFocusIndex,
 } from './terminal-clipboard.js';
 
@@ -239,7 +239,8 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
       paste: pasteClipboard,
       selectAll: () => terminal.selectAll(),
       reply: () => insertHere(quoteSelection(terminal.getSelection())),
-      rewrite: () => insertHere(rewriteSelection(terminal.getSelection())),
+      // Reescrever cola exatamente o que foi selecionado; a normalização fica só no Responder.
+      rewrite: () => insertHere(terminal.getSelection()),
       send: (target) => sendTo(target, quoteSelection(terminal.getSelection())),
       focus: () => terminal.focus(),
     };
@@ -293,6 +294,8 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
       try { fitAddon.fit(); } catch { /* O viewport pode estar em transição. */ }
     };
     const unsubscribeLayout = onLayoutResizing((active) => {
+      // A barra fica presa à seleção: com a divisória em movimento, o trecho muda de lugar.
+      if (active) hideBar();
       if (active || disposed) return;
       cancelAnimationFrame(frame);
       fit();
@@ -427,7 +430,7 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
     run('focus');
   };
   // Barra como barra de ferramentas do Windows: setas e Home/End entre os botões; Escape e Tab
-  // devolvem o foco ao terminal (a seleção continua); seta para baixo abre "Enviar para".
+  // devolvem o foco ao terminal (a seleção continua); seta para baixo abre "Colar em outra sessão".
   const onBarKeyDown = (event) => {
     if (event.target.closest('[role="menu"]')) return;
     const buttons = [...barRef.current.querySelectorAll(':scope > button')];
@@ -442,15 +445,16 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
       run('focus');
     } else if (event.key === 'ArrowDown' && event.target.getAttribute('aria-haspopup') === 'menu') {
       event.preventDefault();
-      setSendOpen('keyboard');
+      setSendOpen(true);
     }
   };
+  // A lista recebe o foco ao abrir (mouse ou teclado) e o devolve ao botão ao fechar; escolher uma
+  // sessão leva o foco de volta ao terminal depois de colar.
   const closeSendMenu = () => {
-    const viaKeyboard = sendOpen === 'keyboard';
     setSendOpen(false);
-    if (viaKeyboard) barRef.current?.querySelector('[aria-haspopup="menu"]')?.focus();
+    barRef.current?.querySelector('[aria-haspopup="menu"]')?.focus();
   };
-  const sendItems = targets.map((target) => ({ key: `send-${target.id}`, label: `Enviar para ${target.name}`, title: target.detail, run: () => run('send', target) }));
+  const sendItems = targets.map((target) => ({ key: `send-${target.id}`, label: `Colar em ${target.name}`, title: target.detail, run: () => run('send', target) }));
   const menuItems = menu ? [
     { key: 'copy', label: 'Copiar', shortcut: 'Ctrl+C', disabled: !menu.hasSelection, run: () => run('copy') },
     { key: 'paste', label: 'Colar', shortcut: 'Ctrl+V', run: () => run('paste') },
@@ -479,13 +483,13 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
       >
         <button type="button" onClick={() => run('reply')} title="Colar como citação na entrada deste terminal, sem enviar"><span>Responder</span><Reply size={14} aria-hidden="true" /></button>
         <button type="button" onClick={() => run('rewrite')} title="Colar o trecho na entrada deste terminal, sem enviar"><span>Reescrever</span><PenLine size={13} aria-hidden="true" /></button>
-        {targets.length > 0 && <button type="button" aria-haspopup="menu" aria-expanded={Boolean(sendOpen)} onClick={(event) => setSendOpen((open) => (open ? false : event.detail === 0 ? 'keyboard' : 'mouse'))} title="Colar como citação na entrada de outra sessão, sem enviar"><span>Enviar para</span><ChevronDown size={13} aria-hidden="true" /></button>}
+        {targets.length > 0 && <button type="button" aria-haspopup="menu" aria-expanded={Boolean(sendOpen)} onClick={() => setSendOpen((open) => !open)} title="Colar como citação na entrada de outra sessão, sem enviar"><span>Colar em outra sessão</span><Forward size={13} aria-hidden="true" /><ChevronDown className="terminal-bar-chevron" size={12} aria-hidden="true" /></button>}
         {sendOpen && <MenuList
-          label="Enviar a citação para"
+          label="Colar a citação em"
           className="terminal-context-menu terminal-send-menu"
           items={targets.map((target) => ({ key: target.id, label: target.name, title: target.detail, run: () => run('send', target) }))}
           onClose={closeSendMenu}
-          autoFocus={sendOpen === 'keyboard'}
+          autoFocus
         />}
       </div>}
       {menu && <MenuList menuRef={menuRef} label="Copiar e colar" className="terminal-context-menu" style={menuStyle} items={menuItems} onClose={closeMenu} />}

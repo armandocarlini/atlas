@@ -60,9 +60,14 @@ export function quoteSelection(text) {
   return quoted.length ? `${quoted.join('\n')}\n` : '';
 }
 
-// "Reescrever": o trecho cru, sem as linhas vazias do fim que o xterm costuma trazer.
-export function rewriteSelection(text) {
-  return lines(text).map((line) => line.trimEnd()).join('\n');
+// "Reescrever" não tem função própria: cola exatamente o que terminal.getSelection() devolve.
+
+// CLI da sessão pelo nome que o ATLAS mostra ("Claude Code", "Codex", "PowerShell"...). Decide o
+// atalho de imagem repassado no Ctrl+V; nome desconhecido conta como shell.
+const CLI_KINDS = ['claude', 'codex', 'kimi', 'gemini', 'opencode'];
+export function terminalCli(name) {
+  const value = String(name || '').toLowerCase();
+  return CLI_KINDS.find((kind) => value.includes(kind)) || 'shell';
 }
 
 // Caminhos de arquivos (arrastados ou copiados no Explorer) entre aspas, separados por espaço.

@@ -643,12 +643,12 @@ process.stdin.on('data', (data) => {
     assert(barBox.inside, 'barra dentro do terminal');
     assert.equal(barBox.covers, false, 'barra não cobre as linhas selecionadas');
     assert(barBox.icons.length === 3 && barBox.icons.every((display) => display !== 'none'), `ícones visíveis na barra: ${barBox.icons}`);
-    assert.deepEqual(barBox.labels, ['Responder', 'Reescrever', 'Enviar para']);
+    assert.deepEqual(barBox.labels, ['Responder', 'Reescrever', 'Colar em outra sessão']);
     await settled(`${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar')`, 'barra assentada');
     await screenshot(main, 'terminal-selection-bar');
     await until(async () => !(await noticeOf('smoke-um')), 'aviso some sozinho', 4000);
 
-    // Enviar para outra sessão: a citação chega à entrada do eco, protegida e sem Enter.
+    // Colar em outra sessão: a citação chega à entrada do eco, protegida e sem Enter.
     let mark = (await received()).length;
     await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar [aria-haspopup=menu]').click()`);
     await until(() => main.evaluate(`[...${terminalOf('smoke-um')}.querySelectorAll('.terminal-send-menu [role=menuitem]')].map((item) => item.textContent).join('|') === 'smoke-dois'`), 'lista de sessões para enviar');
@@ -721,7 +721,7 @@ process.stdin.on('data', (data) => {
     await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...selection, button: 'right', buttons: 2, clickCount: 1 });
     await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...selection, button: 'right', buttons: 0, clickCount: 1 });
     const menuItems = await until(() => main.evaluate(`(() => { const menu = ${terminalOf('smoke-dois')}.querySelector('.terminal-context-menu'); return menu ? [...menu.querySelectorAll('[role=menuitem]')].map((item) => item.textContent + (item.disabled ? ':off' : '')) : null; })()`), 'menu de contexto');
-    assert.deepEqual(menuItems, ['CopiarCtrl+C', 'ColarCtrl+V', 'Selecionar tudo', 'Responder', 'Reescrever', 'Enviar para smoke-um'], 'botão direito mantém a seleção e oferece as ações');
+    assert.deepEqual(menuItems, ['CopiarCtrl+C', 'ColarCtrl+V', 'Selecionar tudo', 'Responder', 'Reescrever', 'Colar em smoke-um'], 'botão direito mantém a seleção e oferece as ações');
     assert.equal(await main.evaluate(`document.activeElement?.textContent`), 'CopiarCtrl+C', 'foco no primeiro item');
     await settled(`${terminalOf('smoke-dois')}.querySelector('.terminal-context-menu')`, 'menu assentado');
     await screenshot(main, 'terminal-context-menu');
@@ -753,13 +753,13 @@ process.stdin.on('data', (data) => {
     await key(main, 'ArrowRight', { code: 'ArrowRight', windowsVirtualKeyCode: 39 });
     assert.equal(await focused(), 'Reescrever');
     await key(main, 'End', { code: 'End', windowsVirtualKeyCode: 35 });
-    assert.equal(await focused(), 'Enviar para');
+    assert.equal(await focused(), 'Colar em outra sessão');
     await key(main, 'ArrowDown', { code: 'ArrowDown', windowsVirtualKeyCode: 40 });
     await until(async () => (await focused()) === 'smoke-um', 'seta para baixo abre a lista com foco na sessão');
     await settled(`${terminalOf('smoke-dois')}.querySelector('.terminal-send-menu')`, 'lista por teclado assentada');
     await screenshot(main, 'terminal-selection-bar-keyboard');
     await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
-    await until(async () => (await focused()) === 'Enviar para' && !(await main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-send-menu'))`)), 'Escape fecha a lista e volta ao botão');
+    await until(async () => (await focused()) === 'Colar em outra sessão' && !(await main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-send-menu'))`)), 'Escape fecha a lista e volta ao botão');
     await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
     await until(() => main.evaluate(`document.activeElement?.classList.contains('xterm-helper-textarea')`), 'Escape devolve o foco ao terminal');
     assert(await main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-selection-bar'))`), 'a seleção e a barra continuam');
@@ -774,6 +774,15 @@ process.stdin.on('data', (data) => {
     mark = (await received()).length;
     await key(main, 'F6', { code: 'F6', windowsVirtualKeyCode: 117 });
     await until(async () => (await receivedSince(mark)) === hex('\x1b[17~'), 'F6 sem seleção vai para o programa');
+    // Revisão: Reescrever cola exatamente a seleção (aqui, duas linhas), sem aparar nada.
+    await dragSelect('smoke-dois', `HEX:${hex('\x1b[17~')}:END`, 'ECHO_READY');
+    const exact = await until(async () => {
+      const text = (await native('invoke', { channel: 'clipboard:read-paste' })).text;
+      return text.includes('ECHO_READY') && text.includes('HEX:') ? text : null;
+    }, 'seleção de duas linhas copiada');
+    mark = (await received()).length;
+    await main.evaluate(`[...${terminalOf('smoke-dois')}.querySelectorAll('.terminal-selection-bar > button')].find((button) => button.textContent.trim() === 'Reescrever').click()`);
+    await expectBytes(mark, `\x1b[200~${exact.replace(/\r?\n/g, '\r')}\x1b[201~`, 'Reescrever cola exatamente a seleção');
     // Ctrl+C com seleção: copia e não interrompe o eco.
     await dragSelect('smoke-dois', 'ECHO_READY', 'ECHO_READY');
     await until(() => main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-selection-bar'))`), 'seleção no eco');
@@ -908,8 +917,15 @@ process.stdin.on('data', (data) => {
   assert.equal(await main.evaluate(`document.querySelector(${JSON.stringify(navSeparator)}).getAttribute('aria-valuenow')`), String(navKeyboard));
   await drag(navSeparator, 160 - navKeyboard);
   assert.equal(await main.evaluate(`document.querySelector('[data-column-id=left]').dataset.mode`), 'compact');
-  const compactTree = await main.evaluate(`(() => { const item = [...document.querySelectorAll('.tree-session')].find(node => node.innerText.includes('smoke-um')); return { small: getComputedStyle(item.querySelector('.tree-label small')).display, title: item.title, count: getComputedStyle(document.querySelector('.tree-project-name small')).display }; })()`);
-  assert.equal(compactTree.small, 'none', 'linha secundária sai da Navegação compacta');
+  const compactTree = await main.evaluate(`(() => { const item = [...document.querySelectorAll('.tree-session')].find(node => node.innerText.includes('smoke-um')); const small = item.querySelector('.tree-label small'); return { smallDisplay: getComputedStyle(small).display, smallWidth: small.getBoundingClientRect().width, text: item.textContent, title: item.title, count: getComputedStyle(document.querySelector('.tree-project-name small')).display }; })()`);
+  // Revisão: a linha secundária sai da vista, não do leitor de tela (fica no nome do botão).
+  assert(compactTree.smallDisplay !== 'none' && compactTree.smallWidth <= 1, `linha secundária oculta só visualmente na compacta: ${JSON.stringify(compactTree)}`);
+  assert(compactTree.text.includes('PowerShell') && compactTree.text.includes('ativa'), `CLI e estado no nome acessível da compacta: ${compactTree.text}`);
+  await main.call('DOM.enable');
+  await main.call('Accessibility.enable');
+  const compactName = await main.call('Accessibility.getPartialAXTree', { backendNodeId: (await main.call('DOM.describeNode', { objectId: (await main.call('Runtime.evaluate', { expression: `[...document.querySelectorAll('.tree-session')].find(node => node.innerText.includes('smoke-um'))` })).result.objectId })).node.backendNodeId, fetchRelatives: false });
+  const announced = compactName.nodes.find((node) => node.role?.value === 'button')?.name?.value || '';
+  assert(announced.includes('PowerShell') && announced.includes('ativa'), `leitor de tela anuncia CLI e estado na compacta: ${announced}`);
   assert(compactTree.title.includes('PowerShell') && compactTree.title.includes('ativa') && compactTree.title.includes('feature/revisao'), `title completo na compacta: ${compactTree.title}`);
   assert.notEqual(compactTree.count, 'none', 'contadores continuam visíveis');
   await screenshot(main, 'columns-nav-compact');
@@ -1149,6 +1165,47 @@ process.stdin.on('data', (data) => {
     const stackKeyboard = split(await cardBoxes());
     assert(Math.abs(stackKeyboard.agents[0].height - (stackDragged.agents[0].height - 16)) <= 2, `seta para cima move a divisória 16px: ${JSON.stringify(stackKeyboard)}`);
     await screenshot(main, 'tracks-sidebar-stack');
+    // Integração: barra de seleção e aviso de cópia num terminal estreito (agente empilhado, com a
+    // Navegação visível). A barra mostra só os ícones e nada sai do terminal.
+    await setColumn('left', true);
+    const narrowName = split(await cardBoxes()).agents[0].name;
+    const narrowShell = `${card(narrowName)}.querySelector('.terminal-view-shell')`;
+    const keptClipboard = await native('invoke', { channel: 'clipboard:read-paste' });
+    await until(() => main.evaluate(`${narrowShell}.getBoundingClientRect().width <= 480`), 'agente empilhado estreito');
+    const row = await main.evaluate(`(() => {
+      const row = [...${card(narrowName)}.querySelectorAll('.xterm-rows > div')].find((item) => item.textContent.trim());
+      const range = document.createRange();
+      range.selectNodeContents(row);
+      const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
+      return { y: rects[0].top + rects[0].height / 2, from: rects[0].left + 1, to: Math.min(rects.at(-1).right - 2, rects[0].left + 180) };
+    })()`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: row.from, y: row.y });
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: row.from, y: row.y, button: 'left', buttons: 1, clickCount: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: row.to, y: row.y, button: 'left', buttons: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: row.to, y: row.y, button: 'left', buttons: 0, clickCount: 1 });
+    const narrowLayout = await until(() => main.evaluate(`(() => {
+      const shell = ${narrowShell};
+      const bar = shell.querySelector('.terminal-selection-bar');
+      const notice = shell.querySelector('.terminal-notice');
+      if (!bar || getComputedStyle(bar).visibility === 'hidden' || !notice) return null;
+      const box = (element) => element.getBoundingClientRect();
+      const inside = (element) => box(element).left >= box(shell).left - 0.5 && box(element).right <= box(shell).right + 0.5 && box(element).top >= box(shell).top - 0.5 && box(element).bottom <= box(shell).bottom + 0.5;
+      return {
+        shellWidth: Math.round(box(shell).width),
+        barInside: inside(bar),
+        noticeInside: inside(notice),
+        labelsHidden: [...bar.querySelectorAll(':scope > button > span')].every((span) => span.getBoundingClientRect().width <= 1),
+        names: [...bar.querySelectorAll(':scope > button')].map((button) => button.textContent.trim()),
+      };
+    })()`), 'barra e aviso no terminal estreito');
+    assert(narrowLayout.barInside && narrowLayout.noticeInside, `barra e aviso dentro do terminal estreito: ${JSON.stringify(narrowLayout)}`);
+    assert(narrowLayout.labelsHidden, `terminal estreito mostra só os ícones: ${JSON.stringify(narrowLayout)}`);
+    assert.deepEqual(narrowLayout.names, ['Responder', 'Reescrever', 'Colar em outra sessão'], 'os nomes continuam acessíveis');
+    await screenshot(main, 'selection-bar-narrow');
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: row.from, y: row.y, button: 'left', buttons: 1, clickCount: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: row.from, y: row.y, button: 'left', buttons: 0, clickCount: 1 });
+    await until(() => main.evaluate(`!${narrowShell}.querySelector('.terminal-selection-bar')`), 'clique limpa a seleção no terminal estreito');
+    if (keptClipboard?.text) await native('invoke', { channel: 'clipboard:write-text', args: [keptClipboard.text] });
 
     // 3. Laterais vizinhas: Painéis arrastados para antes dos Terminais ficam ao lado da Navegação,
     // e a divisória entre as duas troca largura entre elas sem mexer nos Terminais.
@@ -1168,6 +1225,13 @@ process.stdin.on('data', (data) => {
     assert.deepEqual(await main.evaluate(`JSON.parse(localStorage.getItem('atlas-docks')).order`), ['left', 'right', 'center'], 'ordem salva');
     const neighbors = '.column-resizer[aria-label="Divisão entre Navegação e Painéis"]';
     await until(() => main.evaluate(`Boolean(document.querySelector(${JSON.stringify(neighbors)}))`), 'divisória entre as duas laterais');
+    // Revisão: o DOM (e o Tab) segue a ordem da tela, não a do CSS `order`.
+    const domSequence = await main.evaluate(`[...document.querySelectorAll('.workspace-body > [data-column-id], .workspace-body > .column-resizer')].map((item) => ({ id: item.dataset.columnId || item.getAttribute('aria-label'), left: Math.round(item.getBoundingClientRect().left) }))`);
+    assert.deepEqual(domSequence.map((item) => item.id), ['left', 'Divisão entre Navegação e Painéis', 'right', 'Largura de Painéis', 'center'], `colunas e divisórias no DOM na ordem da tela: ${JSON.stringify(domSequence)}`);
+    assert(domSequence.every((item, index) => index === 0 || item.left >= domSequence[index - 1].left), `posições crescentes na ordem do DOM: ${JSON.stringify(domSequence)}`);
+    await main.evaluate(`document.querySelector(${JSON.stringify(neighbors)}).focus()`);
+    await key(main, 'Tab', { code: 'Tab', windowsVirtualKeyCode: 9 });
+    assert(await main.evaluate(`Boolean(document.activeElement?.closest('[data-column-id=right]'))`), 'Tab depois da divisória entre as laterais vai para Painéis, que estão à direita dela');
     const widths = async () => ({ left: await columnWidth('left'), right: await columnWidth('right'), center: await columnWidth('center') });
     const sidesBefore = await widths();
     await dragBy(neighbors, -40, 0);
@@ -1255,7 +1319,13 @@ process.stdin.on('data', (data) => {
     const flyoutFocus = await keyboardFocus(`document.querySelector('#navigation-flyout :is(button, [tabindex="0"], a[href])')`);
     assert(flyoutFocus.kind !== 'none' && flyoutFocus.ratio >= 3, `tema claro: foco visível no flyout: ${JSON.stringify(flyoutFocus)}`);
     await screenshot(main, 'rails-light-flyout');
-    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    // Revisão: com o foco dentro do flyout, o resize fecha o painel e o foco vai para um destino
+    // seguro (o botão de origem ou a área dos terminais), nunca para o body.
+    await native('resize', { width: 1400, height: 900 });
+    await until(() => main.evaluate(`!document.querySelector('#navigation-flyout')`), 'resize fecha o flyout');
+    const afterResize = await until(() => main.evaluate(`(() => { const active = document.activeElement; if (!active || active === document.body) return null; return { rail: active.classList.contains('rail-project'), workspace: active.id === 'terminal-workspace' }; })()`), 'foco num destino seguro depois do resize');
+    assert(afterResize.rail || afterResize.workspace, `foco no botão do trilho ou na área dos terminais: ${JSON.stringify(afterResize)}`);
+    await native('resize', { width: 1440, height: 900 });
     // Menu ⋯ na coluna de Terminais estreita.
     await narrowViewport();
     await until(() => main.evaluate(`document.querySelector('.cockpit-toolbar')?.dataset.mode === 'compact' && Boolean(document.querySelector('.toolbar-overflow-trigger'))`), 'barra compacta com menu ⋯');
