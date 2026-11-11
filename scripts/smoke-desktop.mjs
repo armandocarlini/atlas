@@ -6,7 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { auditInterface } from './audit-interface.mjs';
+import { auditGlyphs, auditInterface, focusIndicator } from './audit-interface.mjs';
 import { DatabaseSync } from 'node:sqlite';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -109,6 +109,7 @@ let createdTaskId = null;
 let offeredTaskId = null;
 let blockedTaskId = null;
 let terminalBeforeRestart;
+let restoreClipboard = false;
 let stderr = '';
 child.stderr.on('data', (data) => { stderr = (stderr + data).slice(-12000); });
 child.stdout.resume();
@@ -168,6 +169,12 @@ async function choose(cdp, scope, name, value) {
   await delay(120);
 }
 async function chooseTerminalLayout(cdp, value) {
+  // Na barra compacta (coluna de Terminais estreita), o layout fica no menu ⋯.
+  await until(() => cdp.evaluate(`Boolean(document.querySelector('[aria-label="Layout dos terminais"], .toolbar-overflow-trigger'))`), 'controle de layout');
+  if (await cdp.evaluate(`!document.querySelector('[aria-label="Layout dos terminais"]')`)) {
+    await cdp.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
+    await until(() => cdp.evaluate(`Boolean(document.querySelector('[aria-label="Layout dos terminais"]'))`), 'layout no menu ⋯');
+  }
   assert(await cdp.evaluate(`(() => { const select = document.querySelector('[aria-label="Layout dos terminais"]'); if (!select) return false; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(value)}); select.dispatchEvent(new Event('change', { bubbles: true })); return select.value === ${JSON.stringify(value)}; })()`), `Missing terminal layout ${value}`);
   await delay(200);
 }
@@ -447,7 +454,10 @@ try {
   assert.deepEqual(integrationFile(), { mcpServers: { github: { command: 'gh-mcp', args: ['--fixture'] } } }, 'Removal deletes only the ATLAS entry');
   assert.equal(await main.evaluate(`document.querySelectorAll('.integration-notice').length`), 0, 'Removing does not nag the user again');
   console.log('PASS consentimento da integração MCP: conteúdo exato, foco, cancelar, conectar e remover sem tocar outros servidores');
-  const target = `.tree-worktree[title=${JSON.stringify(worktree)}]`;
+  const target = `.tree-worktree[data-worktree-path=${JSON.stringify(worktree)}]`;
+  // Na Navegação estreita, branch e alterações saem da linha e ficam no title.
+  const worktreeTitle = await main.evaluate(`document.querySelector(${JSON.stringify(target)})?.title`);
+  assert(worktreeTitle.includes('feature/revisao') && worktreeTitle.includes('3 alterações') && worktreeTitle.includes(worktree), `title completo da worktree: ${worktreeTitle}`);
   await click(main, target);
   await until(() => main.evaluate(`document.querySelector('.persistent-tasks').innerText.includes('Nenhuma tarefa criada')`), 'task scope changed');
   assert(!(await main.evaluate(`document.querySelector('.persistent-tasks').innerText`)).includes('Tarefa real · smoke'));
@@ -473,6 +483,60 @@ try {
   const input = '.real-terminal .xterm-helper-textarea';
   const raw = async (id) => main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(id)}).then(item => item.scrollback)`);
   const output = async (marker, id = first.id) => until(async () => (await raw(id)).includes(marker), marker);
+  // Espera a saída do terminal parar: uma linha nova rolaria a tela entre medir e arrastar.
+  const quiet = async (name, id) => {
+    let last = null;
+    await until(async () => {
+      const current = await raw(id);
+      const stable = current === last;
+      last = current;
+      if (!stable) await delay(250);
+      return stable;
+    }, `saída de ${name} parada`);
+    await main.evaluate(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
+  };
+  // Arrasta o mouse de verdade (CDP) do começo de uma linha até o fim de outra.
+  const dragSelect = async (name, fromText, toText, id = name === 'smoke-um' ? first.id : second.id, allowPartialRow = false) => {
+    await quiet(name, id);
+    const points = await main.evaluate(`(() => {
+      const rows = [...${card(name)}.querySelectorAll('.xterm-rows > div')];
+      const textRect = (text) => {
+        const row = rows.findLast((item) => ${allowPartialRow} ? item.textContent.includes(text) : item.textContent.trim() === text);
+        if (!row) return null;
+        const range = document.createRange();
+        if (${allowPartialRow}) {
+          const boundary = (offset) => {
+            const nodes = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+            let node;
+            while ((node = nodes.nextNode())) {
+              if (offset <= node.length) return [node, offset];
+              offset -= node.length;
+            }
+            throw new Error('Texto fora da linha do terminal');
+          };
+          const start = row.textContent.indexOf(text);
+          range.setStart(...boundary(start));
+          range.setEnd(...boundary(start + text.length));
+        } else {
+          range.selectNodeContents(row);
+        }
+        const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
+        return { left: rects[0].left, right: rects.at(-1).right, middle: rects[0].top + rects[0].height / 2 };
+      };
+      const from = textRect(${JSON.stringify(fromText)});
+      const to = textRect(${JSON.stringify(toText)});
+      return from && to ? { from: { x: from.left + 1, y: from.middle }, to: { x: to.right - 2, y: to.middle } } : null;
+    })()`);
+    assert(points, `linhas para selecionar em ${name}: ${fromText} → ${toText}`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.from.x, y: points.from.y });
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: points.from.x, y: points.from.y, button: 'left', buttons: 1, clickCount: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: (points.from.x + points.to.x) / 2, y: (points.from.y + points.to.y) / 2, button: 'left', buttons: 1 });
+    await delay(16);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.to.x, y: points.to.y, button: 'left', buttons: 1 });
+    await delay(16);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: points.to.x, y: points.to.y, button: 'left', buttons: 0, clickCount: 1 });
+    return points;
+  };
   await focus('smoke-um');
   await command(main, input, `Write-Output ('ATLAS_' + 'UNICODE_OK · continuação'); Write-Output ('CWD:' + (Get-Location).Path); Write-Output ('PID:' + $PID)`);
   await output('ATLAS_UNICODE_OK · continuação');
@@ -517,6 +581,272 @@ try {
   assert.notEqual(terminalGlyph.svg, 'none', 'ícone visível');
   assert.equal(terminalGlyph.tree, 'terminal', 'árvore usa o mesmo ícone');
   console.log('PASS dois terminais com processos e streams independentes');
+
+  // Copiar e colar (docs/ROADMAP.md, T0): um eco em smoke-dois liga a colagem protegida e
+  // imprime em hexadecimal os bytes que recebe; assim cada caminho é conferido byte a byte.
+  // Usa o clipboard real do Windows. O smoke restaura os formatos originais no finally.
+  if (process.platform === 'win32') {
+    await native('save-clipboard');
+    restoreClipboard = true;
+    const clipDir = path.join(fixture, 'clipboard');
+    fs.mkdirSync(clipDir, { recursive: true });
+    const echoScript = path.join(clipDir, 'echo-input.cjs');
+    const fileA = path.join(clipDir, 'um arquivo.txt');
+    const fileB = path.join(clipDir, 'dois.txt');
+    fs.writeFileSync(fileA, 'a');
+    fs.writeFileSync(fileB, 'b');
+    fs.writeFileSync(echoScript, `process.stdout.write('\\x1b[?2004hECHO_' + 'READY\\r\\n');
+process.stdin.setRawMode(true);
+process.stdin.on('data', (data) => {
+  process.stdout.write('HEX:' + data.toString('hex') + ':END\\r\\n');
+  if (data.includes(3)) { process.stdout.write('\\x1b[?2004lECHO_' + 'DONE\\r\\n'); process.exit(0); }
+  // A marca volta ao fim da tela: sempre há uma linha "ECHO_READY" visível para selecionar.
+  process.stdout.write('ECHO_' + 'READY\\r\\n');
+});
+`);
+    const hex = (text) => Buffer.from(text, 'utf8').toString('hex');
+    const bracketed = (text) => `HEX:${hex(`\x1b[200~${text}\x1b[201~`)}:END`;
+    const setClipboard = (script) => execFileSync('powershell.exe', ['-NoProfile', '-STA', '-Command', script], { stdio: 'ignore' });
+    const received = async () => [...(await raw(second.id)).matchAll(/HEX:[0-9a-f]*:END/g)].map((match) => match[0]);
+    // Junta o que o eco recebeu desde a marca: o ConPTY pode entregar uma colagem em mais de uma leitura.
+    const receivedSince = async (count) => (await received()).slice(count).map((item) => item.slice(4, -4)).join('');
+    const expectBytes = async (count, text, label) => until(async () => (await receivedSince(count)) === hex(text), label);
+    const terminalOf = (name) => `${card(name)}.querySelector('.terminal-view-shell')`;
+    const noticeOf = (name) => main.evaluate(`${terminalOf(name)}.querySelector('.terminal-notice')?.textContent || ''`);
+    const focusInput = (name) => main.evaluate(`${card(name)}.querySelector('.xterm-helper-textarea').focus()`);
+    // Captura só depois da entrada do elemento flutuante (opacidade final, sem animação em curso).
+    // A saída do aviso espera no atraso dela: animação que ainda não começou não conta.
+    const settled = (expression, label) => until(() => main.evaluate(`(() => {
+      const element = ${expression};
+      if (!element) return false;
+      const started = (animation) => animation.currentTime >= (animation.effect?.getTiming().delay || 0);
+      return element.getAnimations().every((animation) => animation.playState === 'finished' || !started(animation)) && getComputedStyle(element).opacity === '1';
+    })()`), label);
+    const clipboardText = async () => (await native('invoke', { channel: 'clipboard:read-paste' })).text.replace(/\r\n/g, '\n');
+
+    await chooseTerminalLayout(main, 'grid');
+    await until(() => main.evaluate(`Boolean(${card('smoke-um')} && ${card('smoke-dois')})`), 'grade com os dois terminais');
+    await native('focus');
+    await focusInput('smoke-dois');
+    for (const char of `node '${echoScript}'`) await key(main, char, { text: char });
+    await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+    await output('ECHO_READY', second.id);
+    // O ATLAS acompanha o modo de colagem protegida que o programa ligou.
+    await until(() => main.evaluate(`window.atlasDesktop.getTerminalInputMode(${JSON.stringify(second.id)}).then((mode) => mode?.bracketedPaste === true)`), 'colagem protegida detectada no PTY');
+
+    // 1. Copiar ao selecionar: log de duas linhas em smoke-um, aviso discreto e anunciado.
+    await focusInput('smoke-um');
+    await command(main, input, `Write-Output ('COPIA_' + 'L1'); Write-Output ('COPIA_' + 'L2')`);
+    await output('COPIA_L2');
+    await quiet('smoke-um', first.id);
+    await until(() => main.evaluate(`[...${card('smoke-um')}.querySelectorAll('.xterm-rows > div')].some((row) => row.textContent.trim() === 'COPIA_L2')`), 'log visível em smoke-um');
+    await dragSelect('smoke-um', 'COPIA_L1', 'COPIA_L2');
+    await until(async () => (await clipboardText()) === 'COPIA_L1\nCOPIA_L2', 'seleção copiada ao soltar o mouse');
+    await until(async () => /^1[78] caracteres copiados$/.test(await noticeOf('smoke-um')), 'aviso "N caracteres copiados"');
+    const live = await main.evaluate(`(() => { const region = ${terminalOf('smoke-um')}.querySelector('.terminal-notice-region'); return { live: region.getAttribute('aria-live'), role: region.getAttribute('role') }; })()`);
+    assert.deepEqual(live, { live: 'polite', role: 'status' }, 'aviso anunciado ao leitor de tela');
+    // 6. Barra flutuante junto da seleção, dentro do terminal.
+    const barBox = await until(() => main.evaluate(`(() => {
+      const bar = ${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar');
+      if (!bar || getComputedStyle(bar).visibility === 'hidden') return null;
+      const box = bar.getBoundingClientRect();
+      const shell = ${terminalOf('smoke-um')}.getBoundingClientRect();
+      const selected = [...${card('smoke-um')}.querySelectorAll('.xterm-rows > div')].filter((row) => /^COPIA_L[12]$/.test(row.textContent.trim())).map((row) => row.getBoundingClientRect());
+      return {
+        inside: box.left >= shell.left && box.right <= shell.right && box.top >= shell.top && box.bottom <= shell.bottom,
+        covers: selected.some((row) => box.bottom > row.top + 1 && box.top < row.bottom - 1),
+        // Cada botão tem ao menos um ícone visível ("Colar em outra sessão" tem também o chevron).
+        icons: [...bar.querySelectorAll(':scope > button')].map((button) => [...button.querySelectorAll('svg')].some((icon) => getComputedStyle(icon).display !== 'none')),
+        labels: [...bar.querySelectorAll('button')].map((item) => item.textContent.trim()),
+      };
+    })()`), 'barra de seleção visível');
+    assert(barBox.inside, 'barra dentro do terminal');
+    assert.equal(barBox.covers, false, 'barra não cobre as linhas selecionadas');
+    assert.deepEqual(barBox.icons, [true, true, true], 'cada botão da barra tem ícone visível');
+    assert.deepEqual(barBox.labels, ['Responder', 'Reescrever', 'Colar em outra sessão']);
+    await settled(`${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar')`, 'barra assentada');
+    await screenshot(main, 'terminal-selection-bar');
+    await until(async () => !(await noticeOf('smoke-um')), 'aviso some sozinho', 4000);
+
+    // Colar em outra sessão: a citação chega à entrada do eco, protegida e sem Enter.
+    let mark = (await received()).length;
+    await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar [aria-haspopup=menu]').click()`);
+    await until(() => main.evaluate(`[...${terminalOf('smoke-um')}.querySelectorAll('.terminal-send-menu [role=menuitem]')].map((item) => item.textContent).join('|') === 'smoke-dois'`), 'lista de sessões para enviar');
+    await settled(`${terminalOf('smoke-um')}.querySelector('.terminal-send-menu')`, 'lista assentada');
+    await screenshot(main, 'terminal-send-menu');
+    await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-send-menu [role=menuitem]').click()`);
+    await expectBytes(mark, '\x1b[200~> COPIA_L1\r> COPIA_L2\r\x1b[201~', 'citação colada na outra sessão');
+    assert(!(await raw(second.id)).includes('HEX:0d:END'), 'nenhum Enter separado chegou à outra sessão');
+    await until(() => main.evaluate(`!${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar')`), 'barra some ao limpar a seleção');
+
+    // Sem colagem protegida (o Windows PowerShell não liga o modo 2004), Responder com várias
+    // linhas não chega ao shell: aviso com o motivo e "Copiar" no lugar.
+    const shellMode = await main.evaluate(`window.atlasDesktop.getTerminalInputMode(${JSON.stringify(first.id)})`);
+    if (shellMode && !shellMode.bracketedPaste) {
+      const before = await raw(first.id);
+      await dragSelect('smoke-um', 'COPIA_L1', 'COPIA_L2');
+      await until(() => main.evaluate(`Boolean(${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar'))`), 'barra para a recusa');
+      await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar button').click()`);
+      const refusal = await until(() => main.evaluate(`(() => { const notice = ${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action'); return notice ? { text: notice.textContent, button: notice.querySelector('button')?.textContent } : null; })()`), 'aviso de recusa com ação');
+      assert.match(refusal.text, /^Não colado: este terminal executaria cada linha/, 'o aviso explica o motivo');
+      assert.equal(refusal.button, 'Copiar');
+      await settled(`${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action')`, 'aviso de recusa assentado');
+      await screenshot(main, 'terminal-multiline-refused');
+      await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action button').click()`);
+      await until(async () => (await clipboardText()) === '> COPIA_L1\n> COPIA_L2\n', '"Copiar" copia a citação recusada');
+      await delay(300);
+      assert.equal((await raw(first.id)).slice(before.length).includes('COPIA_L1'), false, 'nenhuma linha chegou ao PowerShell');
+      // Um clique no terminal limpa a seleção (e a barra), como no Windows Terminal.
+      const blank = await main.evaluate(`(() => { const box = ${card('smoke-um')}.querySelector('.xterm-screen').getBoundingClientRect(); return { x: box.left + box.width - 12, y: box.bottom - 6 }; })()`);
+      await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...blank, button: 'left', buttons: 1, clickCount: 1 });
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...blank, button: 'left', buttons: 0, clickCount: 1 });
+      await until(() => main.evaluate(`!${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar')`), 'clique limpa a seleção');
+    }
+    // Ctrl+V e o menu Colar também recusam várias linhas no shell sem modo 2004.
+    if (shellMode && !shellMode.bracketedPaste) {
+      const marker = 'ATLAS_PASTE_SEM_ENTER';
+      await native('invoke', { channel: 'clipboard:write-text', args: [`# ${marker}_1\r\n# ${marker}_2`] });
+      const before = (await raw(first.id)).length;
+      const refusalKey = () => main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action')?.textContent || ''`);
+      await focusInput('smoke-um');
+      await key(main, 'v', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+      await until(async () => /^Não colado: este terminal executaria cada linha/.test(await refusalKey()), 'Ctrl+V recusa colagem multilinha sem modo 2004');
+      assert(!(await raw(first.id)).slice(before).includes(marker), 'Ctrl+V não enviou texto ao shell');
+      await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action button').click()`);
+      await until(async () => !(await refusalKey()), 'aviso anterior substituído pelo aviso de cópia');
+      await key(main, 'F10', { code: 'F10', windowsVirtualKeyCode: 121, modifiers: 8 });
+      await until(() => main.evaluate(`Boolean(${terminalOf('smoke-um')}.querySelector('.terminal-context-menu'))`), 'menu para colagem multilinha sem modo 2004');
+      await main.evaluate(`[...${terminalOf('smoke-um')}.querySelectorAll('.terminal-context-menu [role=menuitem]')].find((item) => item.querySelector('span').textContent === 'Colar').click()`);
+      await until(async () => /^Não colado: este terminal executaria cada linha/.test(await refusalKey()), 'menu Colar recusa colagem multilinha sem modo 2004');
+      assert(!(await raw(first.id)).slice(before).includes(marker), 'menu Colar não enviou texto ao shell');
+      await main.evaluate(`${terminalOf('smoke-um')}.querySelector('.terminal-notice.has-action button').click()`);
+      await until(async () => !(await refusalKey()), 'aviso do menu substituído pelo aviso de cópia');
+      await main.evaluate(`(() => {
+        const data = new DataTransfer();
+        data.setData('text/plain', ${JSON.stringify(`# ${marker}_1\r\n# ${marker}_2`)});
+        const input = ${terminalOf('smoke-um')}.querySelector('.xterm-helper-textarea');
+        input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+      })()`);
+      await until(async () => /^Não colado: este terminal executaria cada linha/.test(await refusalKey()), 'evento nativo também recusa colagem multilinha');
+      assert(!(await raw(first.id)).slice(before).includes(marker), 'evento nativo não enviou texto ao shell');
+    }
+    // O clipboard volta ao log copiado, para os passos de Ctrl+V abaixo.
+    await native('invoke', { channel: 'clipboard:write-text', args: ['COPIA_L1\r\nCOPIA_L2'] });
+
+    // 3. Ctrl+V: texto multilinha vai como uma colagem protegida.
+    await focusInput('smoke-dois');
+    mark = (await received()).length;
+    await key(main, 'v', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+    await expectBytes(mark, '\x1b[200~COPIA_L1\rCOPIA_L2\x1b[201~', 'Ctrl+V cola o log multilinha protegido');
+    mark = (await received()).length;
+    await key(main, 'V', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 10 });
+    await expectBytes(mark, '\x1b[200~COPIA_L1\rCOPIA_L2\x1b[201~', 'Ctrl+Shift+V também cola');
+
+    // 4. Arquivos copiados no Explorer: literais do PowerShell, sem expansão de nomes maliciosos.
+    setClipboard(`Set-Clipboard -Path '${fileA}','${fileB}'`);
+    mark = (await received()).length;
+    await key(main, 'v', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+    await expectBytes(mark, `\x1b[200~'${fileA}' '${fileB}'\x1b[201~`, 'Ctrl+V com arquivos cola os caminhos');
+    // Imagem: num terminal que não é do Claude Code vai o ^V de um terminal comum; o ESC v
+    // (Alt+V, o atalho do Claude Code no Windows) digitaria um "v" no PowerShell.
+    setClipboard('Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $image = New-Object System.Drawing.Bitmap 4,4; [System.Windows.Forms.Clipboard]::SetImage($image)');
+    mark = (await received()).length;
+    await key(main, 'v', { code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+    await expectBytes(mark, '\x16', 'imagem fora do Claude Code repassa o ^V');
+    // Arrastar do Explorer: o mesmo formato, sem Enter.
+    const dropAt = await main.evaluate(`(() => { const box = ${terminalOf('smoke-dois')}.getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2 }; })()`);
+    mark = (await received()).length;
+    for (const type of ['dragEnter', 'dragOver', 'drop']) {
+      await main.call('Input.dispatchDragEvent', { type, ...dropAt, data: { items: [], files: [fileA], dragOperationsMask: 1 } });
+    }
+    await expectBytes(mark, `\x1b[200~'${fileA}'\x1b[201~`, 'arquivo arrastado vira caminho literal do PowerShell');
+    assert.equal(await main.evaluate(`${terminalOf('smoke-dois')}.classList.contains('dropping')`), false, 'destaque de soltar some');
+
+    // 2. Ctrl+C com seleção copia e não interrompe; o menu de contexto oferece as ações.
+    await dragSelect('smoke-dois', 'ECHO_READY', 'ECHO_READY');
+    await until(() => main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-selection-bar'))`), 'seleção no eco ativa');
+    const selection = await main.evaluate(`(() => { const box = ${terminalOf('smoke-dois')}.querySelector('.xterm-screen').getBoundingClientRect(); return { x: box.left + 30, y: box.top + 10 }; })()`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...selection, button: 'right', buttons: 2, clickCount: 1 });
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...selection, button: 'right', buttons: 0, clickCount: 1 });
+    const menuItems = await until(() => main.evaluate(`(() => { const menu = ${terminalOf('smoke-dois')}.querySelector('.terminal-context-menu'); return menu ? [...menu.querySelectorAll('[role=menuitem]')].map((item) => item.textContent + (item.disabled ? ':off' : '')) : null; })()`), 'menu de contexto');
+    assert.deepEqual(menuItems, ['CopiarCtrl+C', 'ColarCtrl+V', 'Selecionar tudo', 'Responder', 'Reescrever', 'Colar em smoke-um'], 'botão direito mantém a seleção e oferece as ações');
+    assert.equal(await main.evaluate(`document.activeElement?.textContent`), 'CopiarCtrl+C', 'foco no primeiro item');
+    await settled(`${terminalOf('smoke-dois')}.querySelector('.terminal-context-menu')`, 'menu assentado');
+    await screenshot(main, 'terminal-context-menu');
+    await key(main, 'ArrowDown', { code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+    await key(main, 'ArrowDown', { code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+    await key(main, 'ArrowDown', { code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+    assert.equal(await main.evaluate(`document.activeElement?.textContent`), 'Responder', 'setas percorrem o menu');
+    mark = (await received()).length;
+    // Com `text`, como um teclado real: é o caractere que ativa o botão focado.
+    await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+    await expectBytes(mark, '\x1b[200~> ECHO_READY\r\x1b[201~', 'Responder cola a citação no próprio terminal');
+    assert(await main.evaluate(`!${terminalOf('smoke-dois')}.querySelector('.terminal-context-menu') && document.activeElement?.classList.contains('xterm-helper-textarea')`), 'menu fecha e o foco volta ao terminal');
+    // Shift+F10 abre o mesmo menu pelo teclado; Escape fecha sem chegar ao PTY.
+    mark = (await received()).length;
+    await key(main, 'F10', { code: 'F10', windowsVirtualKeyCode: 121, modifiers: 8 });
+    await until(() => main.evaluate(`document.activeElement?.closest('.terminal-context-menu') && document.activeElement.textContent === 'ColarCtrl+V'`), 'Shift+F10 abre o menu; sem seleção, Copiar fica desabilitado');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    assert(await main.evaluate(`!${terminalOf('smoke-dois')}.querySelector('.terminal-context-menu') && document.activeElement?.classList.contains('xterm-helper-textarea')`), 'Escape fecha o menu e devolve o foco');
+    await delay(300);
+    assert.equal(await receivedSince(mark), '', 'Shift+F10 e Escape do menu não chegam ao PTY');
+    // F6 com seleção leva à barra; setas, seta para baixo na lista e Escape, sem nada no PTY.
+    await dragSelect('smoke-dois', 'ECHO_READY', 'ECHO_READY');
+    await until(() => main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-selection-bar'))`), 'seleção para a barra por teclado');
+    await focusInput('smoke-dois');
+    mark = (await received()).length;
+    const focused = () => main.evaluate(`document.activeElement?.textContent || document.activeElement?.className || ''`);
+    await key(main, 'F6', { code: 'F6', windowsVirtualKeyCode: 117 });
+    await until(async () => (await focused()) === 'Responder', 'F6 leva o foco ao primeiro botão da barra');
+    await key(main, 'ArrowRight', { code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    assert.equal(await focused(), 'Reescrever');
+    await key(main, 'End', { code: 'End', windowsVirtualKeyCode: 35 });
+    assert.equal(await focused(), 'Colar em outra sessão');
+    await key(main, 'ArrowDown', { code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+    await until(async () => (await focused()) === 'smoke-um', 'seta para baixo abre a lista com foco na sessão');
+    await settled(`${terminalOf('smoke-dois')}.querySelector('.terminal-send-menu')`, 'lista por teclado assentada');
+    await screenshot(main, 'terminal-selection-bar-keyboard');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    await until(async () => (await focused()) === 'Colar em outra sessão' && !(await main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-send-menu'))`)), 'Escape fecha a lista e volta ao botão');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    await until(() => main.evaluate(`document.activeElement?.classList.contains('xterm-helper-textarea')`), 'Escape devolve o foco ao terminal');
+    assert(await main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-selection-bar'))`), 'a seleção e a barra continuam');
+    await delay(300);
+    assert.equal(await receivedSince(mark), '', 'F6, setas e Escape da barra não chegam ao PTY');
+    await key(main, 'F6', { code: 'F6', windowsVirtualKeyCode: 117 });
+    await until(async () => (await focused()) === 'Responder', 'F6 de novo volta à barra');
+    await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+    await expectBytes(mark, '\x1b[200~> ECHO_READY\r\x1b[201~', 'Responder pelo teclado cola a citação');
+    assert(await main.evaluate(`document.activeElement?.classList.contains('xterm-helper-textarea')`), 'depois da ação, o foco volta ao terminal');
+    // Sem seleção, F6 é do programa.
+    mark = (await received()).length;
+    await key(main, 'F6', { code: 'F6', windowsVirtualKeyCode: 117 });
+    await until(async () => (await receivedSince(mark)) === hex('\x1b[17~'), 'F6 sem seleção vai para o programa');
+    // Revisão: Reescrever cola exatamente a seleção (aqui, duas linhas), sem aparar nada.
+    await dragSelect('smoke-dois', `HEX:${hex('\x1b[17~')}:END`, 'ECHO_READY');
+    const exact = await until(async () => {
+      const text = (await native('invoke', { channel: 'clipboard:read-paste' })).text;
+      return text.includes('ECHO_READY') && text.includes('HEX:') ? text : null;
+    }, 'seleção de duas linhas copiada');
+    mark = (await received()).length;
+    await main.evaluate(`[...${terminalOf('smoke-dois')}.querySelectorAll('.terminal-selection-bar > button')].find((button) => button.textContent.trim() === 'Reescrever').click()`);
+    await expectBytes(mark, `\x1b[200~${exact.replace(/\r?\n/g, '\r')}\x1b[201~`, 'Reescrever cola exatamente a seleção');
+    // Ctrl+C com seleção: copia e não interrompe o eco.
+    await dragSelect('smoke-dois', 'ECHO_READY', 'ECHO_READY');
+    await until(() => main.evaluate(`Boolean(${terminalOf('smoke-dois')}.querySelector('.terminal-selection-bar'))`), 'seleção no eco');
+    setClipboard(`Set-Clipboard -Value 'antes'`);
+    mark = (await received()).length;
+    await focusInput('smoke-dois');
+    await key(main, 'c', { code: 'KeyC', windowsVirtualKeyCode: 67, modifiers: 2 });
+    await until(async () => (await clipboardText()) === 'ECHO_READY', 'Ctrl+C com seleção copia');
+    await delay(300);
+    assert.equal(await receivedSince(mark), '', 'Ctrl+C com seleção não envia interrupção');
+    // Sem seleção, o Ctrl+C seguinte volta a ser interrupção.
+    await key(main, 'c', { code: 'KeyC', windowsVirtualKeyCode: 67, modifiers: 2 });
+    await output('ECHO_DONE', second.id);
+    await until(() => main.evaluate(`window.atlasDesktop.getTerminalInputMode(${JSON.stringify(second.id)}).then((mode) => mode?.bracketedPaste === false)`), 'colagem protegida desligada ao sair do eco');
+    console.log('PASS copiar ao selecionar, Ctrl+C/Ctrl+V, arquivos, imagem, arrastar, menu de contexto e barra de seleção');
+  }
 
   await chooseTerminalLayout(main, 'grid');
   await until(() => main.evaluate(`Boolean(${card('smoke-um')} && ${card('smoke-dois')})`), 'grid restores both terminals');
@@ -591,6 +921,559 @@ try {
   assert.equal(Number((await raw(second.id)).match(/PID:(\d+)/g).at(-1).slice(4)), secondPid);
   await focus('smoke-dois');
   console.log('PASS layouts, subtabs por teclado e ocultação com mesmo PID e scrollback');
+
+  // Colunas redimensionáveis: ponteiro 1:1, teclado, encaixes, modos estreitos, PTY e persistência.
+  await native('resize', { width: 1440, height: 900 });
+  await ensurePanels(main);
+  // O passo anterior deixou smoke-dois em Destaque: volta à Grade para achar smoke-um.
+  await chooseTerminalLayout(main, 'grid');
+  await until(() => main.evaluate(`Boolean(${card('smoke-um')})`), 'smoke-um na Grade');
+  await focus('smoke-um');
+  const navSeparator = '.column-resizer[aria-label="Largura de Navegação"]';
+  const panelSeparator = '.column-resizer[aria-label="Largura de Painéis"]';
+  const columnWidth = (column) => main.evaluate(`Math.round(document.querySelector('[data-column-id=${column}]').getBoundingClientRect().width)`);
+  const plain = (text) => text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trimEnd();
+  const ptySize = async (marker) => {
+    await until(async () => plain(await raw(first.id)).endsWith('>'), `prompt antes de ${marker}`);
+    await command(main, input, `Write-Output ('${marker}:' + $Host.UI.RawUI.WindowSize.Width + 'x' + $Host.UI.RawUI.WindowSize.Height)`);
+    return until(async () => (await raw(first.id)).match(new RegExp(`${marker}:(\\d+x\\d+)`))?.[1], marker);
+  };
+  async function drag(selector, dx) {
+    const start = await main.evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x, y: start.y });
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: start.x, y: start.y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 8; step += 1) {
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + dx * step / 8, y: start.y, button: 'left', buttons: 1 });
+      await delay(16);
+    }
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: start.x + dx, y: start.y, button: 'left', buttons: 0, clickCount: 1 });
+    await delay(200);
+  }
+  const doubleClick = (selector) => main.evaluate(`document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+  assert.equal(await main.evaluate(`document.querySelectorAll('.column-resizer[role=separator]').length`), 2, 'uma divisória entre cada par de colunas visíveis');
+  const navStart = await columnWidth('left');
+  const panelStart = await columnWidth('right');
+  assert.deepEqual([navStart, panelStart], [248, 292], 'larguras padrão em 1440px');
+  const sizeBefore = await ptySize('COLS_A');
+  await drag(navSeparator, 120);
+  assert(Math.abs(await columnWidth('left') - (navStart + 120)) <= 1, 'arraste acompanha o ponteiro');
+  assert.equal(await columnWidth('right'), panelStart, 'entre lateral e Terminais, só a lateral muda');
+  const sizeDragged = await ptySize('COLS_B');
+  assert.notEqual(sizeDragged, sizeBefore, `o PTY recebe o tamanho final ao soltar (${sizeBefore} → ${sizeDragged})`);
+  await main.evaluate(`document.querySelector(${JSON.stringify(navSeparator)}).focus()`);
+  await key(main, 'ArrowLeft', { code: 'ArrowLeft', windowsVirtualKeyCode: 37 });
+  const navKeyboard = await columnWidth('left');
+  assert(Math.abs(navKeyboard - (navStart + 104)) <= 1, `seta move 16px: ${navKeyboard}`);
+  assert.equal(await main.evaluate(`document.querySelector(${JSON.stringify(navSeparator)}).getAttribute('aria-valuenow')`), String(navKeyboard));
+  await drag(navSeparator, 160 - navKeyboard);
+  assert.equal(await main.evaluate(`document.querySelector('[data-column-id=left]').dataset.mode`), 'compact');
+  const compactTree = await main.evaluate(`(() => { const item = [...document.querySelectorAll('.tree-session')].find(node => node.innerText.includes('smoke-um')); const small = item.querySelector('.tree-label small'); return { smallDisplay: getComputedStyle(small).display, smallWidth: small.getBoundingClientRect().width, text: item.textContent, title: item.title, count: getComputedStyle(document.querySelector('.tree-project-name small')).display }; })()`);
+  // Revisão: a linha secundária sai da vista, não do leitor de tela (fica no nome do botão).
+  assert(compactTree.smallDisplay !== 'none' && compactTree.smallWidth <= 1, `linha secundária oculta só visualmente na compacta: ${JSON.stringify(compactTree)}`);
+  assert(compactTree.text.includes('PowerShell') && compactTree.text.includes('ativa'), `CLI e estado no nome acessível da compacta: ${compactTree.text}`);
+  await main.call('DOM.enable');
+  await main.call('Accessibility.enable');
+  const compactName = await main.call('Accessibility.getPartialAXTree', { backendNodeId: (await main.call('DOM.describeNode', { objectId: (await main.call('Runtime.evaluate', { expression: `[...document.querySelectorAll('.tree-session')].find(node => node.innerText.includes('smoke-um'))` })).result.objectId })).node.backendNodeId, fetchRelatives: false });
+  const announced = compactName.nodes.find((node) => node.role?.value === 'button')?.name?.value || '';
+  assert(announced.includes('PowerShell') && announced.includes('ativa'), `leitor de tela anuncia CLI e estado na compacta: ${announced}`);
+  assert(compactTree.title.includes('PowerShell') && compactTree.title.includes('ativa') && compactTree.title.includes('feature/revisao'), `title completo na compacta: ${compactTree.title}`);
+  assert.notEqual(compactTree.count, 'none', 'contadores continuam visíveis');
+  await screenshot(main, 'columns-nav-compact');
+  await drag(navSeparator, -60);
+  assert.equal(await columnWidth('left'), 56, 'abaixo de ~130px a Navegação encaixa no trilho de ícones');
+  const rail = await main.evaluate(`(() => { const project = document.querySelector('.rail-project.active'); const sessions = [...document.querySelectorAll('.rail-session')]; return { project: project?.getAttribute('aria-label'), sessions: sessions.map(item => item.getAttribute('aria-label')), hide: document.querySelector('[data-column-id=left] .detach-control')?.getBoundingClientRect().width }; })()`);
+  assert(rail.project?.includes('sessões'), `projeto com selo de sessões: ${rail.project}`);
+  assert(rail.sessions.some((label) => label.includes('smoke-um') && label.includes('PowerShell') &&label.includes('feature/revisao')), `sessões com nome, CLI e worktree: ${rail.sessions}`);
+  assert(rail.hide > 0, 'ocultar a Navegação continua acessível no trilho');
+  await main.evaluate(`document.querySelector('.rail-project.active').focus(); document.querySelector('.rail-project.active').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('#navigation-flyout .tree-worktree')) && document.querySelector('#navigation-flyout').contains(document.activeElement)`), 'flyout com a árvore completa e foco dentro');
+  await until(() => main.evaluate(`document.querySelector('#navigation-flyout').getAnimations().every(item => item.playState === 'finished')`), 'entrada do flyout concluída');
+  await screenshot(main, 'columns-nav-icons');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('#navigation-flyout') && document.activeElement?.classList.contains('rail-project')`), 'Esc fecha o flyout e devolve o foco');
+  const activateFocusedButton = (selector) => main.evaluate(`(() => {
+    const button = document.querySelector(${JSON.stringify(selector)});
+    if (!button) return false;
+    button.focus();
+    if (document.activeElement !== button) return false;
+    button.click();
+    return true;
+  })()`);
+  assert(await activateFocusedButton('.navigation-rail [aria-label="Expandir navegação"]'), 'botão de expansão da Navegação recebe foco e é ativado');
+  await until(() => main.evaluate(`document.activeElement?.matches('[data-column-id="left"]:not([data-mode="icons"]) .column-drag-bar .detach-control')`), 'expandir a Navegação transfere o foco');
+  await doubleClick(navSeparator);
+  await until(async () => (await columnWidth('left')) === navStart, 'duplo clique volta ao padrão');
+  assert.equal(await ptySize('COLS_C'), sizeBefore, 'PTY volta ao tamanho original com a largura padrão');
+  await drag(panelSeparator, panelStart - 280);
+  assert.equal(await main.evaluate(`document.querySelector('[data-column-id=right]').dataset.mode`), 'narrow');
+  const narrowTabs = await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].map(item => ({ icon: getComputedStyle(item.querySelector('.inspector-tab-icon')).display, label: item.querySelector('.inspector-tab-label').getBoundingClientRect().width, name: item.getAttribute('aria-label') }))`);
+  assert(narrowTabs.every((tab) => tab.icon !== 'none' && tab.label <= 1 && tab.name), `abas viram ícones com nome acessível: ${JSON.stringify(narrowTabs)}`);
+  await screenshot(main, 'columns-panels-narrow');
+  await drag(panelSeparator, 120);
+  assert.equal(await columnWidth('right'), 56, 'Painéis abaixo do mínimo viram trilho');
+  assert(await main.evaluate(`Boolean(document.querySelector('[data-column-id=right] .detach-control[aria-label="Ocultar painéis"]'))`), 'ocultar Painéis continua no trilho');
+  await main.evaluate(`document.querySelector('.rail-panel[data-panel=task]').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('#panels-overlay .overlay-inspector .persistent-tasks')) && document.querySelector('#panels-overlay').contains(document.activeElement)`), 'painel sobreposto aos terminais');
+  // A entrada anima opacidade e translateX; mede e captura depois que a animação termina.
+  await until(() => main.evaluate(`document.querySelector('#panels-overlay').getAnimations().every(item => item.playState === 'finished')`), 'entrada do painel concluída');
+  await screenshot(main, 'columns-panels-icons');
+  const overlayBox = await main.evaluate(`(() => { const box = document.querySelector('#panels-overlay').getBoundingClientRect(); const rail = document.querySelector('[data-column-id=right]').getBoundingClientRect(); return { right: box.right, railLeft: rail.left }; })()`);
+  assert(Math.abs(overlayBox.right - overlayBox.railLeft) <= 1, `o painel abre encostado no trilho, sobre os terminais: ${JSON.stringify(overlayBox)}`);
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('#panels-overlay')`), 'Esc fecha o painel sobreposto');
+  assert.deepEqual(await main.evaluate(`JSON.parse(localStorage.getItem('atlas-docks')).widths`), { left: null, right: 56 }, 'larguras salvas em atlas-docks');
+  await main.evaluate(`document.querySelector('.rail-panel[data-panel="task"]').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('#panels-overlay'))`), 'painel aberto para expandir');
+  assert(await activateFocusedButton('#panels-overlay [aria-label="Expandir painéis"]'), 'botão de expansão de Painéis recebe foco e é ativado');
+  await until(() => main.evaluate(`!document.querySelector('#panels-overlay') && document.activeElement?.matches('#atlas-panels .inspector-tabs button.active')`), 'expandir o painel transfere o foco à aba aberta');
+  await doubleClick(panelSeparator);
+  await until(async () => (await columnWidth('right')) === panelStart, 'Painéis voltam ao padrão');
+  await native('resize', { width: 940, height: 700 });
+  await until(() => main.evaluate(`document.querySelector('.cockpit-toolbar').dataset.mode === 'compact'`), 'barra compacta em coluna estreita');
+  const narrowDefaults = { left: await columnWidth('left'), right: await columnWidth('right'), viewport: await main.evaluate('window.innerWidth') };
+  assert(narrowDefaults.left >= 200 && narrowDefaults.right >= 250, `padrões estreitos mantêm Navegação e Painéis completos: ${JSON.stringify(narrowDefaults)}`);
+  await main.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
+  await until(() => main.evaluate(`document.querySelectorAll('#toolbar-overflow-popover :is(button, select)').length === 5`), 'controles no menu ⋯');
+  await screenshot(main, 'columns-terminals-compact');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('#toolbar-overflow-popover') && document.activeElement?.classList.contains('toolbar-overflow-trigger')`), 'Esc fecha o menu ⋯ e devolve o foco');
+  await native('resize', { width: 1440, height: 900 });
+  await drag(navSeparator, 40);
+  await main.evaluate(`document.querySelector('.cockpit').focus()`);
+  await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+  await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette input'))`), 'paleta aberta');
+  // "restaurar layout" também casa com "Restaurar sessões ocultas" (grupo Layout).
+  for (const char of 'layout padrao') await key(main, char, { text: char });
+  await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão selecionado na paleta');
+  await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+  await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'paleta fechada');
+  assert.deepEqual(await main.evaluate(`JSON.parse(localStorage.getItem('atlas-docks')).widths`), { left: null, right: null }, 'Restaurar layout zera as larguras');
+  assert.equal(await columnWidth('left'), navStart);
+  await ensurePanels(main);
+  await focus('smoke-dois');
+  console.log('PASS colunas redimensionáveis: arraste, teclado, encaixes, modos compacto e só ícones, flyouts, PTY e persistência');
+
+  // Terminais redimensionáveis: trilhas compartilhadas na Grade e em Principal + agentes.
+  async function dragBy(selector, dx, dy) {
+    const start = await main.evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x, y: start.y });
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: start.x, y: start.y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 8; step += 1) {
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + dx * step / 8, y: start.y + dy * step / 8, button: 'left', buttons: 1 });
+      await delay(16);
+    }
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: start.x + dx, y: start.y + dy, button: 'left', buttons: 0, clickCount: 1 });
+    await delay(200);
+  }
+  const cardBoxes = () => main.evaluate(`[...document.querySelectorAll('.session-grid .session-card')].map(item => { const rect = item.getBoundingClientRect(); return { name: item.dataset.sessionName, width: Math.round(rect.width), height: Math.round(rect.height), left: Math.round(rect.left), top: Math.round(rect.top) }; })`);
+  const savedTracks = () => main.evaluate(`JSON.parse(localStorage.getItem('atlas-terminal-workspace')).tracks`);
+  const verticalTrack = '.track-resizer.vertical';
+  const horizontalTrack = '.track-resizer.horizontal';
+  await chooseTerminalLayout(main, 'grid');
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await main.evaluate(`(() => { const button = document.querySelector('.workspace-panel-toggle[data-panel=right]'); if (button.getAttribute('aria-expanded') === 'true') button.click(); })()`);
+  await until(() => main.evaluate(`document.querySelectorAll(${JSON.stringify(verticalTrack)}).length === 1 && !document.querySelector(${JSON.stringify(horizontalTrack)})`), 'Grade larga: dois terminais lado a lado com uma divisória vertical');
+  const gridBefore = await cardBoxes();
+  assert(Math.abs(gridBefore[0].width - gridBefore[1].width) <= 2 && gridBefore[0].top === gridBefore[1].top, `trilhas iguais lado a lado: ${JSON.stringify(gridBefore)}`);
+  const trackSizeBefore = await ptySize('TRACK_A');
+  await dragBy(verticalTrack, 200, 0);
+  const gridDragged = await cardBoxes();
+  assert(Math.abs(gridDragged[0].width - (gridBefore[0].width + 200)) <= 2 && Math.abs(gridDragged[1].width - (gridBefore[1].width - 200)) <= 2, `fronteira acompanha o ponteiro: ${JSON.stringify(gridDragged)}`);
+  assert(gridDragged[1].left - (gridDragged[0].left + gridDragged[0].width) <= 1, 'terminais continuam contíguos');
+  assert.notEqual(await ptySize('TRACK_B'), trackSizeBefore, 'PTY recebe o tamanho final ao soltar a divisória');
+  await dragBy(verticalTrack, 4000, 0);
+  const gridLimit = await cardBoxes();
+  assert(gridLimit[1].width >= 318, `mínimo de ~40 colunas no terminal que cede: ${JSON.stringify(gridLimit)}`);
+  assert.equal(Object.keys((await savedTracks()).grid || {}).join(), '2x1', 'tamanhos salvos por layout e forma');
+  await main.evaluate(`document.querySelector(${JSON.stringify(verticalTrack)}).focus()`);
+  await key(main, 'ArrowLeft', { code: 'ArrowLeft', windowsVirtualKeyCode: 37 });
+  const gridKeyboard = await cardBoxes();
+  assert(Math.abs(gridKeyboard[0].width - (gridLimit[0].width - 16)) <= 2, `seta move a fronteira 16px: ${JSON.stringify(gridKeyboard)}`);
+  assert.equal(await main.evaluate(`document.querySelector(${JSON.stringify(verticalTrack)}).getAttribute('aria-valuenow')`), String(gridKeyboard[0].width));
+  await screenshot(main, 'tracks-grid');
+  // Ocultar um terminal muda a forma; restaurar devolve os tamanhos salvos daquela forma.
+  // A proporção salva vale enquanto as duas trilhas puderem respeitar o mínimo.
+  const share = (boxes) => boxes[0].width / (boxes[0].width + boxes[1].width);
+  const savedGrid = (await savedTracks()).grid['2x1'];
+  const fitsSavedGrid = async () => {
+    const boxes = await cardBoxes();
+    if (boxes.length !== 2) return false;
+    const width = await main.evaluate("document.querySelector('.session-grid').clientWidth");
+    const firstWidth = Math.max(320, Math.min(width - 320, width * share(gridKeyboard)));
+    return Math.abs(boxes[0].width - firstWidth) <= 2 && boxes.every((box) => box.width >= 318);
+  };
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await until(fitsSavedGrid, 'ao mostrar a Navegação, as trilhas mantêm o mínimo');
+  assert.deepEqual((await savedTracks()).grid['2x1'], savedGrid, 'janela estreita preserva a proporção salva');
+  await sessionAction(main, card('smoke-dois'), 'hide');
+  await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 1 && !document.querySelector('.track-resizer')`), 'um terminal: sem divisórias e ocupando tudo');
+  await main.evaluate(`[...document.querySelectorAll('.tree-session')].find(item => item.dataset.state === 'oculta' && item.innerText.includes('smoke-dois')).click()`);
+  await until(() => main.evaluate(`document.querySelectorAll('.session-grid .session-card').length === 2`), 'terminal restaurado');
+  await until(fitsSavedGrid, 'forma 2x1 volta com os tamanhos salvos e o mínimo');
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await until(async () => Math.abs(share(await cardBoxes()) - share(gridKeyboard)) < 0.01, 'a proporção volta quando há espaço');
+  await click(main, '.workspace-panel-toggle[data-panel=left]');
+  await until(fitsSavedGrid, 'Grade volta a respeitar o mínimo ao mostrar a Navegação');
+  await main.evaluate(`document.querySelector(${JSON.stringify(verticalTrack)}).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+  await until(async () => { const boxes = await cardBoxes(); return Math.abs(boxes[0].width - boxes[1].width) <= 2; }, 'duplo clique divide igualmente');
+  // Linhas: com Navegação e Painéis visíveis em 1180px, a Grade empilha os terminais.
+  await ensurePanels(main);
+  await native('resize', { width: 1180, height: 780 });
+  // Espera o layout de 1180px assentar (em 1440px a Grade já estava empilhada).
+  await until(async () => (await columnWidth('left')) === 220 && (await columnWidth('right')) === 260, 'colunas no padrão de 1180px');
+  await until(() => main.evaluate(`document.querySelectorAll(${JSON.stringify(horizontalTrack)}).length === 1 && !document.querySelector(${JSON.stringify(verticalTrack)})`), 'Grade estreita: terminais empilhados com divisória horizontal');
+  await until(async () => { const boxes = await cardBoxes(); return boxes[0].width === (await main.evaluate(`document.querySelector('.session-grid').clientWidth`)) && Math.abs(boxes[1].top - (boxes[0].top + boxes[0].height)) <= 1; }, 'Grade assentada em 1180px');
+  const rowsBefore = await cardBoxes();
+  await dragBy(horizontalTrack, 0, 80);
+  const rowsDragged = await cardBoxes();
+  const rowsGrid = await main.evaluate(`(() => { const grid = document.querySelector('.session-grid'); const separator = document.querySelector(${JSON.stringify(horizontalTrack)}).getBoundingClientRect(); return { height: grid.clientHeight, rows: getComputedStyle(grid).gridTemplateRows, separatorTop: separator.top }; })()`);
+  assert(Math.abs(rowsDragged[0].height - (rowsBefore[0].height + 80)) <= 2 && Math.abs(rowsDragged[1].top - (rowsDragged[0].top + rowsDragged[0].height)) <= 1, `linhas acompanham o ponteiro e se tocam: ${JSON.stringify({ rowsBefore, rowsDragged, rowsGrid })}`);
+  await dragBy(horizontalTrack, 0, 4000);
+  assert((await cardBoxes())[1].height >= 168, 'mínimo de ~8 linhas no terminal que cede');
+  // Principal + agentes: divisória entre o principal e a pilha.
+  await native('resize', { width: 1440, height: 900 });
+  await click(main, '.workspace-panel-toggle[data-panel=right]');
+  await chooseTerminalLayout(main, 'sidebar');
+  await until(() => main.evaluate(`document.querySelectorAll(${JSON.stringify(verticalTrack)}).length === 1`), 'divisória entre o principal e os agentes');
+  assert.equal(await main.evaluate(`document.querySelector(${JSON.stringify(verticalTrack)}).getAttribute('aria-label')`), 'Divisão entre a principal e os agentes');
+  const sidebarBefore = await cardBoxes();
+  assert(sidebarBefore[0].width > sidebarBefore[1].width * 1.8, `principal começa com ~2/3: ${JSON.stringify(sidebarBefore)}`);
+  await dragBy(verticalTrack, -150, 0);
+  const sidebarDragged = await cardBoxes();
+  assert(Math.abs(sidebarDragged[0].width - (sidebarBefore[0].width - 150)) <= 2, `principal cede para a pilha: ${JSON.stringify(sidebarDragged)}`);
+  assert((await savedTracks()).sidebar?.stack1, 'Principal + agentes salvo à parte');
+  await screenshot(main, 'tracks-sidebar');
+  for (const layout of ['spotlight', 'tabs']) {
+    await chooseTerminalLayout(main, layout);
+    assert.equal(await main.evaluate(`document.querySelectorAll('.track-resizer').length`), 0, `${layout} não tem divisórias`);
+  }
+  await chooseTerminalLayout(main, 'sidebar');
+  await until(async () => Math.abs((await cardBoxes())[0].width - sidebarDragged[0].width) <= 2, 'tamanhos de Principal + agentes preservados ao voltar');
+  await main.evaluate(`document.querySelector('.cockpit').focus()`);
+  await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+  await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette input'))`), 'paleta aberta');
+  for (const char of 'layout padrao') await key(main, char, { text: char });
+  await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão selecionado na paleta');
+  await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+  await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'paleta fechada');
+  assert.deepEqual(await savedTracks(), {}, 'Restaurar layout zera os tamanhos dos terminais');
+  await ensurePanels(main);
+  await focus('smoke-dois');
+  console.log('PASS terminais redimensionáveis: Grade em colunas e linhas, Principal + agentes, mínimos, teclado, reajuste ao ocultar, PTY e persistência');
+
+  // Lacunas do layout: Grade com 3 colunas, pilha de agentes, laterais vizinhas reordenadas,
+  // throttle do PTY no arraste e contraste/foco no tema claro e em forced-colors.
+  {
+    const third = await createTerminal('smoke-tres');
+    const ptyOf = { 'smoke-um': first.id, 'smoke-dois': second.id, 'smoke-tres': third.id };
+    await native('resize', { width: 1440, height: 900 });
+    await chooseTerminalLayout(main, 'grid');
+    const setColumn = async (panel, visible) => {
+      const shown = () => main.evaluate(`Boolean(document.querySelector('[data-column-id=${panel}]'))`);
+      if ((await shown()) !== visible) await click(main, `.workspace-panel-toggle[data-panel=${panel}]`);
+      await until(async () => (await shown()) === visible, `${panel} ${visible ? 'visível' : 'oculta'}`);
+    };
+    // Arraste lento (30ms por passo), para medir quantos resizes o PTY recebe enquanto dura.
+    async function slowDrag(selector, dx, dy, steps = 24, pause = 30) {
+      const start = await main.evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...start });
+      await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...start, button: 'left', buttons: 1, clickCount: 1 });
+      const began = Date.now();
+      for (let step = 1; step <= steps; step += 1) {
+        await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + dx * step / steps, y: start.y + dy * step / steps, button: 'left', buttons: 1 });
+        await delay(pause);
+      }
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: start.x + dx, y: start.y + dy, button: 'left', buttons: 0, clickCount: 1 });
+      const elapsed = Date.now() - began;
+      await delay(400);
+      return elapsed;
+    }
+
+    // 1. Três colunas: a Grade decide pela largura do contêiner (3 x 560px). A tela de quem roda o
+    // teste pode não caber 1800px; a emulação de viewport dá a largura sem depender do monitor.
+    await setColumn('left', false);
+    await setColumn('right', false);
+    await main.call('Emulation.setDeviceMetricsOverride', { width: 1800, height: 900, deviceScaleFactor: 1, mobile: false });
+    try {
+      await until(() => main.evaluate(`document.querySelector('.session-grid').clientWidth >= 1680 && document.querySelectorAll('.track-resizer.vertical').length === 2`), 'Grade com 3 colunas a partir de 1680px');
+      const three = await cardBoxes();
+      assert.equal(three.length, 3, 'três terminais na Grade');
+      assert(three.every((box) => Math.abs(box.top - three[0].top) <= 1), `três colunas na mesma linha: ${JSON.stringify(three)}`);
+      assert(Math.max(...three.map((box) => box.width)) - Math.min(...three.map((box) => box.width)) <= 2, `colunas iguais: ${JSON.stringify(three)}`);
+      // 4. Throttle: durante o arraste, cada PTY recebe no máximo um resize a cada 120ms (mais o
+      // final ao soltar); sem throttle seriam ~24, um por passo.
+      const boundary = '.track-resizer[aria-label="Divisão entre as colunas de terminais 2 e 3"]';
+      const before = await native('resize-counts');
+      const elapsed = await slowDrag(boundary, -150, 0);
+      const after = await native('resize-counts');
+      const dragged = await cardBoxes();
+      assert(Math.abs(dragged[0].width - three[0].width) <= 2, `a primeira coluna não muda: ${JSON.stringify(dragged)}`);
+      assert(Math.abs(dragged[1].width - (three[1].width - 150)) <= 2 && Math.abs(dragged[2].width - (three[2].width + 150)) <= 2, `a fronteira 2|3 acompanha o ponteiro: ${JSON.stringify(dragged)}`);
+      assert(Object.keys((await savedTracks()).grid || {}).includes('3x1'), 'forma 3x1 salva');
+      const delta = (name) => (after[ptyOf[name]] || 0) - (before[ptyOf[name]] || 0);
+      const ceiling = Math.ceil(elapsed / 120) + 2;
+      assert.equal(delta(three[0].name), 0, 'o terminal que não mudou de largura não recebe resize');
+      for (const box of three.slice(1)) {
+        const count = delta(box.name);
+        assert(count >= 1 && count <= ceiling && count < 24, `throttle em ${box.name}: ${count} resizes em ${elapsed}ms (teto ${ceiling})`);
+      }
+      console.log(`  resizes do PTY no arraste de ${elapsed}ms: ${three.slice(1).map((box) => `${box.name}=${delta(box.name)}`).join(', ')} (teto ${ceiling})`);
+      await screenshot(main, 'tracks-grid-3');
+    } finally {
+      await main.call('Emulation.clearDeviceMetricsOverride');
+    }
+
+    // 2. Principal + agentes com três terminais: divisória entre os agentes empilhados.
+    await chooseTerminalLayout(main, 'sidebar');
+    const agentsBoundary = '.track-resizer[aria-label="Divisão entre os agentes 1 e 2"]';
+    await until(() => main.evaluate(`document.querySelectorAll('.track-resizer.horizontal').length === 1 && document.querySelectorAll('.track-resizer.vertical').length === 1 && Boolean(document.querySelector(${JSON.stringify(agentsBoundary)}))`), 'pilha de dois agentes com divisória');
+    const split = (boxes) => {
+      const principal = boxes.reduce((wide, box) => (box.width > wide.width ? box : wide));
+      return { principal, agents: boxes.filter((box) => box !== principal).sort((a, b) => a.top - b.top) };
+    };
+    const stackBefore = split(await cardBoxes());
+    assert(Math.abs(stackBefore.agents[1].top - (stackBefore.agents[0].top + stackBefore.agents[0].height)) <= 1, `agentes empilhados e contíguos: ${JSON.stringify(stackBefore)}`);
+    await dragBy(agentsBoundary, 0, 70);
+    const stackDragged = split(await cardBoxes());
+    assert(Math.abs(stackDragged.agents[0].height - (stackBefore.agents[0].height + 70)) <= 2 && Math.abs(stackDragged.agents[1].height - (stackBefore.agents[1].height - 70)) <= 2, `a divisória entre agentes acompanha o ponteiro: ${JSON.stringify({ stackBefore, stackDragged })}`);
+    assert(Math.abs(stackDragged.principal.height - stackBefore.principal.height) <= 1 && Math.abs(stackDragged.principal.width - stackBefore.principal.width) <= 1, 'a principal não muda');
+    assert(Math.abs(stackDragged.agents[1].top - (stackDragged.agents[0].top + stackDragged.agents[0].height)) <= 1, 'agentes continuam contíguos');
+    assert((await savedTracks()).sidebar?.stack2?.rows, 'pilha de dois agentes salva à parte');
+    await main.evaluate(`document.querySelector(${JSON.stringify(agentsBoundary)}).focus()`);
+    await key(main, 'ArrowUp', { code: 'ArrowUp', windowsVirtualKeyCode: 38 });
+    const stackKeyboard = split(await cardBoxes());
+    assert(Math.abs(stackKeyboard.agents[0].height - (stackDragged.agents[0].height - 16)) <= 2, `seta para cima move a divisória 16px: ${JSON.stringify(stackKeyboard)}`);
+    await screenshot(main, 'tracks-sidebar-stack');
+    // Integração: arrastar para selecionar texto no agente estreito não promove o terminal.
+    await setColumn('left', true);
+    let settledBoxes = null;
+    await until(async () => {
+      const boxes = JSON.stringify(await cardBoxes());
+      const stable = boxes === settledBoxes;
+      settledBoxes = boxes;
+      if (!stable) await delay(300);
+      return stable;
+    }, 'layout assentado com a Navegação');
+    const narrowName = split(JSON.parse(settledBoxes)).agents.reduce((thin, box) => (box.width < thin.width ? box : thin)).name;
+    const narrowShell = `${card(narrowName)}.querySelector('.terminal-view-shell')`;
+    assert(await main.evaluate(`${narrowShell}.getBoundingClientRect().width <= 480`), `agente empilhado estreito: ${settledBoxes}`);
+    const narrowId = ptyOf[narrowName];
+    const marker = 'ATLAS_STACK_SELECT';
+    const lead = split(JSON.parse(settledBoxes)).principal.name;
+    await command(main, `.session-card[data-session-name=${JSON.stringify(narrowName)}] .xterm-helper-textarea`, `Write-Output ('ATLAS_' + 'STACK_SELECT')`);
+    await output(marker, narrowId);
+    await until(() => main.evaluate(`[...${card(narrowName)}.querySelectorAll('.xterm-rows > div')].some((line) => line.textContent.includes(${JSON.stringify(marker)}))`), 'texto visível no agente empilhado');
+    {
+      await dragSelect(narrowName, marker, marker, narrowId, true);
+      await until(async () => (await native('invoke', { channel: 'clipboard:read-paste' })).text === marker, 'seleção com mouse copiada no terminal estreito');
+      assert.equal(split(await cardBoxes()).principal.name, lead, 'selecionar texto não promove o terminal empilhado');
+      const narrowLayout = await until(() => main.evaluate(`(() => {
+        const shell = ${narrowShell};
+        const bar = shell.querySelector('.terminal-selection-bar');
+        const notice = shell.querySelector('.terminal-notice');
+        if (!bar || !notice || getComputedStyle(bar).visibility === 'hidden') return null;
+        const box = (element) => element.getBoundingClientRect();
+        const inside = (element) => box(element).left >= box(shell).left - 0.5 && box(element).right <= box(shell).right + 0.5 && box(element).top >= box(shell).top - 0.5 && box(element).bottom <= box(shell).bottom + 0.5;
+        return {
+          shellWidth: Math.round(box(shell).width),
+          barInside: inside(bar),
+          noticeInside: inside(notice),
+          labelsHidden: [...bar.querySelectorAll(':scope > button > span')].every((span) => span.getBoundingClientRect().width <= 1),
+          names: [...bar.querySelectorAll(':scope > button')].map((button) => button.textContent.trim()),
+        };
+      })()`), 'barra e aviso no terminal estreito', 4000);
+      assert(narrowLayout.barInside && narrowLayout.noticeInside, `barra e aviso dentro do terminal estreito: ${JSON.stringify(narrowLayout)}`);
+      assert(narrowLayout.labelsHidden, `terminal estreito mostra só os ícones: ${JSON.stringify(narrowLayout)}`);
+      assert.deepEqual(narrowLayout.names, ['Responder', 'Reescrever', 'Colar em outra sessão'], 'os nomes continuam acessíveis');
+      await screenshot(main, 'selection-bar-narrow');
+    }
+    await main.call('Emulation.clearDeviceMetricsOverride');
+
+    // 3. Laterais vizinhas: Painéis arrastados para antes dos Terminais ficam ao lado da Navegação,
+    // e a divisória entre as duas troca largura entre elas sem mexer nos Terminais.
+    await chooseTerminalLayout(main, 'grid');
+    await setColumn('left', true);
+    await setColumn('right', true);
+    const grip = await main.evaluate(`(() => { const bar = document.querySelector('[data-column-id=right] .column-drag-bar').getBoundingClientRect(); const center = document.querySelector('[data-column-id=center]').getBoundingClientRect(); return { from: { x: bar.left + bar.width / 2, y: bar.top + bar.height / 2 }, to: { x: center.left + 40, y: center.top + center.height / 2 } }; })()`);
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...grip.from });
+    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...grip.from, button: 'left', buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 12; step += 1) {
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: grip.from.x + (grip.to.x - grip.from.x) * step / 12, y: grip.from.y + (grip.to.y - grip.from.y) * step / 12, button: 'left', buttons: 1 });
+      await delay(20);
+    }
+    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...grip.to, button: 'left', buttons: 0, clickCount: 1 });
+    const domOrder = () => main.evaluate(`[...document.querySelectorAll('.workspace-body [data-column-id]')].sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left).map((item) => item.dataset.columnId)`);
+    await until(async () => JSON.stringify(await domOrder()) === JSON.stringify(['left', 'right', 'center']), 'Painéis reordenados para junto da Navegação');
+    assert.deepEqual(await main.evaluate(`JSON.parse(localStorage.getItem('atlas-docks')).order`), ['left', 'right', 'center'], 'ordem salva');
+    const neighbors = '.column-resizer[aria-label="Divisão entre Navegação e Painéis"]';
+    await until(() => main.evaluate(`Boolean(document.querySelector(${JSON.stringify(neighbors)}))`), 'divisória entre as duas laterais');
+    // Revisão: o DOM (e o Tab) segue a ordem da tela, não a do CSS `order`.
+    const domSequence = await main.evaluate(`[...document.querySelectorAll('.workspace-body > [data-column-id], .workspace-body > .column-resizer')].map((item) => ({ id: item.dataset.columnId || item.getAttribute('aria-label'), left: Math.round(item.getBoundingClientRect().left) }))`);
+    assert.deepEqual(domSequence.map((item) => item.id), ['left', 'Divisão entre Navegação e Painéis', 'right', 'Largura de Painéis', 'center'], `colunas e divisórias no DOM na ordem da tela: ${JSON.stringify(domSequence)}`);
+    assert(domSequence.every((item, index) => index === 0 || item.left >= domSequence[index - 1].left), `posições crescentes na ordem do DOM: ${JSON.stringify(domSequence)}`);
+    await main.evaluate(`document.querySelector(${JSON.stringify(neighbors)}).focus()`);
+    await key(main, 'Tab', { code: 'Tab', windowsVirtualKeyCode: 9 });
+    assert(await main.evaluate(`Boolean(document.activeElement?.closest('[data-column-id=right]'))`), 'Tab depois da divisória entre as laterais vai para Painéis, que estão à direita dela');
+    const widths = async () => ({ left: await columnWidth('left'), right: await columnWidth('right'), center: await columnWidth('center') });
+    const sidesBefore = await widths();
+    await dragBy(neighbors, -40, 0);
+    const sidesDragged = await widths();
+    assert(Math.abs(sidesDragged.left - (sidesBefore.left - 40)) <= 1 && Math.abs(sidesDragged.right - (sidesBefore.right + 40)) <= 1, `uma lateral cede para a outra: ${JSON.stringify({ sidesBefore, sidesDragged })}`);
+    assert(Math.abs(sidesDragged.center - sidesBefore.center) <= 1, 'Terminais ficam como estão');
+    await main.evaluate(`document.querySelector(${JSON.stringify(neighbors)}).focus()`);
+    await key(main, 'ArrowRight', { code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    const sidesKeyboard = await widths();
+    assert(Math.abs(sidesKeyboard.left - (sidesDragged.left + 16)) <= 1 && Math.abs(sidesKeyboard.right - (sidesDragged.right - 16)) <= 1 && Math.abs(sidesKeyboard.center - sidesDragged.center) <= 1, `teclado troca 16px entre as laterais: ${JSON.stringify(sidesKeyboard)}`);
+    await screenshot(main, 'columns-neighbors');
+
+    // 5. Contraste e foco visível em trilhos, flyouts e menu ⋯: tema claro e forced-colors.
+    await click(main, appearance);
+    await click(main, '.background-presets button', 'Névoa');
+    await click(main, '.appearance-content footer button', 'Concluir');
+    await until(() => main.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#eef1f4'`), 'tema claro');
+    const shrinkTo = async (column, separator) => {
+      const width = await columnWidth(column);
+      await drag(separator, column === 'left' ? 90 - width : width - 90);
+      await until(async () => (await columnWidth(column)) === 56, `${column} no trilho`);
+    };
+    const navToRail = '.column-resizer[aria-label="Largura de Navegação"], .column-resizer[aria-label="Divisão entre Navegação e Painéis"]';
+    // Volta à ordem padrão antes dos trilhos: cada lateral encosta nos Terminais.
+    await main.evaluate(`document.querySelector('.cockpit').focus()`);
+    await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+    await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette input'))`), 'paleta aberta');
+    for (const char of 'layout padrao') await key(main, char, { text: char });
+    await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão');
+    await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+    // O layout padrão também oculta Painéis: a ordem confere pelo que foi salvo.
+    await until(() => main.evaluate(`JSON.stringify(JSON.parse(localStorage.getItem('atlas-docks')).order) === '["left","center","right"]'`), 'ordem padrão de volta');
+    await ensurePanels(main);
+    await until(async () => JSON.stringify(await domOrder()) === JSON.stringify(['left', 'center', 'right']), 'Painéis de volta à direita');
+    assert(await main.evaluate(`!document.querySelector(${JSON.stringify(navToRail.split(', ')[1])})`), 'sem laterais vizinhas, sem divisória entre elas');
+    await shrinkTo('left', navSeparator);
+    await shrinkTo('right', panelSeparator);
+    const scoped = (root) => main.evaluate(`(${auditInterface.toString()})(${root})`);
+    const glyphs = (selector) => main.evaluate(`(${auditGlyphs.toString()})(${JSON.stringify(selector)})`);
+    // Foco pelo teclado: uma tecla antes faz o Chromium tratar o foco programático como de teclado
+    // (:focus-visible). Mede depois da transição de 150ms do indicador das divisórias.
+    const keyboardFocus = async (expression) => {
+      await key(main, 'Shift', { code: 'ShiftLeft', windowsVirtualKeyCode: 16 });
+      const measured = await main.evaluate(`new Promise((resolve) => {
+        const element = ${expression};
+        if (!element) return resolve({ kind: 'missing' });
+        element.focus();
+        setTimeout(() => {
+          const active = document.activeElement;
+          const indicator = (${focusIndicator.toString()})(element);
+          resolve(active === element ? indicator : { ...indicator, movedTo: active ? active.tagName + '.' + String(active.className).replaceAll(' ', '.') : 'nada' });
+        }, 250);
+      })`);
+      assert(!measured.movedTo, `o foco ficou em ${expression}: ${JSON.stringify(measured)}`);
+      return measured;
+    };
+    // Coluna de Terminais estreita (menu ⋯): a janela não desce de 940px, então a largura vem da
+    // emulação de viewport.
+    const narrowViewport = () => main.call('Emulation.setDeviceMetricsOverride', { width: 640, height: 700, deviceScaleFactor: 1, mobile: false });
+    const focusTargets = {
+      'trilho de Navegação': `document.querySelector('.navigation-rail .rail-project')`,
+      'trilho de Painéis': `document.querySelector('.panels-rail .rail-panel')`,
+      'divisória de coluna': `document.querySelector(${JSON.stringify(navSeparator)})`,
+      'divisória de terminais': `document.querySelector('.track-resizer')`,
+    };
+    const checkFocus = async (scheme) => {
+      for (const [label, expression] of Object.entries(focusTargets)) {
+        const indicator = await keyboardFocus(expression);
+        assert(indicator.kind !== 'none' && indicator.ratio >= 3, `${scheme}: foco visível em ${label}: ${JSON.stringify(indicator)}`);
+      }
+    };
+    const checkContrast = async (scheme) => {
+      const glyphFindings = await glyphs('.navigation-rail .rail-button, .panels-rail .rail-button, .toolbar-overflow-trigger');
+      assert.deepEqual(glyphFindings, [], `${scheme}: ícones dos trilhos com 3:1`);
+      for (const root of [`document.querySelector('[data-column-id=left]')`, `document.querySelector('[data-column-id=right]')`]) {
+        assert.deepEqual(await scoped(root), [], `${scheme}: texto dos trilhos com 4.5:1`);
+      }
+    };
+    await checkContrast('tema claro');
+    await checkFocus('tema claro');
+    // Flyout da Navegação: conteúdo legível e foco visível dentro dele.
+    await main.evaluate(`document.querySelector('.rail-project.active').click()`);
+    await until(() => main.evaluate(`Boolean(document.querySelector('#navigation-flyout')) && document.querySelector('#navigation-flyout').getAnimations().every((item) => item.playState === 'finished')`), 'flyout aberto');
+    // O flyout repete a árvore da Navegação, cujas linhas secundárias usam 9px desde antes (estilo da
+    // árvore na main): aqui conta o contraste; o tamanho fica registrado para o mantenedor decidir.
+    const flyoutFindings = await scoped(`document.querySelector('#navigation-flyout')`);
+    assert.deepEqual(flyoutFindings.filter((item) => item.ratio < 4.5), [], 'tema claro: texto do flyout com 4.5:1');
+    const smallText = flyoutFindings.filter((item) => item.ratio >= 4.5);
+    if (smallText.length) console.log(`  flyout: ${smallText.length} textos abaixo de 10px (árvore da Navegação, 9px), contraste ≥ ${Math.min(...smallText.map((item) => item.ratio))}:1`);
+    const flyoutFocus = await keyboardFocus(`document.querySelector('#navigation-flyout :is(button, [tabindex="0"], a[href])')`);
+    assert(flyoutFocus.kind !== 'none' && flyoutFocus.ratio >= 3, `tema claro: foco visível no flyout: ${JSON.stringify(flyoutFocus)}`);
+    await screenshot(main, 'rails-light-flyout');
+    // Revisão: com o foco dentro do flyout, o resize fecha o painel e o foco vai para um destino
+    // seguro (o botão de origem ou a área dos terminais), nunca para o body.
+    await native('resize', { width: 1400, height: 900 });
+    await until(() => main.evaluate(`!document.querySelector('#navigation-flyout')`), 'resize fecha o flyout');
+    const afterResize = await until(() => main.evaluate(`(() => { const active = document.activeElement; if (!active || active === document.body) return null; return { rail: active.classList.contains('rail-project'), workspace: active.id === 'terminal-workspace' }; })()`), 'foco num destino seguro depois do resize');
+    assert(afterResize.rail || afterResize.workspace, `foco no botão do trilho ou na área dos terminais: ${JSON.stringify(afterResize)}`);
+    await native('resize', { width: 1440, height: 900 });
+    // Menu ⋯ na coluna de Terminais estreita.
+    await native('resize', { width: 940, height: 700 }); await doubleClick(navSeparator); await doubleClick(panelSeparator);
+    await until(() => main.evaluate(`document.querySelector('.cockpit-toolbar')?.dataset.mode === 'compact' && Boolean(document.querySelector('.toolbar-overflow-trigger'))`), 'barra compacta com menu ⋯');
+    const triggerFocus = await keyboardFocus(`document.querySelector('.toolbar-overflow-trigger')`);
+    assert(triggerFocus.kind !== 'none' && triggerFocus.ratio >= 3, `tema claro: foco visível no gatilho ⋯: ${JSON.stringify(triggerFocus)}`);
+    await main.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
+    await until(() => main.evaluate(`Boolean(document.querySelector('#toolbar-overflow-popover'))`), 'menu ⋯ aberto');
+    assert.deepEqual(await scoped(`document.querySelector('#toolbar-overflow-popover')`), [], 'tema claro: texto do menu ⋯ com 4.5:1');
+    const menuFocus = await keyboardFocus(`document.querySelector('#toolbar-overflow-popover .session-menu-item')`);
+    assert(menuFocus.kind !== 'none' && menuFocus.ratio >= 3, `tema claro: foco visível no menu ⋯: ${JSON.stringify(menuFocus)}`);
+    await screenshot(main, 'overflow-menu-light');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    await native('resize', { width: 1440, height: 900 });
+    // Espera o layout de 1440px assentar (larguras padrão, depois do duplo clique em 940px).
+    await until(async () => (await columnWidth('left')) === 248 && (await columnWidth('right')) === 292, 'larguras padrão em 1440px');
+    await shrinkTo('left', navSeparator);
+    await shrinkTo('right', panelSeparator);
+    // forced-colors (Alto Contraste do Windows): indicadores com cores do sistema.
+    await main.call('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
+    try {
+      await until(() => main.evaluate(`matchMedia('(forced-colors: active)').matches`), 'forced-colors ativo');
+      await until(async () => (await columnWidth('left')) === 56 && (await columnWidth('right')) === 56, 'trilhos mantidos em 1440px');
+      await checkFocus('forced-colors');
+      assert.deepEqual(await glyphs('.navigation-rail .rail-button, .panels-rail .rail-button'), [], 'forced-colors: ícones dos trilhos com 3:1');
+      await screenshot(main, 'rails-forced-colors');
+      await native('resize', { width: 940, height: 700 }); await doubleClick(navSeparator); await doubleClick(panelSeparator);
+      await until(() => main.evaluate(`Boolean(document.querySelector('.toolbar-overflow-trigger'))`), 'menu ⋯ em forced-colors');
+      await main.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
+      await until(() => main.evaluate(`Boolean(document.querySelector('#toolbar-overflow-popover'))`), 'menu ⋯ aberto em forced-colors');
+      const forcedMenu = await keyboardFocus(`document.querySelector('#toolbar-overflow-popover .session-menu-item')`);
+      assert(forcedMenu.kind !== 'none' && forcedMenu.ratio >= 3, `forced-colors: foco visível no menu ⋯: ${JSON.stringify(forcedMenu)}`);
+      await screenshot(main, 'overflow-menu-forced-colors');
+      await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    } finally {
+      await main.call('Emulation.setEmulatedMedia', { features: [] });
+      await main.call('Emulation.clearDeviceMetricsOverride');
+      await native('resize', { width: 1440, height: 900 });
+    }
+    console.log('PASS lacunas do layout: Grade com 3 colunas, pilha de agentes, laterais vizinhas, throttle do PTY e contraste/foco em tema claro e forced-colors');
+
+    // Volta ao estado que o restante do roteiro espera: tema escuro, layout padrão, dois terminais.
+    await click(main, appearance);
+    await click(main, '.background-presets button', 'Obsidiana');
+    await click(main, '.appearance-content footer button', 'Concluir');
+    await main.evaluate(`document.querySelector('.cockpit').focus()`);
+    await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+    await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette input'))`), 'paleta aberta');
+    for (const char of 'layout padrao') await key(main, char, { text: char });
+    await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão');
+    await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+    await until(async () => (await columnWidth('left')) === 248, 'larguras padrão de volta');
+    await chooseTerminalLayout(main, 'grid');
+    await sessionAction(main, card('smoke-tres'), 'stop');
+    await click(main, '.modal form button[type=submit]', 'Encerrar');
+    await until(() => main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(third.id)}).then((item) => Boolean(item.exit))`), 'smoke-tres encerrado');
+    await sessionAction(main, card('smoke-tres'), 'remove');
+    await click(main, '.modal form button[type=submit]', 'Excluir');
+    await until(() => main.evaluate(`!(${card('smoke-tres')})`), 'smoke-tres excluído');
+    await ensurePanels(main);
+    await focus('smoke-dois');
+  }
 
   // Paleta de comandos: abre com o foco dentro do terminal (o xterm não pode engolir o atalho),
   // filtra, leva ao terminal escolhido e fecha com Esc.
@@ -1201,16 +2084,25 @@ try {
   await native('resize', { width: 940, height: 700 });
   await delay(250);
   const canHideNavigationAtMinimumWidth = await main.evaluate(`document.querySelector('[data-column-id=left] .detach-control').getBoundingClientRect().width > 0`);
-  const visibleGlyphs = await main.evaluate(`['.palette-trigger svg', '.workspace-layout-control svg'].map(selector => document.querySelector(selector)?.getBoundingClientRect().width)`);
+  // Coluna de Terminais estreita: os controles de visualização ficam no menu ⋯.
+  const visibleGlyphs = await main.evaluate(`['.palette-trigger svg', document.querySelector('.toolbar-overflow-trigger') ? '.toolbar-overflow-trigger svg' : '.workspace-layout-control svg'].map(selector => document.querySelector(selector)?.getBoundingClientRect().width)`);
   const panelSeams = await main.evaluate(`[
     ['.sidebar', 'borderRightWidth'], ['.inspector.dock-right', 'borderLeftWidth'],
     ['.cockpit-toolbar', 'borderBottomWidth'], ['.inspector-dockbar', 'borderBottomWidth'],
     ...[...document.querySelectorAll('.workspace-body .column-drag-bar')].map(item => [item, 'borderBottomWidth'])
   ].map(([target, property]) => getComputedStyle(typeof target === 'string' ? document.querySelector(target) : target)[property])`);
-  const reachableControls = await main.evaluate(`[...document.querySelectorAll('.toolbar-actions :is(button, select)')].filter(item => {
+  const reachable = (scope) => main.evaluate(`[...document.querySelectorAll(${JSON.stringify(`${scope} :is(button, select)`)})].filter(item => {
     const { left, top, width, height } = item.getBoundingClientRect();
     return width >= 24 && height >= 24 && item.contains(document.elementFromPoint(left + width / 2, top + height / 2));
   }).length`);
+  let reachableControls = await reachable('.toolbar-actions');
+  if (await main.evaluate(`Boolean(document.querySelector('.toolbar-overflow-trigger'))`)) {
+    await main.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
+    await until(() => main.evaluate(`Boolean(document.querySelector('#toolbar-overflow-popover'))`), 'menu ⋯ aberto');
+    // O gatilho do menu não é um controle da barra completa: conta o que ele guarda.
+    reachableControls = reachableControls - 1 + await reachable('#toolbar-overflow-popover');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  }
   await screenshot(main, 'cockpit-compact');
   await native('resize', { width: 1440, height: 900 });
   await chooseTerminalLayout(main, 'grid');
@@ -1247,10 +2139,15 @@ try {
   console.error(stderr);
   throw error;
 } finally {
-  connections.forEach((item) => item.ws.close());
-  await native('quit').catch(() => child.kill());
-  child.stdin.end();
-  try { execFileSync('reg.exe', ['delete', explorerRoot, '/f'], { stdio: 'ignore', windowsHide: true }); } catch { /* chave de fixture já ausente */ }
+  try {
+    if (restoreClipboard) await native('restore-clipboard');
+  } finally {
+    connections.forEach((item) => item.ws.close());
+    await native('quit').catch(() => child.kill());
+
+    child.stdin.end();
+    try { execFileSync('reg.exe', ['delete', explorerRoot, '/f'], { stdio: 'ignore', windowsHide: true }); } catch { /* chave de fixture já ausente */ }
+  }
 }
 await until(() => pids.every((pid) => { try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; } }), 'child PowerShell processes stopped');
 async function waitForExit(exited) {

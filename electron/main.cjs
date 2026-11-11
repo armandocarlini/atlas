@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { createProjectHost } = require('./project-host.cjs');
@@ -18,6 +18,7 @@ const { ensureOrchestratorProfile, ensureClaudeProfile, ensureGeminiProfile } = 
 const { createRegressionRunner } = require('./regression-runner.cjs');
 const { createRegressionSuiteHost } = require('./regression-suite-host.cjs');
 const { windowChrome, registerWindowChrome } = require('./window-chrome.cjs');
+const { registerClipboardChannels } = require('./terminal-clipboard.cjs');
 
 let mainWindow = null;
 let panelWindow = null;
@@ -299,6 +300,12 @@ app.whenReady().then(async () => {
     isMainSender: terminalHost.isMainSender,
     getPopupPtyId: (webContents) => getPopupEntry(webContents)?.ptyId || null,
     onStop: (record) => agentHost?.markStopped(record),
+  });
+  // Copiar e colar nos terminais: só a janela principal e os pop-ups de terminal.
+  registerClipboardChannels({
+    ipcMain,
+    clipboard,
+    isAllowedSender: (event) => terminalHost.isMainSender(event) || Boolean(getPopupEntry(event.sender)),
   });
   const sendToMain = (channel, payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);

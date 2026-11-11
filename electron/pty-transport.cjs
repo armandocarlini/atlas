@@ -1,5 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const pty = require('node-pty');
+const { trackBracketedPaste } = require('./terminal-clipboard.cjs');
+const { pasteSequence, planPaste } = require('./terminal-paste.js');
 
 const SCROLLBACK_LIMIT = 512 * 1024;
 
@@ -39,10 +41,12 @@ function createPtyTransport({ getMainWindow }) {
       exit: null,
       closing: false,
       getPopupWebContents: null,
+      bracketedPaste: { enabled: false, tail: '' },
     };
     records.set(id, record);
 
     process.onData((data) => {
+      record.bracketedPaste = trackBracketedPaste(record.bracketedPaste, data);
       record.sequence += 1;
       record.scrollback = (record.scrollback + data).slice(-SCROLLBACK_LIMIT);
       send(record, 'terminal:data', { terminalId: id, sequence: record.sequence, data });
@@ -108,6 +112,24 @@ function registerTransportChannels({ ipcMain, transport, isMainSender, getPopupP
     const record = transport.get(terminalId);
     if (!record || record.exit || record.closing || !canAccess(event, terminalId) || typeof data !== 'string') return;
     record.process.write(data);
+  });
+
+  // Valida o modo observado e escreve no mesmo handler.
+  ipcMain.handle('terminal:paste', (event, { terminalId, text } = {}) => {
+    const record = transport.get(terminalId);
+    if (!record || record.exit || record.closing || !canAccess(event, terminalId)) return { ok: false, reason: 'unavailable' };
+    if (typeof text !== 'string') return { ok: false, reason: 'empty' };
+    const bracketed = Boolean(record.bracketedPaste?.enabled);
+    const plan = planPaste(text, bracketed);
+    if (!plan.ok) return plan;
+    record.process.write(pasteSequence(plan.text, bracketed));
+    return { ok: true };
+  });
+
+  ipcMain.handle('terminal:input-mode', (event, terminalId) => {
+    const record = transport.get(terminalId);
+    if (!record || record.exit || record.closing || !canAccess(event, terminalId)) return null;
+    return { bracketedPaste: Boolean(record.bracketedPaste?.enabled) };
   });
 
   ipcMain.on('terminal:resize', (event, { terminalId, cols, rows } = {}) => {

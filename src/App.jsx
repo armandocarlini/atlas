@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AppWindow,
   ArrowUp,
+  ChevronsLeftRight,
   Bell,
   Bot,
   Check,
@@ -40,6 +41,7 @@ import {
   X,
 } from 'lucide-react';
 import TerminalView from './TerminalView.jsx';
+import { pasteTargets as sessionPasteTargets, terminalCli } from './terminal-clipboard.js';
 import WorkspaceTree from './WorkspaceTree.jsx';
 import SessionGlyph from './SessionGlyph.jsx';
 import { OVERLAY_BARS, effectiveBackground } from './window-overlay.js';
@@ -66,6 +68,16 @@ import { ModelSwitchModal } from './ModelSwitch.jsx';
 import { canSwitch, modelLabel } from './model-switch.js';
 import { choiceFromFunction, describeChoice, pendingConfiguration, pickRecommendation, startChoices } from './agent-functions.js';
 import { OpenFolderModal, ExplorerIntegrationSection } from './OpenFolder.jsx';
+import ChromeIconButton from './ChromeIconButton.jsx';
+import ColumnResizer from './ColumnResizer.jsx';
+import NavigationRail from './NavigationRail.jsx';
+import PanelsRail, { PANEL_ICONS, panelAccessibleName } from './PanelsRail.jsx';
+import ToolbarOverflow from './ToolbarOverflow.jsx';
+import useColumnLayout from './useColumnLayout.js';
+import { defaultColumnWidth, normalizeColumnWidths } from './column-layout.js';
+import TrackResizers from './TrackResizers.jsx';
+import useTerminalTracks from './useTerminalTracks.js';
+import { normalizeTrackSizes } from './track-layout.js';
 
 // Mensagem de erro do processo principal sem o prefixo técnico do IPC do Electron.
 function cleanIpcError(error) {
@@ -142,10 +154,11 @@ function getInitialDockLayout() {
         docks: { left: [], right: panels },
         order: validOrder(saved.order) ? saved.order : DEFAULT_COLUMN_ORDER,
         hidden: { left: Boolean(saved.hidden?.left), right: Boolean(saved.hidden?.right) },
+        widths: normalizeColumnWidths(saved.widths),
       };
     }
   } catch { /* Layout inválido: restaura o padrão. */ }
-  return { docks: DEFAULT_DOCKS, order: DEFAULT_COLUMN_ORDER, hidden: { left: false, right: true } };
+  return { docks: DEFAULT_DOCKS, order: DEFAULT_COLUMN_ORDER, hidden: { left: false, right: true }, widths: normalizeColumnWidths(null) };
 }
 
 function getInitialTerminalWorkspace() {
@@ -154,9 +167,10 @@ function getInitialTerminalWorkspace() {
     return {
       layout: normalizeTerminalLayout(saved?.layout),
       hiddenSessionIds: Array.isArray(saved?.hiddenSessionIds) ? saved.hiddenSessionIds.filter((id) => typeof id === 'string') : [],
+      tracks: normalizeTrackSizes(saved?.tracks),
     };
   } catch {
-    return { layout: 'grid', hiddenSessionIds: [] };
+    return { layout: 'grid', hiddenSessionIds: [], tracks: {} };
   }
 }
 
@@ -404,7 +418,7 @@ function SessionActions({ session, onFocus, onPopup, onHide, onRestart, onSendDi
   </div>;
 }
 
-function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, onStop, onRemove, tabbed = false }) {
+function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, onStop, onRemove, tabbed = false, placement, pasteTargets }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
@@ -412,7 +426,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
   const agentFunctions = (functions?.items || []).filter((item) => item.kind !== 'orchestrator');
   const functionLabel = (functions?.items || []).find((item) => item.slug === session.functionSlug)?.name || session.functionSlug;
   const displayName = session.roleKind === 'orchestrator' ? 'Principal' : functionLabel || session.name;
-  const headerDetails = [session.name, session.origin, session.status, session.version ? `${session.cli} ${session.version}` : session.cli, modelLabel(session), atlasConnected && !session.exited ? 'ATLAS conectado' : ''].filter(Boolean).join(' · ');
+  const headerDetails = [session.name, functionLabel && functionLabel !== session.name ? `função ${functionLabel}` : '', session.origin, session.status, session.version ? `${session.cli} ${session.version}` : session.cli, modelLabel(session), atlasConnected && !session.exited ? 'ATLAS conectado' : ''].filter(Boolean).join(' · ');
 
   function submit(event) {
     event.preventDefault();
@@ -431,7 +445,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
       data-session-id={session.id}
       data-session-name={session.name}
       className={`session-card ${selected ? 'selected' : ''} ${focused ? 'focused' : ''} ${detached ? 'terminal-detached' : ''} ${popup ? 'terminal-popup-card' : ''}`}
-      style={{ '--session-color': session.color }}
+      style={{ '--session-color': session.color, ...placement }}
       onClick={() => onSelect(session.id)}
     >
       <header className="session-header" title={headerDetails}>
@@ -457,7 +471,7 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
             <p>{session.status}. Nenhum processo está conectado.</p>
             <p>O conteúdo do terminal não foi salvo. Abra uma nova sessão para continuar o trabalho.</p>
             <dl><dt>Diretório</dt><dd>{session.worktree}</dd><dt>Início</dt><dd>{session.createdAt}</dd><dt>Fim registrado</dt><dd>{session.endedAt || 'sem confirmação'}</dd></dl>
-          </div> : session.ptyId ? <TerminalView terminalId={session.ptyId} desktop={desktop} theme={{ ...theme, color: visibleAccent(theme.color, theme.background), ink: getAccentInk(theme.background) }} onExit={(exit) => onExit(session.id, { ...exit, ptyId: session.ptyId })} /> : <>
+          </div> : session.ptyId ? <TerminalView terminalId={session.ptyId} desktop={desktop} theme={{ ...theme, color: visibleAccent(theme.color, theme.background), ink: getAccentInk(theme.background) }} onExit={(exit) => onExit(session.id, { ...exit, ptyId: session.ptyId })} pasteTargets={pasteTargets} cli={terminalCli(session.cli)} /> : <>
             <div className="terminal-lines">
               <HarnessIntro harness={harness} session={session} />
               {[...session.lines, ...localLines].map((line, index) => (
@@ -647,26 +661,27 @@ function AppearanceModal({ theme, onChange, onClose }) {
 const PANEL_LABELS = { task: 'Tarefas', messages: 'Mensagens', evidence: 'Evidências' };
 const LAYOUT_ICONS = { grid: LayoutGrid, spotlight: Focus, sidebar: Columns2, tabs: AppWindow };
 
-function ChromeIconButton({ icon: Icon, label, title = label, className = '', ...props }) {
-  return (
-    <button type="button" className={`chrome-icon-button ${className}`} aria-label={label} title={title} {...props}>
-      <Icon size={16} aria-hidden="true" />
-    </button>
-  );
-}
-
-function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReorderPanel, columnDragOver, columnDragging, onColumnPointerDown, style, detached = false, native = false, onToggleDetach, onPopupPointerDown, onHideColumn, taskPanel, messagesPanel, evidencePanel, unreadMessages }) {
+function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReorderPanel, columnDragOver, columnDragging, onColumnPointerDown, style, detached = false, native = false, overlay = false, mode = 'full', onCloseOverlay, onExpand, onToggleDetach, onPopupPointerDown, onHideColumn, taskPanel, messagesPanel, evidencePanel, unreadMessages }) {
   const [dragOverPanel, setDragOverPanel] = useState(null);
   const activePanel = panels.includes(tab) ? tab : panels[0];
+  const badges = { messages: messagesPanel ? unreadMessages : 2 };
+  const docked = !detached && !overlay;
   return (
     <aside
-      className={`inspector ${detached ? 'detached-inspector' : 'dock-right'} ${native ? 'native-inspector' : ''} ${columnDragOver ? 'column-drag-over' : ''} ${columnDragging ? 'column-drag-source' : ''}`}
+      className={`inspector ${detached ? 'detached-inspector' : overlay ? 'overlay-inspector' : 'dock-right'} ${native ? 'native-inspector' : ''} ${columnDragOver ? 'column-drag-over' : ''} ${columnDragging ? 'column-drag-source' : ''}`}
       style={style}
-      data-column-id={detached ? undefined : 'right'}
-      id={detached ? undefined : 'atlas-panels'}
-      aria-label={detached ? 'Acompanhamento destacado dos agentes' : 'Coluna de painéis'}
+      data-column-id={docked ? 'right' : undefined}
+      data-mode={docked ? mode : undefined}
+      id={docked ? 'atlas-panels' : undefined}
+      aria-label={detached ? 'Acompanhamento destacado dos agentes' : overlay ? 'Painéis sobre os terminais' : 'Coluna de painéis'}
     >
-      <div className="column-drag-bar" onPointerDown={detached ? (native ? undefined : onPopupPointerDown) : (event) => onColumnPointerDown(event, 'right')}>
+      {overlay ? <div className="column-drag-bar overlay-bar">
+        <strong>Painéis</strong>
+        <div className="column-bar-actions">
+          <ChromeIconButton icon={ChevronsLeftRight} label="Expandir painéis" className="detach-control" onClick={onExpand} />
+          <ChromeIconButton icon={X} label="Fechar painel" className="detach-control" onClick={onCloseOverlay} />
+        </div>
+      </div> : <div className="column-drag-bar" onPointerDown={detached ? (native ? undefined : onPopupPointerDown) : (event) => onColumnPointerDown(event, 'right')}>
         <strong>{detached ? 'Acompanhamento' : 'Painéis'}</strong>
         {!detached && <span>Arrastar coluna</span>}
         <div className="column-bar-actions" onPointerDown={(event) => event.stopPropagation()}>
@@ -678,12 +693,15 @@ function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReord
             onClick={onToggleDetach}
           />
         </div>
-      </div>
+      </div>}
       {panels.length > 0 ? <>
         <div className="inspector-dockbar">
           <div className="inspector-tabs" style={{ gridTemplateColumns: `repeat(${panels.length}, minmax(0, 1fr))` }}>
-            {panels.map((id) => (
+            {panels.map((id) => {
+              const TabIcon = PANEL_ICONS[id];
+              return (
               <button
+                aria-label={panelAccessibleName(PANEL_LABELS[id], badges[id])}
                 className={`${activePanel === id ? 'active' : ''} ${dragOverPanel === id ? 'panel-drag-over' : ''}`}
                 onClick={() => onTabChange(id)}
                 key={id}
@@ -698,9 +716,10 @@ function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReord
                   if (panel) onReorderPanel(panel, id);
                   setDragOverPanel(null);
                 }}
-                title={`Arrastar para reordenar ${PANEL_LABELS[id]} dentro da coluna`}
-              >{PANEL_LABELS[id]}{id === 'messages' && (messagesPanel ? (unreadMessages > 0 && <span className="tab-badge">{unreadMessages}</span>) : <span className="tab-badge">2</span>)}</button>
-            ))}
+                title={`${PANEL_LABELS[id]}. Arraste para reordenar dentro da coluna`}
+              ><TabIcon className="inspector-tab-icon" size={15} aria-hidden="true" /><span className="inspector-tab-label">{PANEL_LABELS[id]}</span>{badges[id] > 0 && <span className="tab-badge" aria-hidden="true">{badges[id]}</span>}</button>
+              );
+            })}
           </div>
         </div>
         <div className="dock-panel-content">
@@ -756,6 +775,7 @@ export default function App() {
   const [terminalLayout, setTerminalLayout] = useState(initialTerminalWorkspace.layout);
   const LayoutIcon = LAYOUT_ICONS[terminalLayout];
   const [hiddenSessionIds, setHiddenSessionIds] = useState(initialTerminalWorkspace.hiddenSessionIds);
+  const [trackSizes, setTrackSizes] = useState(initialTerminalWorkspace.tracks);
   const [statusOpen, setStatusOpen] = useState(false);
   const [activeProject, setActiveProject] = useState('ATLAS');
   const [projects, setProjects] = useState([]);
@@ -803,6 +823,22 @@ export default function App() {
   const [columnDrag, setColumnDrag] = useState(null);
   const columnDragRef = useRef(null);
   const [panelsDetached, setPanelsDetached] = useState(false);
+  const columnLayout = useColumnLayout({
+    initialWidths: initialDockLayout.widths,
+    order: columnOrder,
+    hidden: { left: hiddenColumns.left, right: hiddenColumns.right || panelsDetached },
+  });
+  const expandingColumn = useRef(null);
+  useLayoutEffect(() => {
+    const column = expandingColumn.current;
+    if (!column) return;
+    expandingColumn.current = null;
+    const dock = document.querySelector(`[data-column-id="${column}"]:not([data-mode="icons"])`);
+    if (dock) {
+      const control = dock.querySelector('.inspector-tabs button.active') || dock.querySelector('.column-drag-bar .detach-control');
+      control?.focus();
+    }
+  }, [columnLayout.widths]);
   const [popupPosition, setPopupPosition] = useState({ x: Math.max(16, window.innerWidth - 388), y: 96 });
   const popupDragRef = useRef(null);
   const [modal, setModal] = useState(null);
@@ -843,7 +879,11 @@ export default function App() {
   const openSessions = useMemo(() => workspaceSessions(projectSessions, revealedHistoryIds), [projectSessions, revealedHistoryIds]);
   const unhiddenSessions = useMemo(() => visibleWorkspaceSessions(openSessions, hiddenSessionIds), [openSessions, hiddenSessionIds]);
   const visibleSessions = useMemo(() => sessionsInLayout(openSessions, { layout: terminalLayout, selectedId, focusId, hiddenSessionIds }), [openSessions, terminalLayout, selectedId, focusId, hiddenSessionIds]);
+  const terminalTracks = useTerminalTracks({ layout: terminalLayout, count: visibleSessions.length, saved: trackSizes, onSave: setTrackSizes });
   const navigationProjects = useMemo(() => desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((id) => ({ id, name: id, path: '', repositories: [] })), [projects, desktop?.isDesktop]);
+  // Destinos de "Colar em outra sessão" na barra de seleção do terminal: as sessões vivas do
+  // projeto. O pop-up de terminal não recebe destinos: o canal dele só escreve no próprio PTY.
+  const pasteTargets = useMemo(() => sessionPasteTargets(projectSessions, agentFunctions), [projectSessions, agentFunctions]);
   const navigationSessions = useMemo(() => desktop?.isDesktop ? sessions : sessions.map((session) => ({ ...session, projectId: 'ATLAS' })), [sessions, desktop?.isDesktop]);
   const projectDecisions = atlasDecisions({
     requests: desktop?.isDesktop ? agentRequestState.items : [],
@@ -1356,12 +1396,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('atlas-docks', JSON.stringify({ ...docks, order: columnOrder, hidden: hiddenColumns }));
-  }, [docks, columnOrder, hiddenColumns]);
+    localStorage.setItem('atlas-docks', JSON.stringify({ ...docks, order: columnOrder, hidden: hiddenColumns, widths: columnLayout.widths }));
+  }, [docks, columnOrder, hiddenColumns, columnLayout.widths]);
 
   useEffect(() => {
-    if (!isSecondaryWindow) localStorage.setItem('atlas-terminal-workspace', JSON.stringify({ layout: terminalLayout, hiddenSessionIds }));
-  }, [terminalLayout, hiddenSessionIds, isSecondaryWindow]);
+    if (!isSecondaryWindow) localStorage.setItem('atlas-terminal-workspace', JSON.stringify({ layout: terminalLayout, hiddenSessionIds, tracks: trackSizes }));
+  }, [terminalLayout, hiddenSessionIds, trackSizes, isSecondaryWindow]);
 
   useEffect(() => {
     function handleKey(event) {
@@ -1819,6 +1859,11 @@ export default function App() {
     setInspectorTab('task');
   }
 
+  function expandColumn(column) {
+    expandingColumn.current = column;
+    columnLayout.apply({ [column]: defaultColumnWidth(column, columnLayout.available) });
+  }
+
   function toggleHiddenColumn(column) {
     setHiddenColumns((current) => ({ ...current, [column]: !current[column] }));
   }
@@ -1829,6 +1874,8 @@ export default function App() {
     setDocks({ left: [], right: ['task', 'messages', 'evidence'] });
     setColumnOrder(DEFAULT_COLUMN_ORDER);
     setHiddenColumns({ left: false, right: true });
+    columnLayout.reset();
+    setTrackSizes({});
     setDetachedTerminals([]);
     setPanelsDetached(false);
     setInspectorTab('task');
@@ -1913,8 +1960,10 @@ export default function App() {
 
   function getColumnStyle(column) {
     const dragging = columnDrag?.moved && columnDrag.column === column;
+    const width = columnLayout.effective[column];
     return {
-      order: displayedColumnOrder.indexOf(column),
+      order: displayedColumnOrder.indexOf(column) * 2,
+      ...(column !== 'center' && width ? { width, flex: `0 0 ${width}px` } : {}),
       ...(dragging ? {
         position: 'fixed',
         left: columnDrag.x,
@@ -1996,166 +2045,240 @@ export default function App() {
         </div>
       </header>
 
-      <div className="workspace-body">
+      <div className="workspace-body" ref={columnLayout.bodyRef}>
         {columnDrag?.moved && <div
           className="column-drag-placeholder"
           data-column-id={columnDrag.column}
-          style={{ order: displayedColumnOrder.indexOf(columnDrag.column), width: columnDrag.width, flex: `0 0 ${columnDrag.width}px` }}
+          style={{ order: displayedColumnOrder.indexOf(columnDrag.column) * 2, width: columnDrag.width, flex: `0 0 ${columnDrag.width}px` }}
           aria-hidden="true"
         />}
-        {!hiddenColumns.left && <div
-          className={`left-dock-zone ${columnDrag?.target === 'left' ? 'column-drag-over' : ''} ${columnDrag?.moved && columnDrag.column === 'left' ? 'column-drag-source' : ''}`}
-          style={getColumnStyle('left')}
-          data-column-id="left"
-        >
-          <div className="column-drag-bar" onPointerDown={(event) => beginColumnDrag(event, 'left')}>
-            <strong>Navegação</strong><span>Arrastar coluna</span>
-            <ChromeIconButton icon={PanelLeftClose} label="Ocultar navegação" className="detach-control" onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleHiddenColumn('left')} aria-expanded="true" aria-controls="atlas-navigation" />
-          </div>
-          <aside className="sidebar" id="atlas-navigation">
-            <WorkspaceTree
-              projects={navigationProjects}
-              sessions={navigationSessions}
-              activeProjectId={desktop?.isDesktop ? currentProject?.id : activeProject}
-              workingDirectory={workingDirectory}
-              selectedSessionId={selectedId}
-              hiddenSessionIds={hiddenSessionIds}
-              decisions={projectDecisions}
-              onSelectProject={selectProject}
-              onSelectWorktree={selectWorktree}
-              onSelectSession={selectSessionTerminal}
-              onFocusSession={focusSession}
-              onDecision={openDecision}
-              onAddProject={addProject}
-              onRefresh={refreshProjects}
-              loading={projectsLoading || projects.some((project) => project.scanning)}
-            />
-          </aside>
-        </div>}
-
-        <main
-          id="terminal-workspace"
-          tabIndex={-1}
-          className={`cockpit ${columnDrag?.target === 'center' ? 'column-drag-over' : ''} ${columnDrag?.moved && columnDrag.column === 'center' ? 'column-drag-source' : ''}`}
-          style={getColumnStyle('center')}
-          data-column-id="center"
-        >
-          <div className="cockpit-toolbar">
-            <div className="terminal-project-title" onPointerDown={(event) => beginColumnDrag(event, 'center')} title="Arrastar coluna de terminais"><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{workingDirectory}</small></div>
-            <div className="toolbar-actions">
-              <div className="workspace-view-controls" role="group" aria-label="Visualização dos terminais">
-                <ChromeIconButton icon={PanelLeft} label={`${hiddenColumns.left ? 'Mostrar' : 'Ocultar'} navegação`} className="workspace-panel-toggle" data-panel="left" aria-pressed={!hiddenColumns.left} aria-expanded={!hiddenColumns.left} aria-controls="atlas-navigation" onClick={() => toggleHiddenColumn('left')} />
-                <ChromeIconButton icon={PanelRight} label={`${hiddenColumns.right ? 'Mostrar' : 'Ocultar'} painéis`} className="workspace-panel-toggle" data-panel="right" aria-pressed={!hiddenColumns.right} aria-expanded={!hiddenColumns.right} aria-controls="atlas-panels" onClick={() => toggleHiddenColumn('right')} />
-                <div className="workspace-layout-control">
-                  <LayoutIcon size={14} aria-hidden="true" />
-                  <select className="terminal-layout-select" aria-label="Layout dos terminais" value={terminalLayout} onChange={(event) => changeTerminalLayout(event.target.value)}>
-                    <option value="grid">Grade</option>
-                    <option value="spotlight">Destaque</option>
-                    <option value="sidebar">Principal + agentes</option>
-                    <option value="tabs">Abas</option>
-                  </select>
+        {(() => {
+          // As colunas e as divisórias entram no DOM na ordem em que aparecem na tela: o Tab
+          // percorre Navegação, Terminais e Painéis (e as divisórias entre elas) como o usuário vê,
+          // mesmo depois de reordenar as colunas.
+          const columnElements = {
+            left: (
+            !hiddenColumns.left && <div
+              className={`left-dock-zone ${columnDrag?.target === 'left' ? 'column-drag-over' : ''} ${columnDrag?.moved && columnDrag.column === 'left' ? 'column-drag-source' : ''}`}
+              style={getColumnStyle('left')}
+              data-column-id="left"
+              data-mode={columnLayout.modes.left}
+            >
+              <div className="column-drag-bar" onPointerDown={(event) => beginColumnDrag(event, 'left')} title="Arrastar coluna de navegação">
+                <strong>Navegação</strong><span>Arrastar coluna</span>
+                <ChromeIconButton icon={PanelLeftClose} label="Ocultar navegação" className="detach-control" onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleHiddenColumn('left')} aria-expanded="true" aria-controls="atlas-navigation" />
+              </div>
+              <aside className="sidebar" id="atlas-navigation">
+                {(() => {
+                  const navigation = {
+                    projects: navigationProjects,
+                    sessions: navigationSessions,
+                    activeProjectId: desktop?.isDesktop ? currentProject?.id : activeProject,
+                    workingDirectory,
+                    selectedSessionId: selectedId,
+                    hiddenSessionIds,
+                    decisions: projectDecisions,
+                    onSelectProject: selectProject,
+                    onSelectWorktree: selectWorktree,
+                    onSelectSession: selectSessionTerminal,
+                    onFocusSession: focusSession,
+                    onDecision: openDecision,
+                    onAddProject: addProject,
+                    onRefresh: refreshProjects,
+                    loading: projectsLoading || projects.some((project) => project.scanning),
+                  };
+                  return columnLayout.modes.left === 'icons'
+                    ? <NavigationRail {...navigation} onExpand={() => expandColumn('left')} />
+                    : <WorkspaceTree {...navigation} />;
+                })()}
+              </aside>
+            </div>
+            ),
+            center: (
+            <main
+              id="terminal-workspace"
+              tabIndex={-1}
+              className={`cockpit ${columnDrag?.target === 'center' ? 'column-drag-over' : ''} ${columnDrag?.moved && columnDrag.column === 'center' ? 'column-drag-source' : ''}`}
+              style={getColumnStyle('center')}
+              data-column-id="center"
+            >
+              <div className="cockpit-toolbar" data-mode={columnLayout.modes.center}>
+                <div className="terminal-project-title" onPointerDown={(event) => beginColumnDrag(event, 'center')} title={`${desktop?.isDesktop ? currentProject?.name || activeProject : activeMission} · ${workingDirectory}. Arraste para mover a coluna de terminais.`}><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{workingDirectory}</small></div>
+                {columnLayout.modes.center === 'compact' ? <div className="toolbar-actions">
+                  <ToolbarOverflow
+                    hiddenColumns={hiddenColumns}
+                    onToggleColumn={toggleHiddenColumn}
+                    layout={terminalLayout}
+                    onLayout={changeTerminalLayout}
+                    statusOpen={statusOpen}
+                    onStatus={() => setStatusOpen((current) => !current)}
+                    onTerminal={() => setModal('terminal')}
+                  />
+                  <div className="workspace-create-controls" role="group" aria-label="Abrir sessões">
+                    <ChromeIconButton icon={Plus} label="Nova sessão de agente" className="button primary workspace-create-button" onClick={() => openSessionModal()} />
+                  </div>
+                </div> : <div className="toolbar-actions">
+                  <div className="workspace-view-controls" role="group" aria-label="Visualização dos terminais">
+                    <ChromeIconButton icon={PanelLeft} label={`${hiddenColumns.left ? 'Mostrar' : 'Ocultar'} navegação`} className="workspace-panel-toggle" data-panel="left" aria-pressed={!hiddenColumns.left} aria-expanded={!hiddenColumns.left} aria-controls="atlas-navigation" onClick={() => toggleHiddenColumn('left')} />
+                    <ChromeIconButton icon={PanelRight} label={`${hiddenColumns.right ? 'Mostrar' : 'Ocultar'} painéis`} className="workspace-panel-toggle" data-panel="right" aria-pressed={!hiddenColumns.right} aria-expanded={!hiddenColumns.right} aria-controls="atlas-panels" onClick={() => toggleHiddenColumn('right')} />
+                    <div className="workspace-layout-control">
+                      <LayoutIcon size={14} aria-hidden="true" />
+                      <select className="terminal-layout-select" aria-label="Layout dos terminais" value={terminalLayout} onChange={(event) => changeTerminalLayout(event.target.value)}>
+                        <option value="grid">Grade</option>
+                        <option value="spotlight">Destaque</option>
+                        <option value="sidebar">Principal + agentes</option>
+                        <option value="tabs">Abas</option>
+                      </select>
+                    </div>
+                  </div>
+                  <ChromeIconButton icon={Activity} label="Estado do projeto" className="workspace-status-trigger" aria-expanded={statusOpen} aria-controls="workspace-status" onClick={() => setStatusOpen((current) => !current)} />
+                  <div className="workspace-create-controls" role="group" aria-label="Abrir terminais e sessões">
+                    <ChromeIconButton icon={SquareTerminal} label="Abrir terminal PowerShell" className="button secondary workspace-create-button" onClick={() => setModal('terminal')} />
+                    <ChromeIconButton icon={Plus} label="Nova sessão de agente" className="button primary workspace-create-button" onClick={() => openSessionModal()} />
+                  </div>
+                </div>}
+              </div>
+              {statusOpen && <section id="workspace-status" className="workspace-status-popover" aria-label="Estado do projeto">
+                <div className="workspace-status-heading"><strong>{projectSessions.length} sessões neste projeto</strong><button type="button" className="icon-button subtle" aria-label="Fechar estado do projeto" onClick={() => setStatusOpen(false)}><X size={14} /></button></div>
+                <div className="workspace-status-items">
+                  {regressionSuite?.projectId === currentProject?.id && <RegressionSuiteStatus suite={regressionSuite} onManage={() => setRegressionModalOpen(true)} />}
+                  {desktop?.isDesktop && !isSecondaryWindow && kimiIntegration
+                    ? <KimiIntegrationStatus status={kimiIntegration} onManage={() => setIntegrationModal('kimi')} />
+                    : <span>{desktop?.isDesktop ? 'Histórico e sessões locais' : 'Wireframe ilustrativo'}</span>}
+                  {desktop?.isDesktop && !isSecondaryWindow && geminiIntegration && (geminiDetected || geminiIntegration.state === 'installed' || usesGemini(projectSessions)) && <KimiIntegrationStatus cli="Gemini" status={geminiIntegration} onManage={() => setIntegrationModal('gemini')} />}
                 </div>
+              </section>}
+
+              <div className="workspace-notices">
+              {terminalRestoreError && <div className="scope-note error-note" role="alert"><span>{terminalRestoreError}</span><button className="button secondary compact" onClick={() => setTerminalRestoreError('')}>Dispensar aviso</button></div>}
+              {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed.kimi && usesKimi(projectSessions) && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModal('kimi')} onDismiss={() => setIntegrationNoticeDismissed((current) => ({ ...current, kimi: true }))} />}
+              {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed.gemini && usesGemini(projectSessions) && <KimiIntegrationNotice cli="Gemini" status={geminiIntegration} onReview={() => setIntegrationModal('gemini')} onDismiss={() => setIntegrationNoticeDismissed((current) => ({ ...current, gemini: true }))} />}
+              {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} adapters={adapters} functions={agentFunctions} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}
+
+              {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.loading && <p className="scope-note" role="status">Abrindo sessão principal…</p>}
+              {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.error && <div className="scope-note error-note" role="alert"><span>{orchestratorStatus.error}</span><button className="button secondary compact" onClick={() => openOrchestratorChoice()}>Tentar novamente</button></div>}
+              {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice && openSessions.length > 0 && <div className="scope-note orchestrator-choice-note" role="status"><span>A sessão principal deste projeto ainda não foi iniciada. Escolha o CLI e o modelo que vão planejar e delegar.</span><button className="button primary compact" onClick={() => openOrchestratorChoice()}>Escolher agente</button></div>}
               </div>
-              <ChromeIconButton icon={Activity} label="Estado do projeto" className="workspace-status-trigger" aria-expanded={statusOpen} aria-controls="workspace-status" onClick={() => setStatusOpen((current) => !current)} />
-              <div className="workspace-create-controls" role="group" aria-label="Abrir terminais e sessões">
-                <ChromeIconButton icon={SquareTerminal} label="Abrir terminal PowerShell" className="button secondary workspace-create-button" onClick={() => setModal('terminal')} />
-                <ChromeIconButton icon={Plus} label="Nova sessão de agente" className="button primary workspace-create-button" onClick={() => openSessionModal()} />
+
+              {(terminalLayout === 'spotlight' || terminalLayout === 'tabs') && unhiddenSessions.length > 0 && <div className="terminal-subtabs" role="tablist" aria-label="Sessões visíveis">
+                {unhiddenSessions.map((session, index) => <button
+                  type="button"
+                  role="tab"
+                  id={`terminal-tab-${session.id}`}
+                  aria-controls={`terminal-panel-${session.id}`}
+                  aria-selected={visibleSessions[0]?.id === session.id}
+                  tabIndex={visibleSessions[0]?.id === session.id ? 0 : -1}
+                  className={visibleSessions[0]?.id === session.id ? 'active' : ''}
+                  key={session.id}
+                  onClick={() => selectSessionTerminal(session.id)}
+                  onKeyDown={(event) => handleTerminalTabKey(event, index)}
+                >{session.roleKind === 'orchestrator' ? 'Principal' : session.name}</button>)}
+              </div>}
+
+              <div ref={terminalTracks.gridRef} className={`session-grid layout-${terminalLayout} ${terminalLayout === 'spotlight' ? 'focus-mode' : ''} ${!visibleSessions.length ? 'is-empty' : ''} ${terminalTracks.tracks ? 'has-tracks' : ''}`} style={{ '--sidebar-rows': Math.max(1, unhiddenSessions.length - 1), ...terminalTracks.style }}>
+                {!visibleSessions.length && (unhiddenSessions.length === 0 && openSessions.length > 0
+                  ? <div className="sessions-hidden-empty" role="status"><SquareTerminal size={24} /><h2>Todos os terminais estão ocultos</h2><p>Os processos continuam em execução. Restaure as sessões sem iniciar novos processos.</p><button id="restore-hidden-sessions" className="button primary" onClick={restoreProjectSessions}>Restaurar sessões</button></div>
+                  : <AtlasWelcome
+                    projectName={desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}
+                    launcher={<StartLauncher
+                      functions={desktop?.isDesktop ? agentFunctions : null}
+                      adapters={adapters}
+                      principalWaiting={Boolean(desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice)}
+                      onPrincipal={() => desktop?.isDesktop ? openOrchestratorChoice() : openSessionModal('')}
+                      onFunction={openSessionModal}
+                      onTerminal={() => setModal('terminal')}
+                    />}
+                  />)}
+                {visibleSessions.map((session, index) => <SessionCard
+                  key={session.id}
+                  session={session}
+                  placement={terminalTracks.placement(index)}
+                  tabbed={terminalLayout === 'tabs' || terminalLayout === 'spotlight'}
+                  selected={selectedId === session.id}
+                  focused={terminalLayout === 'spotlight' && focusId === session.id}
+                  detached={detachedTerminals.includes(session.id)}
+                  desktop={desktop}
+                  theme={theme}
+                  onSelect={setSelectedId}
+                  onFocus={focusSession}
+                  onHide={hideSession}
+                  onPopup={toggleTerminalPopup}
+                  onExit={updateSessionExit}
+                  onStop={desktop?.isDesktop ? (session) => setSessionAction({ kind: 'stop', session }) : undefined}
+                  onRemove={desktop?.isDesktop ? (session) => setSessionAction({ kind: 'remove', session }) : undefined}
+                  onRestart={openOrchestratorChoice}
+                  atlasConnected={toolConnections[session.id] ?? session.atlasTools}
+                  onSendDiscovery={desktop?.isDesktop && projectSessions.some((session) => session.roleKind === 'orchestrator') ? (session) => setMessageModal({ session }) : undefined}
+                  functions={agentFunctions}
+                  onSetFunction={desktop?.isDesktop && desktop.setAgentFunction ? setSessionFunction : undefined}
+                  onSwitchModel={desktop?.isDesktop && desktop.declareAgentModel ? setModelSwitch : undefined}
+                  onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
+                  pasteTargets={desktop?.isDesktop ? pasteTargets : undefined}
+                />)}
+                <TrackResizers layout={terminalLayout} count={visibleSessions.length} terminalTracks={terminalTracks} />
               </div>
-            </div>
-          </div>
-          {statusOpen && <section id="workspace-status" className="workspace-status-popover" aria-label="Estado do projeto">
-            <div className="workspace-status-heading"><strong>{projectSessions.length} sessões neste projeto</strong><button type="button" className="icon-button subtle" aria-label="Fechar estado do projeto" onClick={() => setStatusOpen(false)}><X size={14} /></button></div>
-            <div className="workspace-status-items">
-              {regressionSuite?.projectId === currentProject?.id && <RegressionSuiteStatus suite={regressionSuite} onManage={() => setRegressionModalOpen(true)} />}
-              {desktop?.isDesktop && !isSecondaryWindow && kimiIntegration
-                ? <KimiIntegrationStatus status={kimiIntegration} onManage={() => setIntegrationModal('kimi')} />
-                : <span>{desktop?.isDesktop ? 'Histórico e sessões locais' : 'Wireframe ilustrativo'}</span>}
-              {desktop?.isDesktop && !isSecondaryWindow && geminiIntegration && (geminiDetected || geminiIntegration.state === 'installed' || usesGemini(projectSessions)) && <KimiIntegrationStatus cli="Gemini" status={geminiIntegration} onManage={() => setIntegrationModal('gemini')} />}
-            </div>
-          </section>}
-
-          <div className="workspace-notices">
-          {terminalRestoreError && <div className="scope-note error-note" role="alert"><span>{terminalRestoreError}</span><button className="button secondary compact" onClick={() => setTerminalRestoreError('')}>Dispensar aviso</button></div>}
-          {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed.kimi && usesKimi(projectSessions) && <KimiIntegrationNotice status={kimiIntegration} onReview={() => setIntegrationModal('kimi')} onDismiss={() => setIntegrationNoticeDismissed((current) => ({ ...current, kimi: true }))} />}
-          {desktop?.isDesktop && !isSecondaryWindow && !integrationNoticeDismissed.gemini && usesGemini(projectSessions) && <KimiIntegrationNotice cli="Gemini" status={geminiIntegration} onReview={() => setIntegrationModal('gemini')} onDismiss={() => setIntegrationNoticeDismissed((current) => ({ ...current, gemini: true }))} />}
-          {desktop?.isDesktop && !isSecondaryWindow && <AgentRequestsPanel state={agentRequestState} sessions={projectSessions} adapters={adapters} functions={agentFunctions} errors={agentRequestErrors} onApprove={approveAgentRequest} onReject={rejectAgentRequest} onDismiss={(request) => clearAgentRequestError(request.id)} />}
-
-          {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.loading && <p className="scope-note" role="status">Abrindo sessão principal…</p>}
-          {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.error && <div className="scope-note error-note" role="alert"><span>{orchestratorStatus.error}</span><button className="button secondary compact" onClick={() => openOrchestratorChoice()}>Tentar novamente</button></div>}
-          {desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice && openSessions.length > 0 && <div className="scope-note orchestrator-choice-note" role="status"><span>A sessão principal deste projeto ainda não foi iniciada. Escolha o CLI e o modelo que vão planejar e delegar.</span><button className="button primary compact" onClick={() => openOrchestratorChoice()}>Escolher agente</button></div>}
-          </div>
-
-          {(terminalLayout === 'spotlight' || terminalLayout === 'tabs') && unhiddenSessions.length > 0 && <div className="terminal-subtabs" role="tablist" aria-label="Sessões visíveis">
-            {unhiddenSessions.map((session, index) => <button
-              type="button"
-              role="tab"
-              id={`terminal-tab-${session.id}`}
-              aria-controls={`terminal-panel-${session.id}`}
-              aria-selected={visibleSessions[0]?.id === session.id}
-              tabIndex={visibleSessions[0]?.id === session.id ? 0 : -1}
-              className={visibleSessions[0]?.id === session.id ? 'active' : ''}
-              key={session.id}
-              onClick={() => selectSessionTerminal(session.id)}
-              onKeyDown={(event) => handleTerminalTabKey(event, index)}
-            >{session.roleKind === 'orchestrator' ? 'Principal' : session.name}</button>)}
-          </div>}
-
-          <div className={`session-grid layout-${terminalLayout} ${terminalLayout === 'spotlight' ? 'focus-mode' : ''} ${!visibleSessions.length ? 'is-empty' : ''}`} style={{ '--sidebar-rows': Math.max(1, unhiddenSessions.length - 1) }}>
-            {!visibleSessions.length && (unhiddenSessions.length === 0 && openSessions.length > 0
-              ? <div className="sessions-hidden-empty" role="status"><SquareTerminal size={24} /><h2>Todos os terminais estão ocultos</h2><p>Os processos continuam em execução. Restaure as sessões sem iniciar novos processos.</p><button id="restore-hidden-sessions" className="button primary" onClick={restoreProjectSessions}>Restaurar sessões</button></div>
-              : <AtlasWelcome
-                projectName={desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}
-                launcher={<StartLauncher
-                  functions={desktop?.isDesktop ? agentFunctions : null}
-                  adapters={adapters}
-                  principalWaiting={Boolean(desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice)}
-                  onPrincipal={() => desktop?.isDesktop ? openOrchestratorChoice() : openSessionModal('')}
-                  onFunction={openSessionModal}
-                  onTerminal={() => setModal('terminal')}
-                />}
-              />)}
-            {visibleSessions.map((session) => <SessionCard
-              key={session.id}
-              session={session}
-              tabbed={terminalLayout === 'tabs' || terminalLayout === 'spotlight'}
-              selected={selectedId === session.id}
-              focused={terminalLayout === 'spotlight' && focusId === session.id}
-              detached={detachedTerminals.includes(session.id)}
-              desktop={desktop}
-              theme={theme}
-              onSelect={setSelectedId}
-              onFocus={focusSession}
-              onHide={hideSession}
-              onPopup={toggleTerminalPopup}
-              onExit={updateSessionExit}
-              onStop={desktop?.isDesktop ? (session) => setSessionAction({ kind: 'stop', session }) : undefined}
-              onRemove={desktop?.isDesktop ? (session) => setSessionAction({ kind: 'remove', session }) : undefined}
-              onRestart={openOrchestratorChoice}
-              atlasConnected={toolConnections[session.id] ?? session.atlasTools}
-              onSendDiscovery={desktop?.isDesktop && projectSessions.some((session) => session.roleKind === 'orchestrator') ? (session) => setMessageModal({ session }) : undefined}
-              functions={agentFunctions}
-              onSetFunction={desktop?.isDesktop && desktop.setAgentFunction ? setSessionFunction : undefined}
-              onSwitchModel={desktop?.isDesktop && desktop.declareAgentModel ? setModelSwitch : undefined}
-              onSend={(name) => notify(`Instrução ilustrativa registrada para ${name}`)}
-            />)}
-          </div>
-        </main>
-
-        {!panelsDetached && !hiddenColumns.right && <Inspector
-          activeTask={activeTask} onTaskSelect={setActiveTask}
-          taskPanel={persistentTaskPanel}
-          messagesPanel={sessionMessagesPanel}
-          evidencePanel={taskEvidencePanel}
-          unreadMessages={messageState.items.filter((message) => !message.readAt).length}
-          tab={inspectorTab} onTabChange={setInspectorTab}
-          panels={docks.right} onReorderPanel={reorderPanel}
-          columnDragOver={columnDrag?.target === 'right'}
-          columnDragging={columnDrag?.moved && columnDrag.column === 'right'}
-          onColumnPointerDown={beginColumnDrag}
-          onToggleDetach={toggleDetachedPanels}
-          onHideColumn={() => toggleHiddenColumn('right')}
-          style={getColumnStyle('right')}
-        />}
+            </main>
+            ),
+            right: (
+            !panelsDetached && !hiddenColumns.right && (() => {
+              const unreadMessages = messageState.items.filter((message) => !message.readAt).length;
+              const panelContent = {
+                activeTask, onTaskSelect: setActiveTask,
+                taskPanel: persistentTaskPanel,
+                messagesPanel: sessionMessagesPanel,
+                evidencePanel: taskEvidencePanel,
+                unreadMessages,
+                tab: inspectorTab, onTabChange: setInspectorTab,
+                panels: docks.right, onReorderPanel: reorderPanel,
+              };
+              const expandPanels = () => expandColumn('right');
+              return columnLayout.modes.right === 'icons'
+                ? <PanelsRail
+                  panels={docks.right}
+                  labels={PANEL_LABELS}
+                  badges={{ messages: sessionMessagesPanel ? unreadMessages : 2 }}
+                  activePanel={docks.right.includes(inspectorTab) ? inspectorTab : docks.right[0]}
+                  onTabChange={setInspectorTab}
+                  columnDragOver={columnDrag?.target === 'right'}
+                  columnDragging={columnDrag?.moved && columnDrag.column === 'right'}
+                  onColumnPointerDown={beginColumnDrag}
+                  onHideColumn={() => toggleHiddenColumn('right')}
+                  onToggleDetach={toggleDetachedPanels}
+                  onExpand={expandPanels}
+                  style={getColumnStyle('right')}
+                  renderOverlay={(close) => <Inspector {...panelContent} overlay onCloseOverlay={close} onExpand={() => { close(); expandPanels(); }} />}
+                />
+                : <Inspector
+                  {...panelContent}
+                  mode={columnLayout.modes.right}
+                  columnDragOver={columnDrag?.target === 'right'}
+                  columnDragging={columnDrag?.moved && columnDrag.column === 'right'}
+                  onColumnPointerDown={beginColumnDrag}
+                  onToggleDetach={toggleDetachedPanels}
+                  onHideColumn={() => toggleHiddenColumn('right')}
+                  style={getColumnStyle('right')}
+                />;
+            })()
+            ),
+          };
+          return displayedColumnOrder.flatMap((column) => {
+            const index = columnLayout.visible.indexOf(column);
+            const element = columnElements[column] ? <Fragment key={column}>{columnElements[column]}</Fragment> : null;
+            const resizer = !columnDrag && index >= 0 && index < columnLayout.visible.length - 1
+              ? <ColumnResizer
+                key={`${column}-${columnLayout.visible[index + 1]}`}
+                visible={columnLayout.visible}
+                index={index}
+                order={columnOrder}
+                widths={columnLayout.effective}
+                available={columnLayout.available}
+                onChange={columnLayout.apply}
+                onReset={columnLayout.reset}
+              />
+              : null;
+            return [element, resizer];
+          });
+        })()}
       </div>
 
       {panelsDetached && !desktop?.isDesktop && <div className="detached-panels-window" style={{ left: popupPosition.x, top: popupPosition.y }}>

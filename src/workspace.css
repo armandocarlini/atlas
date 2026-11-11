@@ -225,35 +225,14 @@
 .sessions-hidden-empty h2 { margin: 0; color: var(--text); font: 500 20px var(--font-display); }
 .sessions-hidden-empty p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 
-@media (min-width: 1600px) {
-  .left-dock-zone { width: 260px; }
-  .session-grid.layout-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .session-grid.layout-grid .session-card:first-child { grid-column: span 2; }
-}
-@media (max-width: 1180px) {
-  .left-dock-zone { width: 220px; }
-  .terminal-project-title > small { display: none; }
-  .session-grid.layout-grid { grid-template-columns: minmax(0, 1fr); }
-  .session-grid.layout-grid .session-card:first-child { grid-column: auto; }
-  .session-grid.layout-sidebar { grid-template-columns: minmax(0, 1.5fr) minmax(220px, 1fr); }
-}
 @media (max-width: 940px) {
   .titlebar-context small { display: none; }
-  .left-dock-zone { width: 200px; }
-  .terminal-project-title { display: none; }
-  .toolbar-actions { flex: 1 1 auto; justify-content: flex-end; }
-  .session-state, .session-cli { display: none; }
 }
-@container (max-width: 650px) {
-  .terminal-project-title { display: none; }
-  .toolbar-actions { flex: 1 1 auto; justify-content: flex-end; }
-  .session-grid.layout-sidebar { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(320px, 1fr); }
-  .session-grid.layout-sidebar .session-card:first-child { grid-column: 1; grid-row: auto; min-height: 360px; }
-  .session-grid.layout-sidebar .session-card:not(:first-child), .session-grid.layout-sidebar .empty-session { grid-column: 1; min-height: 260px; }
-}
+/* Larguras das colunas: inline, pelo estado de 'atlas-docks'. O conteúdo responde à largura da
+   própria coluna (container queries em resizable.css), não à da janela. */
 .session-card { container-type: inline-size; }
 @container (max-width: 520px) {
-  .session-identity .session-function, .session-identity .function-badge, .session-identity .atlas-tools, .session-state { display: none; }
+  .session-identity .session-function, .session-identity .function-badge, .session-identity .atlas-tools, .session-state, .session-cli, .token-count > span { display: none; }
   .session-identity h3 { max-width: 45vw; }
 }
 

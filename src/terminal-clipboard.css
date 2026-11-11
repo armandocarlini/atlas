@@ -1,0 +1,164 @@
+/* Copiar e colar no terminal: barra de seleção, menu de contexto e aviso de cópia.
+   Material do ATLAS (superfície elevada, borda, raio de 8px) e tokens do tema, em todas as janelas. */
+
+.terminal-selection-bar,
+.terminal-context-menu,
+.terminal-notice {
+  font: 12px/1.2 var(--font-ui);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 28px -6px rgba(0, 0, 0, .55);
+}
+
+/* O terminal é o contêiner: a barra responde à largura dele (Grade com 3 colunas, modo compacto). */
+.terminal-view-shell { container: terminal-view / inline-size; }
+
+/* Terminal estreito: a barra mostra só os ícones. O nome continua no texto acessível e no title. */
+@container terminal-view (max-width: 480px) {
+  .terminal-selection-bar > button { padding: 0 7px; gap: 4px; }
+  .terminal-selection-bar > button > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .terminal-notice.has-action { flex-wrap: wrap; }
+}
+
+/* Pílula pequena junto da seleção, como a referência: texto + ícone. */
+.terminal-selection-bar {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  white-space: nowrap;
+  animation: terminal-float-in 160ms var(--ease-out, ease-out) both;
+}
+.terminal-selection-bar > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 150ms ease, transform 100ms ease-out;
+}
+.terminal-selection-bar > button:hover,
+.terminal-selection-bar > button[aria-expanded="true"] { background: var(--surface-hover); }
+.terminal-selection-bar > button:active { transform: scale(.97); }
+/* .app-shell esconde svg por padrão; cada componente escolhe os ícones que mostra. */
+.terminal-view-shell .terminal-selection-bar svg { display: inline-block; flex: 0 0 auto; color: var(--muted); }
+.terminal-view-shell .terminal-selection-bar .terminal-bar-chevron { margin-left: -2px; }
+
+.terminal-context-menu {
+  position: absolute;
+  z-index: 21;
+  width: max-content;
+  min-width: min(208px, calc(100% - 12px));
+  max-width: min(320px, calc(100% - 12px));
+  max-height: calc(100% - 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  border-radius: 8px;
+  animation: terminal-float-in 160ms var(--ease-out, ease-out) both;
+}
+.terminal-send-menu { min-width: min(180px, calc(100% - 12px)); }
+.terminal-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.terminal-menu-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-menu-item > .terminal-menu-target { white-space: normal; overflow-wrap: anywhere; }
+.terminal-menu-target small { display: block; color: var(--muted); font-size: inherit; }
+.terminal-menu-item:hover:not(:disabled) { background: var(--surface-hover); }
+.terminal-menu-item:disabled { color: var(--muted); opacity: .6; cursor: default; }
+.terminal-menu-item kbd { color: var(--muted); font: 11px var(--mono, Consolas, monospace); background: none; border: 0; padding: 0; }
+.terminal-menu-separator { height: 1px; margin: 4px 6px; background: var(--border); }
+
+.terminal-selection-bar > button:focus-visible,
+.terminal-menu-item:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
+
+/* "N caracteres copiados": discreto, no canto, some sozinho; o leitor de tela ouve pela região viva. */
+.terminal-notice-region {
+  position: absolute;
+  z-index: 19;
+  right: 12px;
+  bottom: 10px;
+  max-width: calc(100% - 24px);
+  pointer-events: none;
+}
+.terminal-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  animation: terminal-float-in 180ms var(--ease-out, ease-out) both, terminal-notice-out 220ms ease-in 1580ms both;
+}
+/* Aviso com ação (recusa de colar várias linhas): fica até 7s, aceita clique e quebra linha. */
+.terminal-notice.has-action {
+  max-width: 420px;
+  pointer-events: auto;
+  animation: terminal-float-in 180ms var(--ease-out, ease-out) both, terminal-notice-out 220ms ease-in 6780ms both;
+}
+.terminal-notice > button {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--surface-hover);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.terminal-notice > button:hover { background: var(--surface); }
+.terminal-notice > button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+
+/* Arquivos arrastados do Explorer sobre o terminal. */
+.terminal-view-shell.dropping::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 1px dashed var(--accent-text);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+@keyframes terminal-float-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes terminal-notice-out { to { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-selection-bar,
+  .terminal-context-menu { animation: atlas-fade 120ms ease both; }
+  .terminal-notice { animation: atlas-fade 120ms ease both, terminal-notice-out 120ms ease 1680ms both; }
+  .terminal-notice.has-action { animation: atlas-fade 120ms ease both, terminal-notice-out 120ms ease 6880ms both; }
+  .terminal-selection-bar > button:active { transform: none; }
+}
+
+@media (prefers-contrast: more) {
+  .terminal-selection-bar,
+  .terminal-context-menu,
+  .terminal-notice { border-color: var(--text); box-shadow: none; }
+}

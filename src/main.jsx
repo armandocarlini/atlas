@@ -6,6 +6,7 @@ import './styles.css';
 import './identity.css';
 import './workspace.css';
 import './controls.css';
+import './resizable.css';
 import { revealScrollbarsWhileScrolling } from './scrollbars.js';
 
 revealScrollbarsWhileScrolling();

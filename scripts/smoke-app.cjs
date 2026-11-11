@@ -1,5 +1,5 @@
 // Test-only entry point: isolated preferences and native window controls.
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain } = require('electron');
 const http = require('node:http');
 const path = require('node:path');
 
@@ -12,12 +12,19 @@ app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [process.env.ATLAS_SMOKE_PROJECT] });
 const terminals = [];
 let defaultsResolved = false;
+let clipboardSnapshot = null;
 const ipcHandlers = new Map();
 const ipcListeners = new Map();
+// Quantos resizes cada PTY recebeu (somente teste): mede o throttle durante o arraste.
+const resizeCounts = {};
 const registerOn = ipcMain.on.bind(ipcMain);
 ipcMain.on = (channel, handler) => {
   ipcListeners.set(channel, handler);
-  return registerOn(channel, handler);
+  if (channel !== 'terminal:resize') return registerOn(channel, handler);
+  return registerOn(channel, (event, request = {}) => {
+    resizeCounts[request.terminalId] = (resizeCounts[request.terminalId] || 0) + 1;
+    return handler(event, request);
+  });
 };
 const register = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, handler) => {
@@ -54,6 +61,19 @@ const server = http.createServer(async (request, response) => {
     if (command.action === 'windows') result = windows.map((item) => ({ url: item.webContents.getURL(), bounds: item.getBounds(), alwaysOnTop: item.isAlwaysOnTop() }));
     if (command.action === 'terminals') result = terminals;
     if (command.action === 'defaults-resolved') result = defaultsResolved;
+    if (command.action === 'resize-counts') result = { ...resizeCounts };
+    if (command.action === 'save-clipboard') {
+      const items = await clipboard.read();
+      clipboardSnapshot = await Promise.all(items.map(async (item) => {
+        const entries = await Promise.all(item.types.map(async (type) => [type, await item.getType(type)]));
+        return new ClipboardItem(Object.fromEntries(entries));
+      }));
+    }
+    if (command.action === 'restore-clipboard' && clipboardSnapshot) {
+      if (clipboardSnapshot.length) await clipboard.write(clipboardSnapshot);
+      else clipboard.clear();
+      clipboardSnapshot = null;
+    }
     if (command.action === 'focus') { window.restore(); window.show(); window.focus(); }
     // Reenvia um aviso do processo principal à janela (somente teste).
     if (command.action === 'send') window.webContents.send(command.channel, command.payload);

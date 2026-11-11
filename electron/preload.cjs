@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const query = new URLSearchParams(window.location.search);
 const windowKind = query.get('window') || 'main';
@@ -14,6 +14,8 @@ function subscribe(channel, callback, filter = () => true) {
 contextBridge.exposeInMainWorld('atlasDesktop', {
   isDesktop: true,
   windowKind,
+  // O atalho de colar imagem repassado ao CLI depende do sistema (src/terminal-clipboard.js).
+  platform: process.platform,
   // 'overlay': a barra nativa saiu e os controles da janela ficam sobre a barra do ATLAS
   // (principal, pop-up de terminal e Acompanhamento).
   windowChrome: query.get('chrome') === 'overlay' ? 'overlay' : 'native',
@@ -31,6 +33,15 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   attachTerminal: (terminalId) => ipcRenderer.invoke('terminal:attach', terminalId),
   writeTerminal: (terminalId, data) => ipcRenderer.send('terminal:write', { terminalId, data }),
   resizeTerminal: (terminalId, cols, rows) => ipcRenderer.send('terminal:resize', { terminalId, cols, rows }),
+  pasteTerminal: (terminalId, text) => ipcRenderer.invoke('terminal:paste', { terminalId, text }),
+  getTerminalInputMode: (terminalId) => ipcRenderer.invoke('terminal:input-mode', terminalId),
+  // Clipboard dos terminais: o renderer lê só o que a colagem usa e grava só texto.
+  readClipboardForPaste: () => ipcRenderer.invoke('clipboard:read-paste'),
+  writeClipboardText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
+  // Arquivo arrastado do Explorer: só o caminho, nunca o conteúdo.
+  getPathForFile: (file) => {
+    try { return webUtils.getPathForFile(file) || ''; } catch { return ''; }
+  },
   closePty: (terminalId) => ipcRenderer.send('terminal:close', { terminalId }),
   stopPty: (terminalId) => ipcRenderer.invoke('terminal:stop', terminalId),
   removeTerminal: (sessionId) => ipcRenderer.invoke('terminal:remove', sessionId),
