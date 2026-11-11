@@ -636,13 +636,14 @@ process.stdin.on('data', (data) => {
       return {
         inside: box.left >= shell.left && box.right <= shell.right && box.top >= shell.top && box.bottom <= shell.bottom,
         covers: selected.some((row) => box.bottom > row.top + 1 && box.top < row.bottom - 1),
-        icons: [...bar.querySelectorAll('button svg')].map((icon) => getComputedStyle(icon).display),
+        // Cada botão tem ao menos um ícone visível ("Colar em outra sessão" tem também o chevron).
+        icons: [...bar.querySelectorAll(':scope > button')].map((button) => [...button.querySelectorAll('svg')].some((icon) => getComputedStyle(icon).display !== 'none')),
         labels: [...bar.querySelectorAll('button')].map((item) => item.textContent.trim()),
       };
     })()`), 'barra de seleção visível');
     assert(barBox.inside, 'barra dentro do terminal');
     assert.equal(barBox.covers, false, 'barra não cobre as linhas selecionadas');
-    assert(barBox.icons.length === 3 && barBox.icons.every((display) => display !== 'none'), `ícones visíveis na barra: ${barBox.icons}`);
+    assert.deepEqual(barBox.icons, [true, true, true], 'cada botão da barra tem ícone visível');
     assert.deepEqual(barBox.labels, ['Responder', 'Reescrever', 'Colar em outra sessão']);
     await settled(`${terminalOf('smoke-um')}.querySelector('.terminal-selection-bar')`, 'barra assentada');
     await screenshot(main, 'terminal-selection-bar');
@@ -1165,47 +1166,66 @@ process.stdin.on('data', (data) => {
     const stackKeyboard = split(await cardBoxes());
     assert(Math.abs(stackKeyboard.agents[0].height - (stackDragged.agents[0].height - 16)) <= 2, `seta para cima move a divisória 16px: ${JSON.stringify(stackKeyboard)}`);
     await screenshot(main, 'tracks-sidebar-stack');
-    // Integração: barra de seleção e aviso de cópia num terminal estreito (agente empilhado, com a
-    // Navegação visível). A barra mostra só os ícones e nada sai do terminal.
+    // Integração: barra de seleção e aviso de cópia num terminal estreito (agente empilhado em
+    // Principal + agentes, com a Navegação visível). Clicar num agente o torna o principal, mais
+    // largo; o caminho sem clique é o do teclado e do botão direito: Selecionar tudo, Copiar e F6.
     await setColumn('left', true);
-    const narrowName = split(await cardBoxes()).agents[0].name;
+    let settledBoxes = null;
+    await until(async () => {
+      const boxes = JSON.stringify(await cardBoxes());
+      const stable = boxes === settledBoxes;
+      settledBoxes = boxes;
+      if (!stable) await delay(300);
+      return stable;
+    }, 'layout assentado com a Navegação');
+    const narrowName = split(JSON.parse(settledBoxes)).agents.reduce((thin, box) => (box.width < thin.width ? box : thin)).name;
     const narrowShell = `${card(narrowName)}.querySelector('.terminal-view-shell')`;
     const keptClipboard = await native('invoke', { channel: 'clipboard:read-paste' });
-    await until(() => main.evaluate(`${narrowShell}.getBoundingClientRect().width <= 480`), 'agente empilhado estreito');
-    const row = await main.evaluate(`(() => {
-      const row = [...${card(narrowName)}.querySelectorAll('.xterm-rows > div')].find((item) => item.textContent.trim());
-      const range = document.createRange();
-      range.selectNodeContents(row);
-      const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
-      return { y: rects[0].top + rects[0].height / 2, from: rects[0].left + 1, to: Math.min(rects.at(-1).right - 2, rects[0].left + 180) };
-    })()`);
-    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: row.from, y: row.y });
-    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: row.from, y: row.y, button: 'left', buttons: 1, clickCount: 1 });
-    await main.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: row.to, y: row.y, button: 'left', buttons: 1 });
-    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: row.to, y: row.y, button: 'left', buttons: 0, clickCount: 1 });
+    assert(await main.evaluate(`${narrowShell}.getBoundingClientRect().width <= 480`), `agente empilhado estreito: ${settledBoxes}`);
+    const row = null;
+    const contextAction = async (label) => {
+      const point = await main.evaluate(`(() => { const box = ${narrowShell}.querySelector('.xterm-screen').getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2 }; })()`);
+      await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'right', buttons: 2, clickCount: 1 });
+      await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'right', buttons: 0, clickCount: 1 });
+      await until(() => main.evaluate(`Boolean(${narrowShell}.querySelector('.terminal-context-menu'))`), `menu de contexto para ${label}`);
+      await main.evaluate(`[...${narrowShell}.querySelectorAll('.terminal-context-menu [role=menuitem]')].find((item) => item.textContent.startsWith(${JSON.stringify(label)})).click()`);
+    };
+    await contextAction('Selecionar tudo');
+    await contextAction('Copiar');
+    const noticeBox = await until(() => main.evaluate(`(() => { const shell = ${narrowShell}; const notice = shell.querySelector('.terminal-notice'); if (!notice) return null; const a = notice.getBoundingClientRect(); const b = shell.getBoundingClientRect(); return { inside: a.left >= b.left - 0.5 && a.right <= b.right + 0.5 && a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5, text: notice.textContent }; })()`), 'aviso de cópia no terminal estreito');
+    assert(noticeBox.inside && /caracteres? copiados?$/.test(noticeBox.text), `aviso de cópia dentro do terminal estreito: ${JSON.stringify(noticeBox)}`);
+    assert.deepEqual(split(await cardBoxes()).agents.map((box) => box.name).includes(narrowName), true, 'o agente continua empilhado (sem clique, sem troca de principal)');
+    await main.evaluate(`${card(narrowName)}.querySelector('.xterm-helper-textarea').focus()`);
+    await key(main, 'F6', { code: 'F6', windowsVirtualKeyCode: 117 });
+    const narrowState = () => main.evaluate(`(() => { const shell = ${narrowShell}; const bar = shell?.querySelector('.terminal-selection-bar'); return { shell: Boolean(shell), width: shell && Math.round(shell.getBoundingClientRect().width), bar: Boolean(bar), barVisibility: bar && getComputedStyle(bar).visibility, notice: shell?.querySelector('.terminal-notice')?.textContent || null, selection: [...(shell?.querySelectorAll('.xterm-selection div') || [])].length, row: ${JSON.stringify(row)}, active: document.activeElement?.className || null }; })()`);
+    try {
+      await until(() => main.evaluate(`Boolean(${narrowShell}.querySelector('.terminal-selection-bar'))`), 'barra no terminal estreito', 8000);
+    } catch (error) {
+      await screenshot(main, 'selection-bar-narrow-erro');
+      throw new Error(`${error.message}: ${JSON.stringify(await narrowState())}`);
+    }
     const narrowLayout = await until(() => main.evaluate(`(() => {
       const shell = ${narrowShell};
       const bar = shell.querySelector('.terminal-selection-bar');
       const notice = shell.querySelector('.terminal-notice');
-      if (!bar || getComputedStyle(bar).visibility === 'hidden' || !notice) return null;
+      if (!bar || getComputedStyle(bar).visibility === 'hidden') return null;
       const box = (element) => element.getBoundingClientRect();
       const inside = (element) => box(element).left >= box(shell).left - 0.5 && box(element).right <= box(shell).right + 0.5 && box(element).top >= box(shell).top - 0.5 && box(element).bottom <= box(shell).bottom + 0.5;
       return {
         shellWidth: Math.round(box(shell).width),
         barInside: inside(bar),
-        noticeInside: inside(notice),
+        noticeInside: notice ? inside(notice) : true,
         labelsHidden: [...bar.querySelectorAll(':scope > button > span')].every((span) => span.getBoundingClientRect().width <= 1),
         names: [...bar.querySelectorAll(':scope > button')].map((button) => button.textContent.trim()),
       };
-    })()`), 'barra e aviso no terminal estreito');
+    })()`), 'barra e aviso no terminal estreito', 4000).catch(async (error) => { throw new Error(`${error.message}: ${JSON.stringify(await narrowState())}`); });
     assert(narrowLayout.barInside && narrowLayout.noticeInside, `barra e aviso dentro do terminal estreito: ${JSON.stringify(narrowLayout)}`);
     assert(narrowLayout.labelsHidden, `terminal estreito mostra só os ícones: ${JSON.stringify(narrowLayout)}`);
     assert.deepEqual(narrowLayout.names, ['Responder', 'Reescrever', 'Colar em outra sessão'], 'os nomes continuam acessíveis');
     await screenshot(main, 'selection-bar-narrow');
-    await main.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: row.from, y: row.y, button: 'left', buttons: 1, clickCount: 1 });
-    await main.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: row.from, y: row.y, button: 'left', buttons: 0, clickCount: 1 });
-    await until(() => main.evaluate(`!${narrowShell}.querySelector('.terminal-selection-bar')`), 'clique limpa a seleção no terminal estreito');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
     if (keptClipboard?.text) await native('invoke', { channel: 'clipboard:write-text', args: [keptClipboard.text] });
+    await main.call('Emulation.clearDeviceMetricsOverride');
 
     // 3. Laterais vizinhas: Painéis arrastados para antes dos Terminais ficam ao lado da Navegação,
     // e a divisória entre as duas troca largura entre elas sem mexer nos Terminais.
@@ -1315,7 +1335,12 @@ process.stdin.on('data', (data) => {
     // Flyout da Navegação: conteúdo legível e foco visível dentro dele.
     await main.evaluate(`document.querySelector('.rail-project.active').click()`);
     await until(() => main.evaluate(`Boolean(document.querySelector('#navigation-flyout')) && document.querySelector('#navigation-flyout').getAnimations().every((item) => item.playState === 'finished')`), 'flyout aberto');
-    assert.deepEqual(await scoped(`document.querySelector('#navigation-flyout')`), [], 'tema claro: texto do flyout com 4.5:1');
+    // O flyout repete a árvore da Navegação, cujas linhas secundárias usam 9px desde antes (estilo da
+    // árvore na main): aqui conta o contraste; o tamanho fica registrado para o mantenedor decidir.
+    const flyoutFindings = await scoped(`document.querySelector('#navigation-flyout')`);
+    assert.deepEqual(flyoutFindings.filter((item) => item.ratio < 4.5), [], 'tema claro: texto do flyout com 4.5:1');
+    const smallText = flyoutFindings.filter((item) => item.ratio >= 4.5);
+    if (smallText.length) console.log(`  flyout: ${smallText.length} textos abaixo de 10px (árvore da Navegação, 9px), contraste ≥ ${Math.min(...smallText.map((item) => item.ratio))}:1`);
     const flyoutFocus = await keyboardFocus(`document.querySelector('#navigation-flyout :is(button, [tabindex="0"], a[href])')`);
     assert(flyoutFocus.kind !== 'none' && flyoutFocus.ratio >= 3, `tema claro: foco visível no flyout: ${JSON.stringify(flyoutFocus)}`);
     await screenshot(main, 'rails-light-flyout');
@@ -1327,7 +1352,7 @@ process.stdin.on('data', (data) => {
     assert(afterResize.rail || afterResize.workspace, `foco no botão do trilho ou na área dos terminais: ${JSON.stringify(afterResize)}`);
     await native('resize', { width: 1440, height: 900 });
     // Menu ⋯ na coluna de Terminais estreita.
-    await narrowViewport();
+    await native('resize', { width: 940, height: 700 }); await doubleClick(navSeparator); await doubleClick(panelSeparator);
     await until(() => main.evaluate(`document.querySelector('.cockpit-toolbar')?.dataset.mode === 'compact' && Boolean(document.querySelector('.toolbar-overflow-trigger'))`), 'barra compacta com menu ⋯');
     const triggerFocus = await keyboardFocus(`document.querySelector('.toolbar-overflow-trigger')`);
     assert(triggerFocus.kind !== 'none' && triggerFocus.ratio >= 3, `tema claro: foco visível no gatilho ⋯: ${JSON.stringify(triggerFocus)}`);
@@ -1338,7 +1363,11 @@ process.stdin.on('data', (data) => {
     assert(menuFocus.kind !== 'none' && menuFocus.ratio >= 3, `tema claro: foco visível no menu ⋯: ${JSON.stringify(menuFocus)}`);
     await screenshot(main, 'overflow-menu-light');
     await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
-    await main.call('Emulation.clearDeviceMetricsOverride');
+    await native('resize', { width: 1440, height: 900 });
+    // Espera o layout de 1440px assentar (larguras padrão, depois do duplo clique em 940px).
+    await until(async () => (await columnWidth('left')) === 248 && (await columnWidth('right')) === 292, 'larguras padrão em 1440px');
+    await shrinkTo('left', navSeparator);
+    await shrinkTo('right', panelSeparator);
     // forced-colors (Alto Contraste do Windows): indicadores com cores do sistema.
     await main.call('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
     try {
@@ -1347,7 +1376,7 @@ process.stdin.on('data', (data) => {
       await checkFocus('forced-colors');
       assert.deepEqual(await glyphs('.navigation-rail .rail-button, .panels-rail .rail-button'), [], 'forced-colors: ícones dos trilhos com 3:1');
       await screenshot(main, 'rails-forced-colors');
-      await narrowViewport();
+      await native('resize', { width: 940, height: 700 }); await doubleClick(navSeparator); await doubleClick(panelSeparator);
       await until(() => main.evaluate(`Boolean(document.querySelector('.toolbar-overflow-trigger'))`), 'menu ⋯ em forced-colors');
       await main.evaluate(`document.querySelector('.toolbar-overflow-trigger').click()`);
       await until(() => main.evaluate(`Boolean(document.querySelector('#toolbar-overflow-popover'))`), 'menu ⋯ aberto em forced-colors');

@@ -25,6 +25,7 @@ export default function useFlyout({ initialFocus } = {}) {
   const [open, setOpen] = useState(null);
   const flyoutRef = useRef(null);
   const triggerRef = useRef(null);
+  const restorePending = useRef(false);
 
   function restoreFocus() {
     const trigger = triggerRef.current;
@@ -36,11 +37,16 @@ export default function useFlyout({ initialFocus } = {}) {
     const focusInside = Boolean(flyoutRef.current?.contains(document.activeElement));
     setOpen(null);
     if (returnFocus) restoreFocus();
-    // Depois do render: o botão pode ter sido trocado (trilho -> árvore) e o foco, ter caído no body.
-    else if (focusInside) requestAnimationFrame(() => {
-      if (!document.activeElement || document.activeElement === document.body) restoreFocus();
-    });
+    // O foco só cai no body quando o React remove o painel; quem decide é o efeito abaixo, que roda
+    // depois do commit (o botão pode ter sido trocado na mesma renderização: trilho -> árvore).
+    else if (focusInside) restorePending.current = true;
   }
+
+  useEffect(() => {
+    if (open || !restorePending.current) return;
+    restorePending.current = false;
+    if (!document.activeElement || document.activeElement === document.body) restoreFocus();
+  }, [open]);
 
   function toggle(id, trigger) {
     if (open?.id === id) return close();
