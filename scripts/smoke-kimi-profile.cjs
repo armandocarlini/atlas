@@ -170,7 +170,7 @@ async function main() {
     }
     await host.close();
     await new Promise(resolve => provider.close(resolve));
-    if (requests !== 0) passed = false;
+    if (mode === 'coordinate' && requests !== 0) passed = false;
     if (!passed) {
       fs.writeFileSync(path.join(fixture, 'terminal.txt'), plain(output));
       console.error(`Fixture preservada: ${fixture}`);

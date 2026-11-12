@@ -202,7 +202,8 @@ test('principal Kimi no modo nativo volta com a conversa mais recente da pasta',
   closeApp(first, state.store);
   const second = harness({ store: state.restart(), adapters: [KIMI] });
   const result = await second.host.restoreSessions();
-  assert.deepEqual(names(result.resumed), ['Principal']);
+  assert.deepEqual(names(result.restored), ['Principal']);
+  assert.deepEqual(result.failed, []);
   assert.deepEqual(second.spawns[0].args, ['--continue']);
 });
 
