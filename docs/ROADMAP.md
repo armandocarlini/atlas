@@ -90,6 +90,8 @@ Previstos na arquitetura e retirados da v0.2 em 04/11/2026. O mantenedor conside
 
 Em andamento, a pedido do mantenedor (06/11/2026). A direção está definida: mármore, marfim e ouro, com a estátua do logo como personagem. Plano em `docs/planos/PLANO_IDENTIDADE_VISUAL.md`. As fases 1 a 3 da identidade foram entregues. Em 09/11/2026 foi aprovada a evolução terminal-first, com o Alethe como referência: densidade, árvore lateral, quatro layouts e ocultação sem encerrar processos. O refinamento de 10/11/2026 elimina gaps, bordas e filetes, agrupa as ações das sessões e estabiliza os controles. O PR #84 levou Restaurar layout, Funções de agente e Aparência para a paleta, liberou o rodapé da navegação, suavizou as junções entre as colunas e desenhou em vetor o lettering ATLAS da barra de título. No mesmo dia, a janela principal passou a ter uma barra superior só, com os controles do sistema sobre ela, e os selects ganharam lista no material do ATLAS. Plano em `docs/planos/PLANO_WORKSPACE_TERMINAL_FIRST.md`. Continuidade e persistência ficam fora desse marco. As fases 4 (modo Conversa) e 5 (várias equipes por repositório) estão marcadas **[decidir]**.
 
+Em 12/11/2026, o painel Mensagens foi redesenhado (PR #89): cartões legíveis com markdown seguro, tons com ícone e texto e nenhuma mensagem não lida recolhida.
+
 Em 11/11/2026, o workspace passou a ter divisórias persistidas para Navegação, Terminais e Painéis; os extremos compactos preservam acesso por ícones, flyouts e nomes acessíveis. Terminais também ganharam cópia automática da seleção, ações de Responder/Reescrever/Colar em outra sessão, colagem segura de caminhos e entrada por arrastar arquivos.
 
 Pontos observados em 27/10/2026 que continuam valendo:
