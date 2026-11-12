@@ -170,8 +170,8 @@ try {
   if (nativePermissions) {
     assert(result(0) && !result(0).error && result(0).text.includes(outsideContent), `Read do handoff externo falhou: ${result(0)?.text}`);
     pass('Read lê um handoff fora da pasta do projeto');
-    assert(tools.includes('WebFetch') && tools.includes('mcp__atlas__ping'), `ferramentas disponíveis: ${tools.join(', ')}`);
-    pass('WebFetch e a ponte do ATLAS aparecem na sessão');
+    assert(tools.includes('Bash') && tools.includes('Write'), `ferramentas disponíveis: ${tools.join(', ')}`);
+    pass('o conjunto nativo inclui shell e escrita');
   } else {
     assert.deepEqual(tools, ['Glob', 'Grep', 'Read', 'mcp__atlas__ping']);
     pass(`ferramentas da principal: ${tools.join(', ')}`);
