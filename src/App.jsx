@@ -1197,13 +1197,17 @@ export default function App() {
   async function approveAgentRequest(request, choice) {
     clearAgentRequestError(request.id);
     try {
-      const { agent, recordError } = await desktop.approveAgentRequest({ cwd: workingDirectory, requestId: request.id, payloadHash: request.payloadHash, adapterId: choice.adapterId, model: choice.model || null, functionSlug: choice.functionSlug || null });
+      const { agent, recordError, delivery, deliveryError } = await desktop.approveAgentRequest({ cwd: workingDirectory, requestId: request.id, payloadHash: request.payloadHash, adapterId: choice.adapterId, model: choice.model || null, functionSlug: choice.functionSlug || null });
       setSessions((current) => mergeAgentSessions(current, [agent]));
       // O usuário pode ter trocado de projeto durante o spawn.
       if (agentRequestScope.current.projectId === request.projectId) setSelectedId(agent.id);
       notify(recordError
         ? `Agente ${agent.name} iniciado, mas o pedido não foi registrado como atendido: ${recordError}`
-        : `Agente ${agent.name} iniciado a pedido da sessão principal`);
+        : deliveryError
+          ? `Agente ${agent.name} iniciado, mas o propósito não chegou a ele: ${deliveryError}. Escreva no terminal dele o que fazer.`
+          : delivery?.handoffId
+            ? `Agente ${agent.name} iniciado com a tarefa oferecida a ele`
+            : `Agente ${agent.name} iniciado a pedido da sessão principal`);
     } catch (error) {
       setAgentRequestErrors((current) => ({ ...current, [request.id]: cleanIpcError(error) }));
     } finally {

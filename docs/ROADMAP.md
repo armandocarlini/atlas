@@ -16,7 +16,7 @@ São correções da v0.1, sem mudar o escopo do produto.
 
 1. **Distribuição oficial corrigida do Kimi.** A contenção das versões 2.4.0/2.4.1 está implementada. O candidato temporário `2.4.1+atlas-profile-fix.1` passou em `smoke:kimi-profile -- --switch-model` e no `smoke:agent` completo, sem API, incluindo modelos, perfil, pedidos, worktree e reinício. Próximo passo: validar uma distribuição oficial corrigida com esses mesmos smokes antes de liberar a principal Kimi e seu botão de troca. Em 03/11/2026 a última estável ainda era a 2.4.1, e o `main` do fornecedor ainda não tinha a correção (issues e PRs upstream listados no diagnóstico). A correção local não equivale a suporte oficial; não instalar o candidato nem publicar uma correção externa automaticamente. Patch, reprodução e limites: `docs/diagnosticos/KIMI_2_4_MCP.md`. Até lá, a principal roda no OpenCode, no Claude Code ou no Gemini.
 2. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). O timeout de captura voltou com renderer oculto, mesmo após a hipótese de oclusão; o smoke agora exige janela visível e um frame antes de capturar. A digitação do comando de dimensões também aguarda o prompt do PowerShell. Investigar novas ocorrências; não reexecutar às cegas.
-3. **Coordenação real pela principal** (aprovada pelo mantenedor em 12/11/2026, vem antes do item 5 da v0.2). No primeiro uso real, a principal pediu o agente certo, mas ele abriu parado, e ela não conseguiu criar tarefas. A correção tem duas partes:
+3. **Coordenação real pela principal — entregue.** Plano: `docs/planos/PLANO_COORDENACAO_PRINCIPAL.md` (aprovado pelo mantenedor em 12/11/2026). Falta o primeiro uso real com modelo. No primeiro uso real, a principal pediu o agente certo, mas ele abriu parado, e ela não conseguiu criar tarefas. A correção tem duas partes:
    - **`tasks_create` para a principal:** ela cria a tarefa e pede o agente com `taskId` e `worktree: true`, então a worktree nasce pelo ATLAS. Só o usuário conclui.
    - **Prompt inicial na aprovação:** o agente aprovado abre com um texto fixo do ATLAS e o propósito que o usuário leu no cartão, e consulta handoffs e mensagens. Sem flags de autonomia, com as aprovações do próprio CLI. As mensagens seguintes continuam fora do terminal.
 
@@ -107,6 +107,6 @@ Pontos observados em 27/10/2026 que continuam valendo:
 | Suíte de regressão liga/desliga | Entregue (PRs #53 a #56) |
 | Equipe com várias IAs | Entregue (PRs #59 a #69); mudou duas invariantes da principal (somente leitura por padrão e visão de CLI e modelo) |
 | Continuidade ao reabrir | Entregue (PRs #80 e #81); relançar sem confirmação é exceção decidida pelo mantenedor em 10/11/2026 |
-| Coordenação real pela principal | Aprovada em 12/11/2026: `tasks_create` e prompt inicial na aprovação |
+| Coordenação real pela principal | Entregue: `tasks_create` e prompt inicial na aprovação (aprovada em 12/11/2026) |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |

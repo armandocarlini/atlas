@@ -7,6 +7,7 @@ import path from 'node:path';
 
 const { createAgentHost } = createRequire(import.meta.url)('../electron/agent-host.cjs');
 const { createOperationalStore } = createRequire(import.meta.url)('../electron/operational-store.cjs');
+const { AGENT_KICKOFF_PROMPT } = createRequire(import.meta.url)('../electron/agent-adapters.cjs');
 
 function createHarness({ allowedCwds = ['C:\\projeto'], adapters, store, onPersistenceError, projectRecords = [], orchestratorProfile = '/fixture/atlas-orchestrator.md', claudeProfile = null, mcpHost, onRunEnded, listModelsImpl, bridgeEntry } = {}) {
   const handlers = new Map();
@@ -553,6 +554,9 @@ test('início com a escolha já conferida não consulta os modelos de novo', asy
   assert.equal(calls, 0);
   assert.equal(agent.model, 'nvidia/a');
   assert.deepEqual(spawns[0].args, ['--model', 'nvidia/a']);
+  // A aprovação de um pedido pede o prompt inicial fixo; a sessão comum não o recebe.
+  await host.createAgent({ name: 'aprovado-2', cwd: 'C:\\projeto' }, { origin: 'orchestrator', launch: { adapter: OPENCODE, model: 'nvidia/a' }, kickoff: true });
+  assert.deepEqual(spawns[1].args, ['--model', 'nvidia/a', '--prompt', AGENT_KICKOFF_PROMPT]);
 });
 
 // v0.2, fase 4: função na principal, na sessão manual e troca do rótulo de um agente em execução.

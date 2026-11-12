@@ -86,7 +86,8 @@ function createTaskDelegation({ db, now, event, transaction }) {
         context: agentText('Contexto', request.context, { max: 4000, required: false }),
         nextSteps: agentText('Próximos passos', request.nextSteps, { max: 2000, required: false }),
       };
-      const actor = `agent:${request.fromSessionId}`;
+      // `user`: oferta gerada pela aprovação de um pedido de agente com tarefa.
+      const actor = request.actor === 'user' ? 'user' : `agent:${request.fromSessionId}`;
       const encoded = JSON.stringify({ ...payload, fromSessionId: request.fromSessionId });
       const hash = createHash('sha256').update(encoded).digest('hex');
       return transaction(db, () => {

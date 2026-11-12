@@ -141,7 +141,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     return support === 'exact' ? { mode: 'new', id: randomUUID() } : null;
   }
 
-  async function createAgent(request = {}, { role = 'agent', existing = null, origin = 'user', launch: resolved = null, resume = null } = {}) {
+  async function createAgent(request = {}, { role = 'agent', existing = null, origin = 'user', launch: resolved = null, resume = null, kickoff = false } = {}) {
     await waitForCwd(projectHost, request.cwd);
 
     const { adapter, model } = resolved || await resolveLaunch(request.adapterId, request.model);
@@ -172,7 +172,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     const conversation = conversationFor(adapter, role, existing, resume);
     let record;
     try {
-      const launch = launchFor({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge, orchestratorMode: orchestratorMode || 'coordinate', conversation });
+      const launch = launchFor({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge, orchestratorMode: orchestratorMode || 'coordinate', conversation, kickoff });
       record = transport.spawn({
         file: adapter.executable,
         args: launch.args,

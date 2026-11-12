@@ -261,3 +261,16 @@ test('revisão cruzada: workedBy vem do registro do ATLAS, na ordem, por tarefa 
   const free = store.requestAgent({ projectId: 'project-a', requestedBy: 'principal', name: 'explorador', purpose: 'Explorar.', idempotencyKey: 'revisao-cruzada-2' });
   assert.equal(store.listAgentRequests('project-a').find((item) => item.id === free.id).taskWorkedBy, undefined, 'pedido sem tarefa não traz lista');
 });
+
+test('a principal cria tarefas em backlog com ator auditado; agente e ator inválido são recusados', (t) => {
+  const { store } = harness(t);
+  const created = store.createTask({ projectId: 'project-a', title: 'Criada pela principal', description: 'Detalhes.', acceptance: 'Critério verificável.', idempotencyKey: 'principal-cria-01', actor: 'agent:principal' });
+  assert.equal(created.state, 'backlog');
+  assert.equal(created.createdBy, 'agent:principal');
+  assert.equal(store.listTasks('project-a').find((item) => item.id === created.id).createdBy, 'agent:principal');
+  assert.equal(store.listEvents('project-a').find((item) => item.type === 'task.created' && item.payload.taskId === created.id).payload.actor, 'agent:principal');
+  assert.throws(() => store.createTask({ projectId: 'project-a', title: 'Do agente', acceptance: 'x', idempotencyKey: 'agente-cria-01', actor: 'agent:agente' }), /Somente a sessão principal/);
+  assert.throws(() => store.createTask({ projectId: 'project-b', title: 'Outro projeto', acceptance: 'x', idempotencyKey: 'outro-cria-01', actor: 'agent:principal' }), /Somente a sessão principal/);
+  assert.throws(() => store.createTask({ projectId: 'project-a', title: 'Ator', acceptance: 'x', idempotencyKey: 'ator-cria-01', actor: 'sistema' }), /Ator de tarefa inválido/);
+  assert.equal(store.createTask({ projectId: 'project-a', title: 'Do usuário', acceptance: 'x', idempotencyKey: 'usuario-cria-01' }).createdBy, 'user');
+});

@@ -143,7 +143,7 @@ test('aprovação pela interface inicia agente com origem orchestrator e conclui
   assert.equal(spawns.length, 1);
   assert.deepEqual(spawns[0].request, { adapterId: 'kimi-code', model: null, name: 'revisor-ansi', cwd: '/fixture/a', functionSlug: null, functionOverridden: null });
   // A escolha conferida na aprovação é a usada no início, sem nova consulta de modelos.
-  assert.deepEqual(spawns[0].options, { origin: 'orchestrator', launch: { adapter: { id: 'kimi-code' }, model: null } });
+  assert.deepEqual(spawns[0].options, { origin: 'orchestrator', launch: { adapter: { id: 'kimi-code' }, model: null }, kickoff: true });
   assert.equal(result.request.state, 'fulfilled');
   assert.equal(result.request.sessionId, result.agent.id);
   assert.equal(result.request.resolvedBy, 'user');
@@ -326,4 +326,55 @@ test('aprovação registra a função final e se o usuário trocou a sugestão',
   } finally {
     db.close();
   }
+});
+
+test('aprovação sem tarefa entrega o propósito como mensagem da principal ao novo agente', async (t) => {
+  const { ask, call, store } = harness(t);
+  const request = ask();
+  const result = await call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'claude-code' });
+  const messages = store.listMessages('project-a').filter((item) => item.toSessionId === result.agent.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].fromSessionId, 'orchestrator-a');
+  assert.equal(messages[0].subject, 'Pedido aprovado: revisor-ansi');
+  assert.equal(messages[0].body, 'Revisar a divergência ANSI relatada pela sessão manual.');
+  assert.deepEqual(result.delivery, { messageId: messages[0].id });
+  assert.equal(result.request.state, 'fulfilled');
+});
+
+test('aprovação com tarefa oferece a tarefa ao novo agente com o propósito, auditada como do usuário', async (t) => {
+  const { ask, call, store } = harness(t);
+  const task = store.createTask({ projectId: 'project-a', title: 'Mensagens legíveis', acceptance: 'Painel legível em três larguras.', idempotencyKey: 'tarefa-entrega-01', actor: 'agent:orchestrator-a' });
+  const request = ask({ taskId: task.id });
+  const result = await call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'claude-code' });
+  const offered = store.listHandoffs('project-a').filter((item) => item.taskId === task.id);
+  assert.equal(offered.length, 1);
+  assert.equal(offered[0].state, 'offered');
+  assert.equal(offered[0].fromSessionId, 'orchestrator-a');
+  assert.equal(offered[0].toSessionId, result.agent.id);
+  assert.equal(offered[0].objective, 'Revisar a divergência ANSI relatada pela sessão manual.');
+  assert.deepEqual(result.delivery, { handoffId: offered[0].id });
+  assert.equal(store.listEvents('project-a').find((item) => item.type === 'handoff.offered').payload.actor, 'user');
+  assert.equal(store.listMessages('project-a').filter((item) => item.toSessionId === result.agent.id).length, 0, 'com a oferta, sem mensagem duplicada');
+});
+
+test('oferta impossível na aprovação cai para a mensagem com o motivo; falha total não derruba o agente', async (t) => {
+  const context = harness(t);
+  const { ask, call, store } = context;
+  const task = store.createTask({ projectId: 'project-a', title: 'Já oferecida', acceptance: 'Aceite.', idempotencyKey: 'tarefa-entrega-02' });
+  const request = ask({ taskId: task.id });
+  // Outra oferta aberta para a mesma tarefa impede a segunda.
+  store.offerHandoff({ projectId: 'project-a', fromSessionId: 'orchestrator-a', toSessionId: 'manual-a', taskId: task.id, objective: 'Assumir.', idempotencyKey: 'oferta-anterior-01' });
+  const result = await call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'claude-code' });
+  assert.match(result.delivery.offerError, /oferta aberta/);
+  const message = store.listMessages('project-a').find((item) => item.toSessionId === result.agent.id);
+  assert.match(message.body, /^Revisar a divergência ANSI[\s\S]*não pôde ser oferecida automaticamente: Já existe uma oferta aberta/);
+
+  // Sem como entregar (a principal sumiu do projeto), o agente continua iniciado e o pedido atendido.
+  const second = ask({ name: 'sem-entrega' });
+  const original = store.sendMessage;
+  store.sendMessage = () => { throw new Error('banco indisponível'); };
+  const failed = await call('agent-request:approve', { cwd: '/fixture/a', requestId: second.id, payloadHash: second.payloadHash, adapterId: 'claude-code' });
+  store.sendMessage = original;
+  assert.equal(failed.request.state, 'fulfilled');
+  assert.equal(failed.deliveryError, 'banco indisponível');
 });
