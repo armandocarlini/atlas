@@ -144,8 +144,8 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
 
   // Conversa do CLI desta run. resume: null (sessão nova ou nova execução), 'resume'
   // (mesma conversa pelo ID salvo), 'continue' (a mais recente da pasta) ou 'fresh'.
-  function conversationFor(adapter, role, existing, resume) {
-    const support = conversationSupport(adapter.id, role);
+  function conversationFor(adapter, role, existing, resume, orchestratorMode) {
+    const support = conversationSupport(adapter.id, role, orchestratorMode);
     if (resume === 'resume' && support === 'exact' && existing?.conversation_id) return { mode: 'resume', id: existing.conversation_id };
     if ((resume === 'resume' || resume === 'continue') && support !== 'none') return { mode: 'continue' };
     return support === 'exact' ? { mode: 'new', id: randomUUID() } : null;
@@ -182,7 +182,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     // CLIs que recebem a ponte por run (OpenCode) levam a entrada com o token desta run.
     const bridge = atlasToken && bridgeEntry ? { command: bridgeEntry.command, args: bridgeEntry.args, env: { ...bridgeEntry.env, ...env } } : null;
 
-    const conversation = conversationFor(adapter, role, existing, resume);
+    const conversation = conversationFor(adapter, role, existing, resume, orchestratorMode);
     let record;
     try {
       const launch = launchFor({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge, orchestratorMode: orchestratorMode || 'coordinate', conversation, kickoff });
@@ -460,7 +460,8 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       const launches = [];
       for (const item of candidates) {
         const role = item.role === 'orchestrator' ? 'orchestrator' : 'agent';
-        const support = conversationSupport(item.adapter_id, role);
+        const orchestratorMode = role === 'orchestrator' ? store.getOrchestratorMode(item.project_id) : undefined;
+        const support = conversationSupport(item.adapter_id, role, orchestratorMode);
         let resume = 'fresh';
         if (support === 'exact' && item.conversation_id) resume = 'resume';
         else if (support !== 'none') {

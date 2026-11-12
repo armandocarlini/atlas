@@ -184,13 +184,26 @@ test('principal volta com o mesmo CLI e o perfil somente leitura, retomando a co
 
 test('principal no Kimi volta com conversa nova: --agent-file não combina com retomada', async (t) => {
   const state = fixture(t);
-  const first = harness({ store: state.store, adapters: [KIMI] });
+  const adapters = [{ ...KIMI, version: '2.3.3' }];
+  const first = harness({ store: state.store, adapters });
   await first.openPrincipal({ adapterId: 'kimi-code' });
   closeApp(first, state.store);
-  const second = harness({ store: state.restart(), adapters: [KIMI] });
+  const second = harness({ store: state.restart(), adapters });
   const result = await second.host.restoreSessions();
   assert.deepEqual(names(result.fresh), ['Principal']);
   assert.deepEqual(second.spawns[0].args, ['--agent-file', '/fixture/atlas-orchestrator.md']);
+});
+
+test('principal Kimi no modo nativo volta com a conversa mais recente da pasta', async (t) => {
+  const state = fixture(t);
+  const first = harness({ store: state.store, adapters: [KIMI] });
+  await first.openPrincipal({ adapterId: 'kimi-code', orchestratorMode: 'auto' });
+  assert.deepEqual(first.spawns[0].args, []);
+  closeApp(first, state.store);
+  const second = harness({ store: state.restart(), adapters: [KIMI] });
+  const result = await second.host.restoreSessions();
+  assert.deepEqual(names(result.resumed), ['Principal']);
+  assert.deepEqual(second.spawns[0].args, ['--continue']);
 });
 
 test('fechar e reabrir a janela (macOS) volta a gravar as saídas das runs novas', async (t) => {

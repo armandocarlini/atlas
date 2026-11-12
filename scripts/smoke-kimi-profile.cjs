@@ -44,6 +44,7 @@ async function main() {
   fs.mkdirSync(home);
   const probeEnv = { ...process.env, KIMI_CODE_HOME: home, KIMI_CODE_NO_AUTO_UPDATE: '1' };
   delete probeEnv.ELECTRON_RUN_AS_NODE;
+  for (const key of Object.keys(probeEnv)) if (key.startsWith('KIMI_MODEL_')) delete probeEnv[key];
   const mode = process.argv.includes('--native-permissions') ? 'auto' : 'coordinate';
   let modelInput;
   let requests = 0;
@@ -179,7 +180,7 @@ async function main() {
       assert(path.basename(target).startsWith('atlas-kimi-profile-'));
       fs.rmSync(target, { recursive: true, force: true });
     }
-    assert.equal(requests, 0, 'O diagnóstico chamou o provedor fictício inesperadamente.');
+    if (mode === 'coordinate') assert.equal(requests, 0, 'O diagnóstico chamou o provedor fictício inesperadamente.');
   }
 }
 

@@ -288,21 +288,21 @@ function codexBridgeArgs(bridge) {
 // 'exact': o ATLAS fixa o ID da conversa ao iniciar e retoma por ele; 'folder': o CLI
 // retoma a conversa mais recente da pasta; 'none': não há como retomar e abre uma nova.
 const CONVERSATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function conversationSupport(adapterId, role = 'agent') {
+function conversationSupport(adapterId, role = 'agent', orchestratorMode = 'coordinate') {
   if (adapterId === 'claude-code' || adapterId === 'gemini') return 'exact';
-  // Kimi: --agent-file (perfil da principal) não combina com --session/--continue.
-  if (adapterId === 'kimi-code') return role === 'orchestrator' ? 'none' : 'folder';
+  // Kimi: --agent-file (modo somente leitura) não combina com --session/--continue.
+  if (adapterId === 'kimi-code') return role === 'orchestrator' && orchestratorMode === 'coordinate' ? 'none' : 'folder';
   if (adapterId === 'opencode' || adapterId === 'codex') return 'folder';
   return 'none';
 }
 
 // conversation: null (sem controle), { mode: 'new', id }, { mode: 'resume', id } ou { mode: 'continue' }.
-function conversationArgs(adapter, role, conversation) {
+function conversationArgs(adapter, role, conversation, orchestratorMode) {
   if (!conversation) return { prefix: [], suffix: [] };
   const { mode, id } = conversation;
   if (!['new', 'resume', 'continue'].includes(mode)) throw new Error('Retomada de conversa inválida.');
   if ((mode === 'new' || mode === 'resume') && !CONVERSATION_ID.test(String(id))) throw new Error('Conversa inválida.');
-  const support = conversationSupport(adapter.id, role);
+  const support = conversationSupport(adapter.id, role, orchestratorMode);
   if (mode === 'new') return support === 'exact' ? { prefix: [], suffix: ['--session-id', id] } : { prefix: [], suffix: [] };
   if (support === 'none') throw new Error(`${adapter.name} não retoma a conversa desta sessão.`);
   if (adapter.id === 'claude-code') return { prefix: [], suffix: mode === 'resume' ? ['--resume', id] : ['--continue'] };
@@ -330,7 +330,7 @@ function kickoffArgs(adapter, role, conversation, kickoff) {
 
 function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, geminiProfile = null, bridge = null, orchestratorMode = 'coordinate', conversation = null, kickoff = false }) {
   const launch = baseLaunch({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge, orchestratorMode });
-  const { prefix, suffix } = conversationArgs(adapter, role, conversation);
+  const { prefix, suffix } = conversationArgs(adapter, role, conversation, orchestratorMode);
   const spawnArgs = adapter.spawnArgs || [];
   return { ...launch, args: [...spawnArgs, ...prefix, ...launch.args.slice(spawnArgs.length), ...suffix, ...kickoffArgs(adapter, role, conversation, kickoff)] };
 }
