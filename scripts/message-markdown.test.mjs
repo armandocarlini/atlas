@@ -16,7 +16,7 @@ const REAL_BODY = [
   'Requisitos:',
   '1. Renderizar o corpo como markdown seguro, sem HTML cru: `código`, **negrito** e listas.',
   '2. Nunca truncar nem resumir.',
-  '   - Caminho longo: C:\\Users\\Armando\\Documents\\atlas-mensagens\\src\\message-card.js',
+  '   - Caminho longo: C:\\Users\\example\\Documents\\atlas\\src\\message-card.js',
   '10. Rodar `npm run build` e `npm test` com o Node em C:\\Program Files\\nodejs.',
   '',
   '```powershell',

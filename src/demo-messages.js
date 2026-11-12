@@ -11,7 +11,7 @@ export const DEMO_MESSAGES = [
     createdAt: minutesAgo(1),
     readAt: null,
     body: [
-      'Resumo da verificação em `C:\\Users\\dev\\Documents\\atlas-t0\\src\\terminal-host.js`:',
+      'Resumo da verificação em `C:\\Users\\example\\Documents\\atlas-t0\\src\\terminal-host.js`:',
       '',
       '1. `npm test` passou: 214 testes, 0 falhas.',
       '2. `npm run test:desktop` falhou no passo de redimensionamento (sequência `\\x1b[8;40;120t`).',
