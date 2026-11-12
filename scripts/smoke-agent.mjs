@@ -386,7 +386,7 @@ try {
   await evaluateMain(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Mensagens')).click()`);
   await until(() => evaluateMain(`document.querySelector('.messages-panel')?.innerText.includes('Descoberta real do smoke')`), 'descoberta listada no painel');
   assert(await evaluateMain(`document.querySelector('.messages-panel').innerText.includes('1 não lida')`), 'contagem de não lidas');
-  await evaluateMain(`[...document.querySelectorAll('button.message-card')].find(item => item.innerText.includes('Descoberta real do smoke')).click()`);
+  await evaluateMain(`[...document.querySelectorAll('.msg-card')].find(item => item.innerText.includes('Descoberta real do smoke')).querySelector('.msg-mark').click()`);
   await until(() => evaluateMain(`document.querySelector('.messages-panel')?.innerText.includes('0 não lidas')`), 'descoberta marcada como lida');
   console.log('PASS descoberta real entre sessões: modal, persistência, painel e leitura');
 

@@ -222,16 +222,6 @@ kbd { color: var(--faint); background: #13171a; border: 1px solid var(--border);
 .queue-item strong { display: block; color: #9da5a9; font-size: 9px; font-weight: 450; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .queue-item > svg { color: #41494e; }
 .messages-panel h2, .evidence-panel h2 { margin-top: 18px; }
-.message-card { padding: 12px 0; border-bottom: 1px solid var(--border-soft); position: relative; }
-button.message-card { display: block; width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid var(--border-soft); color: inherit; font: inherit; cursor: pointer; }
-button.message-card:disabled { cursor: default; }
-button.message-card:not(:disabled):hover .message-route span:first-child { color: var(--accent-text); }
-button.message-card strong { display: block; font-size: 11px; font-weight: 550; margin-top: 6px; }
-.message-card.unread::before { content: ""; position: absolute; left: -14px; top: 17px; width: 2px; height: 25px; background: var(--accent); }
-.message-route { display: flex; align-items: center; gap: 6px; color: #849096; font: 7px var(--mono); }
-.message-route span:first-child { color: #75c9c8; }
-.message-card p { color: #a0a8ac; font-size: 10px; line-height: 1.55; margin: 9px 0; }
-.message-card small { color: var(--faint); font: 7px var(--mono); }
 .evidence-item { display: flex; align-items: flex-start; gap: 10px; padding: 13px 0; border-bottom: 1px solid var(--border-soft); color: #78848a; }
 .evidence-item > div { flex: 1; }
 .evidence-item strong, .evidence-item span, .evidence-item small { display: block; }
@@ -365,15 +355,14 @@ button.message-card strong { display: block; font-size: 11px; font-weight: 550; 
 .task-id { font-size: 11px; margin-top: 17px; }
 .task-overview h2, .messages-panel h2, .evidence-panel h2 { font-size: 17px; }
 .task-overview > p { color: var(--muted); font-size: 12px; }
-.task-owner span, .criteria-head strong, .queue-item small, .message-route,
-.message-card small, .evidence-item span, .evidence-item small { font-size: 10px; }
+.task-owner span, .criteria-head strong, .queue-item small,
+.evidence-item span, .evidence-item small { font-size: 10px; }
 .task-owner strong { font-size: 11px; }
 .criteria-head, .criteria-list li { font-size: 11px; }
 .criteria-list li { color: var(--muted); }
 .review-button { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 25%, var(--border)); }
 .review-button:hover { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); border-color: var(--accent); }
 .queue-item strong { font-size: 11px; color: #b8bec2; }
-.message-card p { font-size: 12px; }
 .evidence-item strong { font-size: 12px; }
 .evidence-note { border-color: color-mix(in srgb, var(--accent) 22%, var(--border)); }
 .evidence-note p, .scope-note span { color: var(--muted); font-size: 11px; }
@@ -436,8 +425,6 @@ button.message-card strong { display: block; font-size: 11px; font-weight: 550; 
 .task-status.blocked { color: var(--danger); background: #ef636312; }
 .task-status.done, .success-text { color: var(--success) !important; }
 .progress-track span { background: var(--accent); }
-.message-route span:first-child, .message-route svg { color: var(--muted); }
-.message-card.unread::before { background: var(--accent); }
 .evidence-item > svg { color: var(--muted); }
 .evidence-item:nth-of-type(3) > svg { color: var(--success); }
 .statusbar > div:last-child > span svg { color: var(--muted); }
@@ -580,7 +567,7 @@ body { transition: background-color .18s ease, color .18s ease; }
 .mission-subbar, .statusbar, .workspace-path, .demo-label,
 .mission-title span, .sidebar-heading, .section-kicker, .section-title,
 .task-owner span, .criteria-head, .criteria-list li, .queue-item small,
-.message-card small, .evidence-item small, .appearance-content > footer > span {
+.evidence-item small, .appearance-content > footer > span {
   color: var(--muted);
 }
 .session-grid { gap: 12px; padding: 14px; }
@@ -655,7 +642,7 @@ body { transition: background-color .18s ease, color .18s ease; }
 
 /* Semantic text colors stay readable when the user changes the background. */
 .mission-list button, .local-card > div, .queue-item strong,
-.task-owner strong, .criteria-list li.complete, .message-card p,
+.task-owner strong, .criteria-list li.complete,
 .harness-intro strong, .harness-intro span { color: var(--text); }
 .task-owner, kbd, .user-avatar, .mission-symbol, .harness-statusbar,
 .terminal-composer { background: var(--surface-raised); }
@@ -863,3 +850,108 @@ body { transition: background-color .18s ease, color .18s ease; }
 
 /* Revisão cruzada: aviso de mesma IA no cartão de pedido, sem bloquear. */
 .agent-choice-note.agent-request-same-ai { color: var(--warning); }
+
+/* Painel Mensagens: leitura confortável em qualquer largura do painel. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.messages-panel { container: messages / inline-size; min-width: 0; }
+.messages-note { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.messages-list { display: grid; gap: 10px; }
+.msg-card { position: relative; display: grid; gap: 8px; min-width: 0; padding: 12px 12px 12px 14px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); color: var(--text); user-select: text; scroll-margin: 12px; }
+.msg-card.unread { border-color: var(--border); background: var(--surface-raised); }
+.msg-card::before { content: ""; position: absolute; inset: 10px auto 10px -1px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; }
+.msg-card.unread::before { background: var(--accent); }
+.msg-card.tone-attention::before { background: var(--warning); }
+.msg-card.tone-danger::before { background: var(--danger); }
+.msg-card.tone-success::before { background: var(--success); }
+.msg-card:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.msg-card p, .msg-card h3 { margin: 0; }
+/* O chrome tipográfico esconde ícones por padrão; aqui eles carregam significado (tom, tipo, rota). */
+.messages-panel .msg-card svg { display: inline-block; flex: none; }
+.messages-panel .section-kicker { flex-wrap: wrap; gap: 4px 12px; }
+.messages-panel .section-kicker > span:last-child { white-space: nowrap; }
+
+.msg-flag { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; padding: 3px 8px; border: 1px solid currentColor; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.4; }
+.msg-flag svg { flex: none; }
+.msg-flag.tone-attention { color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, transparent); }
+.msg-flag.tone-danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.msg-flag.tone-success { color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); }
+
+.msg-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 10px; min-width: 0; }
+.msg-route { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; color: var(--muted); font: 11px/1.4 var(--mono); }
+.msg-route svg { flex: none; color: var(--faint); }
+.msg-party { min-width: 0; overflow-wrap: anywhere; }
+.msg-from { color: var(--text); }
+.msg-time { flex: none; color: var(--muted); font: 11px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+.msg-subject { color: var(--text); font-size: 13px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.msg-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.msg-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.msg-badge.state-unread { color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.msg-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.msg-body { position: relative; min-width: 0; color: var(--text); font-size: 12.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.msg-body > * + * { margin-top: 8px; }
+.msg-body p { margin: 0; }
+.msg-body.collapsed { padding-bottom: 4px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+.md-heading { color: var(--text); font-weight: 600; }
+.md-h1 { font-size: 14px; }
+.md-h2, .md-h3 { font-size: 13px; }
+.md-label { color: var(--text); font-weight: 600; }
+.md-list { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
+.md-list .md-list { margin-top: 4px; }
+.md-list li { padding-left: 2px; }
+.md-list li::marker { color: var(--muted); font-variant-numeric: tabular-nums; }
+.md-list li > p { display: inline; }
+.md-list li > p + * { margin-top: 4px; }
+.md-code { padding: 1px 4px; border: 1px solid var(--border-soft); border-radius: 4px; background: var(--surface-hover); color: var(--text); font: 0.92em/1.4 var(--mono); overflow-wrap: anywhere; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.md-pre { margin: 0; padding: 8px 10px; max-width: 100%; overflow-x: auto; border: 1px solid var(--border-soft); border-radius: 6px; background: var(--bg); color: var(--text); font: 12px/1.5 var(--mono); white-space: pre; overflow-wrap: normal; }
+.md-pre:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.md-tone-icon { display: inline-block; margin-right: 5px; vertical-align: -2px; }
+.md-line.tone-attention, li.tone-attention { color: var(--warning); }
+.md-line.tone-danger, li.tone-danger { color: var(--danger); }
+.md-line.tone-success, li.tone-success { color: var(--success); }
+li[class*="tone-"] .md-code, .md-line[class*="tone-"] .md-code { color: inherit; }
+
+.msg-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.msg-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12px; transition: background-color .15s ease, border-color .15s ease; }
+.msg-action:hover:not(:disabled) { background: var(--surface-hover); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.msg-action:active:not(:disabled) { transform: scale(.98); }
+.msg-action:disabled { opacity: .55; cursor: wait; }
+.msg-more svg { transition: transform .2s ease; }
+.msg-more[aria-expanded="true"] svg { transform: rotate(180deg); }
+.msg-mark { color: var(--accent-text); }
+
+/* Estreita: tudo empilha, ações ocupam a largura e o corpo segue legível. */
+@container messages (max-width: 299px) {
+  .msg-card { padding: 10px 10px 10px 12px; }
+  .msg-head { flex-direction: column; align-items: flex-start; }
+  .msg-actions { display: grid; }
+  .md-list { padding-left: 18px; }
+  .md-pre { font-size: 12px; padding: 6px 8px; }
+}
+/* Média: cabeçalho em uma linha quando cabe. */
+@container messages (min-width: 300px) and (max-width: 479px) {
+  .msg-actions { justify-content: flex-start; }
+}
+/* Larga: mais respiro e medida de leitura limitada. */
+@container messages (min-width: 480px) {
+  .msg-card { padding: 14px 16px 14px 18px; gap: 10px; }
+  .msg-subject { font-size: 14px; }
+  .msg-body { font-size: 13px; max-width: 78ch; }
+  .msg-actions { justify-content: flex-end; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-more svg, .msg-action { transition: none; }
+  .msg-action:active:not(:disabled) { transform: none; }
+}
+
+@media (forced-colors: active) {
+  .msg-card { border-color: CanvasText; }
+  .messages-panel .msg-card.unread::before, .messages-panel .msg-card[class*="tone-"]::before { background: CanvasText; forced-color-adjust: none; }
+  .msg-dot { forced-color-adjust: none; background: CanvasText; }
+  .msg-flag, .msg-badge, .msg-action, .md-code, .md-pre { border-color: CanvasText; }
+  .msg-flag { border-width: 2px; }
+  .msg-action:focus-visible, .msg-card:focus-visible, .md-pre:focus-visible { outline-color: Highlight; }
+  .msg-body.collapsed { -webkit-mask-image: none; mask-image: none; border-bottom: 1px dashed CanvasText; }
+  .md-tone-icon, .msg-flag svg { color: CanvasText; }
+}

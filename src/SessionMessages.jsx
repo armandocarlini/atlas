@@ -1,31 +1,28 @@
 import { useState } from 'react';
 import { Send } from 'lucide-react';
 import useModalFocus from './useModalFocus.js';
+import { MessageCard } from './message-card.js';
+import { DEMO_MESSAGES } from './demo-messages.js';
 
-function formatWhen(iso) {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-}
-
-export function SessionMessagesPanel({ state, onMarkRead, readOnly = false }) {
+export function SessionMessagesPanel({ state, onMarkRead, readOnly = false, demo = false }) {
   const unread = state.items.filter((message) => !message.readAt).length;
   return <section className="messages-panel" aria-label="Mensagens entre sessões do projeto">
-    <div className="section-kicker"><span>COLABORAÇÃO</span><span role="status" aria-atomic="true">{unread === 1 ? '1 não lida' : `${unread} não lidas`}</span></div>
+    <div className="section-kicker"><span>{demo ? 'COLABORAÇÃO · DEMONSTRAÇÃO' : 'COLABORAÇÃO'}</span><span role="status" aria-atomic="true">{unread === 1 ? '1 não lida' : `${unread} não lidas`}</span></div>
     <h2>Mensagens entre sessões</h2>
     {state.loading ? <p role="status">Carregando mensagens…</p> : state.error ? <p className="error-note" role="alert">{state.error}</p> : !state.projectId ? <p>Selecione um projeto autorizado.</p> : <>
-      {readOnly && <p>Leitura na janela de acompanhamento; marque como lida na janela principal.</p>}
-      {!state.items.length ? <p>Nenhuma mensagem registrada neste projeto.</p> : state.items.map((message) => {
-        const mark = !readOnly && !message.readAt ? () => onMarkRead(message) : undefined;
-        const label = `${message.readAt ? 'Mensagem lida' : 'Mensagem não lida'} de ${message.fromName} para ${message.toName}: ${message.subject}`;
-        return <button type="button" key={message.id} className={`message-card ${message.readAt ? '' : 'unread'}`} aria-label={label} disabled={!mark} onClick={mark}>
-          <div className="message-route"><span>{message.fromName}</span><Send size={12} aria-hidden="true" /><span>{message.toName}</span></div>
-          <strong>{message.subject}</strong>
-          <p>{message.body}</p>
-          <small>{message.kind === 'discovery' ? 'descoberta' : 'nota'} · {formatWhen(message.createdAt)} · {message.readAt ? `lida em ${formatWhen(message.readAt)}` : 'não lida'}</small>
-        </button>;
-      })}
+      {readOnly && <p className="messages-note">Leitura na janela de acompanhamento; marque como lida na janela principal.</p>}
+      {!state.items.length ? <p className="messages-note">Nenhuma mensagem registrada neste projeto.</p> : <div className="messages-list">
+        {state.items.map((message) => <MessageCard key={message.id} message={message} readOnly={readOnly} onMarkRead={onMarkRead} />)}
+      </div>}
     </>}
   </section>;
+}
+
+/** Painel do navegador: mesmos cartões, com mensagens de demonstração em memória. */
+export function DemoMessagesPanel() {
+  const [items, setItems] = useState(DEMO_MESSAGES);
+  const markRead = (message) => setItems((current) => current.map((item) => item.id === message.id ? { ...item, readAt: new Date().toISOString() } : item));
+  return <SessionMessagesPanel demo state={{ loading: false, error: '', projectId: 'demo', items }} onMarkRead={markRead} />;
 }
 
 export function NewMessageModal({ projectName, fromName, toName, onSend, onClose }) {
