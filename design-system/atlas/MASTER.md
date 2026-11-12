@@ -141,6 +141,13 @@ Controles possuem rótulos tipográficos discretos, foco visível e estado disab
 - A barra de título mostra a paleta em uma cápsula com lupa e atalho. Aparência usa um ícone com nome acessível.
 - A barra do workspace agrupa Navegação, Painéis e o seletor de layout. A superfície indica as colunas visíveis. Estado do projeto e criação de terminal usam ícones. O botão **+** de nova sessão usa a cor de destaque do tema. Ícones de ação têm nome acessível, dica ao passar o ponteiro e foco visível.
 - Os cabeçalhos de projetos e painéis usam ícones para ações compactas. Restaurar layout, Funções de agente e Aparência continuam disponíveis pela paleta, com a contagem de funções pendentes na entrada de Funções de agente.
+- **Painel Mensagens** (`src/message-card.js`, `src/message-markdown.js`):
+  - Cada mensagem é um cartão (`article`) com texto selecionável. O cabeçalho mostra de → para e a data; abaixo vêm o assunto e os selos de tipo (nota ou descoberta) e de estado (lida ou não lida).
+  - O corpo é markdown seguro, montado pelo React sem HTML cru: parágrafos com as quebras originais, títulos, rótulos de seção ("Requisitos:"), listas numeradas (com a numeração original) e com tópicos, `código` e **negrito**. Caminhos longos quebram; blocos de código rolam na horizontal.
+  - Nada é truncado nem resumido. A não lida abre inteira e continua aberta depois de marcada. A lida e longa abre recolhida, com um único botão "Mostrar tudo (+N linhas)".
+  - Tom pelas variáveis do tema, sempre com ícone e texto: âmbar para "precisa de você" ("Para o usuário:", "precisa de aprovação", "bloqueado"), vermelho para falha e verde para sucesso, no selo do topo do cartão e em cada linha ou item. Negações ("sem erros", "0 falhas", "nenhum erro") não ficam vermelhas, e trechos de código não definem o tom.
+  - "Marcar como lida" é um botão próprio. Ele não aparece na janela de acompanhamento, que é somente leitura.
+  - Container queries nas faixas estreita (até 299px, tudo empilha), média e larga (a partir de 480px, medida de leitura limitada). O corpo tem no mínimo 12px. Em `forced-colors`, bordas, ícones e textos usam as cores do sistema.
 - Navegação, workspace e Painéis compartilham a altura de cabeçalho quando encaixados. As junções usam mudanças graduais de tom. A seleção na árvore e nas abas de painel usa superfícies arredondadas e peso tipográfico.
 
 - Na Navegação compacta, CLI, modelo, estado e alterações saem da vista, não do leitor de tela: ficam ocultos só visualmente, dentro do nome do botão, além da dica. Os painéis que saem de um trilho devolvem o foco ao botão de origem (ou à área dos terminais, se o botão sumiu) quando fecham com o foco dentro, inclusive no resize.

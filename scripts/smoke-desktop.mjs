@@ -406,7 +406,7 @@ try {
   assert(messagesText.includes('1 não lida'), 'Unread count announced as text');
   assert.equal(await main.evaluate(`document.querySelectorAll('.messages-panel .scope-note').length`), 0, 'Desktop must not mark real messages as illustrative');
   assert(await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Mensagens')).textContent.includes('1')`), 'Unread badge on messages tab');
-  await main.evaluate(`[...document.querySelectorAll('button.message-card')].find(item => item.innerText.includes('Descoberta da fixture')).click()`);
+  await main.evaluate(`[...document.querySelectorAll('.msg-card')].find(item => item.innerText.includes('Descoberta da fixture')).querySelector('.msg-mark').click()`);
   await until(() => main.evaluate(`document.querySelector('.messages-panel')?.innerText.includes('0 não lidas')`), 'message marked read');
   const readMessages = await native('invoke', { channel: 'message:list', args: [{ cwd: extraProject }] });
   assert.equal(readMessages.items.length, 1);

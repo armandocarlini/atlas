@@ -30,7 +30,6 @@ import {
   PanelRightOpen,
   Plus,
   Search,
-  Send,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -53,7 +52,7 @@ import { nextVisibleSessionId, normalizeTerminalLayout, sessionsInLayout, visibl
 import { agentSession, mergeAgentSessions, restoreSummary, sessionExit, terminalSession, usesGemini, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
-import { SessionMessagesPanel, NewMessageModal } from './SessionMessages.jsx';
+import { SessionMessagesPanel, NewMessageModal, DemoMessagesPanel } from './SessionMessages.jsx';
 import { KimiIntegrationModal, KimiIntegrationNotice, KimiIntegrationStatus } from './KimiIntegration.jsx';
 
 // Integrações MCP que dependem de consentimento: métodos da ponte do preload por CLI.
@@ -745,13 +744,7 @@ function Inspector({ activeTask, onTaskSelect, tab, onTabChange, panels, onReord
         </section>
       </>)}
 
-      {activePanel === 'messages' && (messagesPanel || <section className="messages-panel">
-        <div className="section-kicker"><span>COLABORAÇÃO</span><span>2 não lidas</span></div>
-        <h2>Mensagens entre sessões</h2>
-        <div className="message-card unread"><div className="message-route"><span>exploracao-terminal</span><Send size={12} /><span>orquestrador</span></div><p>Resize e entrada validados. Encontrei uma divergência no tratamento de sequências ANSI.</p><small>ATL-024 · agora · mensagem #0184</small></div>
-        <div className="message-card unread"><div className="message-route"><span>atlas-core</span><Send size={12} /><span>orquestrador</span></div><p>Contratos revisados. Handoff pronto para revisão com 17 testes registrados.</p><small>ATL-031 · 2 min · handoff #0042</small></div>
-        <div className="message-card"><div className="message-route"><span>orquestrador</span><Send size={12} /><span>atlas-core</span></div><p>Priorize o caso de entrega duplicada antes de submeter a revisão.</p><small>ATL-031 · 8 min · lida</small></div>
-      </section>)}
+      {activePanel === 'messages' && (messagesPanel || <DemoMessagesPanel />)}
 
       {activePanel === 'evidence' && (evidencePanel || <section className="evidence-panel">
         <div className="section-kicker"><span>ENTREGA VERIFICÁVEL</span><ShieldCheck size={15} /></div>
