@@ -51,7 +51,9 @@ try {
   pass(`modelos listados sem rede: ${models.join(', ')}`);
 
   const bridge = { command: 'C:\\Program Files\\ATLAS (smoke)\\ATLAS.exe', args: ['C:\\ATLAS (smoke)\\atlas-mcp-bridge.cjs'], env: { ELECTRON_RUN_AS_NODE: '1', ATLAS_MCP_ENDPOINT: 'fixture-endpoint', ATLAS_MCP_TOKEN: 'token-do-smoke' } };
-  const launch = launchFor({ adapter: codex, model: models[0], bridge });
+  const launch = launchFor({ adapter: codex, role: 'orchestrator', orchestratorMode: 'auto', model: models[0], bridge });
+  assert.deepEqual(launch, launchFor({ adapter: codex, model: models[0], bridge }));
+  pass('principal com permissões nativas usa os mesmos argumentos do agente');
   assert(!launch.args.some((item) => item.includes('token-do-smoke') || item.includes('fixture-endpoint')), 'token fora da linha de comando');
   const configArgs = launch.args.slice(launch.args.indexOf('-c'));
   const entry = JSON.parse((await run(['mcp', 'get', 'atlas', '--json', ...configArgs])).replace(/^[^{]*/, ''));
@@ -65,8 +67,8 @@ try {
   assert(!listed.includes('atlas'), 'a ponte não fica gravada na home do Codex');
   pass('nada gravado na configuração do Codex');
 
-  assert.throws(() => assertOrchestratorSupport(codex), /Codex indisponível para a principal/);
-  pass('principal Codex recusada com motivo');
+  assert.throws(() => assertOrchestratorSupport(codex), /Desligue “Principal só coordena”/);
+  pass('modo somente leitura indica como habilitar a principal Codex');
 } catch (error) {
   failure = error;
 }

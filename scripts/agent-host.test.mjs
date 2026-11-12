@@ -641,8 +641,8 @@ test('CLI que não informa modelos não aceita troca informada', async (t) => {
   await assert.rejects(handlers.get('agent:declare-model')(mainEvent, { sessionId: agent.id, model: 'prov/a' }), /não informa modelos/);
 });
 
-test('regressão Kimi 2.4: principal recusa versões com perda do perfil antes de criar PTY, token ou run', async (t) => {
-  for (const version of ['2.4.0', '2.4.1']) {
+test('Kimi com perda de perfil recusa somente leitura e abre a principal com permissões nativas', async (t) => {
+  for (const version of ['2.4.0', '2.4.1', '2.5.2']) {
     const fixture = orchestratorFixture(t);
     let grants = 0;
     const mcpHost = fakeMcpHost();
@@ -660,6 +660,10 @@ test('regressão Kimi 2.4: principal recusa versões com perda do perfil antes d
     assert.equal(manual.role, 'agent', 'a proteção da principal não escolhe outro CLI nem bloqueia agentes manuais');
     assert.equal(spawns.length, 1);
     assert.equal(grants, 1);
+    const principal = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code', orchestratorMode: 'auto' });
+    assert.equal(principal.role, 'orchestrator');
+    assert.deepEqual(spawns[1].args, spawns[0].args);
+    assert.match(mcpHost.grants.get('token-2').instructions, /mcp__atlas__tasks_create/);
   }
 });
 
@@ -670,8 +674,6 @@ test('modo da principal: só coordena por padrão; a escolha do diálogo fica sa
   assert.deepEqual(await handlers.get('agent:orchestrator-mode')(mainEvent, { cwd: 'C:\\projeto' }), { projectId: 'project-a', mode: 'coordinate' });
   await assert.rejects(handlers.get('agent:orchestrator-mode')({ sender: 'popup' }, { cwd: 'C:\\projeto' }), /não autorizada/);
   await assert.rejects(handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'claude-code', orchestratorMode: 'tudo' }), /Modo da principal inválido/);
-  // Kimi não tem o modo auto verificado: a recusa vem antes de iniciar qualquer processo.
-  await assert.rejects(handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code', orchestratorMode: 'auto' }), /não foi verificado no Kimi Code/);
   assert.equal(spawns.length, 0);
   const auto = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'claude-code', orchestratorMode: 'auto' });
   assert.equal(auto.role, 'orchestrator');
@@ -679,6 +681,27 @@ test('modo da principal: só coordena por padrão; a escolha do diálogo fica sa
   for (const flag of ['--restricted', '--tools', '--strict-mcp-config', '--settings']) assert(!spawns[0].args.includes(flag), flag);
   assert.equal(fixture.store.getOrchestratorMode('project-a'), 'auto');
   assert.deepEqual(await handlers.get('agent:orchestrator-mode')(mainEvent, { cwd: 'C:\\projeto' }), { projectId: 'project-a', mode: 'auto' });
+});
+
+test('principal Codex abre no modo nativo com instruções e autorização próprias na ponte', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const mcpHost = fakeMcpHost();
+  const codex = { id: 'codex', name: 'Codex', executable: 'C:\\cli\\codex.cmd', spawnArgs: [], status: 'available', version: '0.167.0' };
+  const bridgeEntry = { command: 'C:\\ATLAS\\electron.exe', args: ['bridge.cjs'], env: {} };
+  const { handlers, mainEvent, spawns } = createHarness({ ...fixture, adapters: [codex], mcpHost, bridgeEntry });
+  const open = (orchestratorMode) => handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'codex', orchestratorMode });
+  assert.match((await handlers.get('agent:list-adapters')(mainEvent))[0].coordinateModeError, /Desligue “Principal só coordena”/);
+  await assert.rejects(open('coordinate'), /Desligue “Principal só coordena”/);
+  assert.equal(spawns.length, 0);
+  assert.equal(mcpHost.grants.size, 0);
+  const principal = await open('auto');
+  assert.equal(principal.role, 'orchestrator');
+  assert.equal(principal.adapterId, 'codex');
+  assert(spawns[0].args.includes("mcp_servers.atlas.env_vars=['ATLAS_MCP_ENDPOINT','ATLAS_MCP_TOKEN']"));
+  const grant = mcpHost.grants.get(spawns[0].env.ATLAS_MCP_TOKEN);
+  assert.equal(grant.runId, principal.runId);
+  assert.match(grant.instructions, /mcp__atlas__tasks_create/);
+  assert.match(grant.instructions, /arquivos fora do projeto e ferramentas web/);
 });
 
 

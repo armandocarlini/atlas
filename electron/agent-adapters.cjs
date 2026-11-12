@@ -237,17 +237,24 @@ function coordinatePermission() {
 
 // Argumentos e ambiente da run para cada CLI. `bridge` é a entrada MCP da ponte
 // (comando, argumentos e ambiente com o token da run) ou null sem ferramentas.
-function assertOrchestratorSupport(adapter) {
+function coordinateModeError(adapter) {
   // Reproduções sem API: docs/diagnosticos/KIMI_2_4_MCP.md.
   // Não se presume que uma versão futura tenha o mesmo defeito.
-  if (adapter.id === 'kimi-code' && /^(?:2\.4\.0|2\.4\.1)$/.test(adapter.version)) {
-    throw new Error(`Kimi Code ${adapter.version} indisponível para a principal: a integração MCP e a preservação do perfil somente leitura não estão verificadas nesta versão. Escolha outro CLI detectado. Agentes manuais continuam disponíveis.`);
+  if (adapter.id === 'kimi-code' && /^(?:2\.4\.0|2\.4\.1|2\.5\.2)$/.test(adapter.version)) {
+    return `O perfil somente leitura do Kimi Code ${adapter.version} não é confiável. Desligue “Principal só coordena” para usar as permissões do Kimi Code.`;
   }
   // docs/diagnosticos/CLAUDE_CODEX_FASE1.md: a edição de arquivos não sai do Codex
   // e, sem shell, ele não lê arquivos; o somente leitura não está comprovado.
   if (adapter.id === 'codex') {
-    throw new Error('Codex indisponível para a principal: ainda não há como garantir que ela só leia (a ferramenta de edição continua ativa no CLI). Escolha outro CLI detectado. O Codex continua disponível como agente.');
+    return 'O perfil somente leitura ainda não foi verificado no Codex. Desligue “Principal só coordena” para usar as permissões do Codex.';
   }
+  return null;
+}
+
+function assertOrchestratorSupport(adapter, mode = 'coordinate') {
+  if (!ORCHESTRATOR_MODES.includes(mode)) throw new Error('Modo da principal inválido.');
+  const error = mode === 'coordinate' && coordinateModeError(adapter);
+  if (error) throw new Error(error);
 }
 
 // Principal no Claude Code (docs/diagnosticos/CLAUDE_CODEX_FASE1.md): `--restricted`
@@ -281,21 +288,21 @@ function codexBridgeArgs(bridge) {
 // 'exact': o ATLAS fixa o ID da conversa ao iniciar e retoma por ele; 'folder': o CLI
 // retoma a conversa mais recente da pasta; 'none': não há como retomar e abre uma nova.
 const CONVERSATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function conversationSupport(adapterId, role = 'agent') {
+function conversationSupport(adapterId, role = 'agent', orchestratorMode = 'coordinate') {
   if (adapterId === 'claude-code' || adapterId === 'gemini') return 'exact';
-  // Kimi: --agent-file (perfil da principal) não combina com --session/--continue.
-  if (adapterId === 'kimi-code') return role === 'orchestrator' ? 'none' : 'folder';
+  // Kimi: --agent-file (modo somente leitura) não combina com --session/--continue.
+  if (adapterId === 'kimi-code') return role === 'orchestrator' && orchestratorMode === 'coordinate' ? 'none' : 'folder';
   if (adapterId === 'opencode' || adapterId === 'codex') return 'folder';
   return 'none';
 }
 
 // conversation: null (sem controle), { mode: 'new', id }, { mode: 'resume', id } ou { mode: 'continue' }.
-function conversationArgs(adapter, role, conversation) {
+function conversationArgs(adapter, role, conversation, orchestratorMode) {
   if (!conversation) return { prefix: [], suffix: [] };
   const { mode, id } = conversation;
   if (!['new', 'resume', 'continue'].includes(mode)) throw new Error('Retomada de conversa inválida.');
   if ((mode === 'new' || mode === 'resume') && !CONVERSATION_ID.test(String(id))) throw new Error('Conversa inválida.');
-  const support = conversationSupport(adapter.id, role);
+  const support = conversationSupport(adapter.id, role, orchestratorMode);
   if (mode === 'new') return support === 'exact' ? { prefix: [], suffix: ['--session-id', id] } : { prefix: [], suffix: [] };
   if (support === 'none') throw new Error(`${adapter.name} não retoma a conversa desta sessão.`);
   if (adapter.id === 'claude-code') return { prefix: [], suffix: mode === 'resume' ? ['--resume', id] : ['--continue'] };
@@ -323,23 +330,22 @@ function kickoffArgs(adapter, role, conversation, kickoff) {
 
 function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, geminiProfile = null, bridge = null, orchestratorMode = 'coordinate', conversation = null, kickoff = false }) {
   const launch = baseLaunch({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge, orchestratorMode });
-  const { prefix, suffix } = conversationArgs(adapter, role, conversation);
+  const { prefix, suffix } = conversationArgs(adapter, role, conversation, orchestratorMode);
   const spawnArgs = adapter.spawnArgs || [];
   return { ...launch, args: [...spawnArgs, ...prefix, ...launch.args.slice(spawnArgs.length), ...suffix, ...kickoffArgs(adapter, role, conversation, kickoff)] };
 }
 
 function baseLaunch({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, geminiProfile = null, bridge = null, orchestratorMode = 'coordinate' }) {
-  if (role === 'orchestrator') assertOrchestratorSupport(adapter);
+  if (role === 'orchestrator') assertOrchestratorSupport(adapter, orchestratorMode);
   if (!ORCHESTRATOR_MODES.includes(orchestratorMode)) throw new Error('Modo da principal inválido.');
   const auto = role === 'orchestrator' && orchestratorMode === 'auto';
-  // Kimi: o perfil de escrita da principal não foi verificado (docs/diagnosticos/KIMI_2_4_MCP.md).
-  if (auto && adapter.id === 'kimi-code') throw new Error('O modo em que a principal também edita ainda não foi verificado no Kimi Code. Ligue "Principal só coordena" ou escolha outro CLI.');
   if (model !== null && !MODEL_PATTERN.test(model)) throw new Error('Modelo inválido.');
   const modelArgs = model ? ['--model', model] : [];
   if (adapter.id === 'kimi-code') {
-    if (role === 'orchestrator' && typeof orchestratorProfile !== 'string') throw new Error('Perfil do orquestrador não configurado.');
+    const coordinate = role === 'orchestrator' && !auto;
+    if (coordinate && typeof orchestratorProfile !== 'string') throw new Error('Perfil do orquestrador não configurado.');
     // A versão conferida não deve mudar por autoatualização ao iniciar a run.
-    return { args: [...adapter.spawnArgs, ...modelArgs, ...(role === 'orchestrator' ? ['--agent-file', orchestratorProfile] : [])], env: { KIMI_CODE_NO_AUTO_UPDATE: '1' } };
+    return { args: [...adapter.spawnArgs, ...modelArgs, ...(coordinate ? ['--agent-file', orchestratorProfile] : [])], env: { KIMI_CODE_NO_AUTO_UPDATE: '1' } };
   }
   if (adapter.id === 'opencode') {
     const config = {};
@@ -396,4 +402,4 @@ function baseLaunch({ adapter, role = 'agent', model = null, orchestratorProfile
   throw new Error(`${adapter.name} não tem lançamento definido no ATLAS.`);
 }
 
-module.exports = { ADAPTERS, VERSION_TIMEOUT_MS, MODEL_PATTERN, ORCHESTRATOR_AGENT, AGENT_KICKOFF_PROMPT, CMD_SAFE_VALUE, discoverAdapters, parseVersion, resolveOnPath, listModels, launchFor, conversationSupport, runCli, assertOrchestratorSupport };
+module.exports = { ADAPTERS, VERSION_TIMEOUT_MS, MODEL_PATTERN, ORCHESTRATOR_AGENT, AGENT_KICKOFF_PROMPT, CMD_SAFE_VALUE, discoverAdapters, parseVersion, resolveOnPath, listModels, launchFor, conversationSupport, runCli, assertOrchestratorSupport, coordinateModeError };
