@@ -7,7 +7,7 @@ const { ADAPTERS, launchFor, conversationSupport } = createRequire(import.meta.u
 const adapter = (id) => ({ ...ADAPTERS.find((item) => item.id === id), executable: `C:\\cli\\${id}.exe`, version: '1.0.0' });
 const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const claudeProfile = { mcpConfig: 'C:\\perfil\\mcp.json', settings: 'C:\\perfil\\settings.json', instructions: 'C:\\perfil\\principal.md', instructionsAuto: 'C:\\perfil\\auto.md' };
-const geminiProfile = { policy: 'C:\\perfil\\policy.toml', policyAuto: 'C:\\perfil\\auto.toml', systemPrompt: 'C:\\perfil\\system.md', systemPromptAuto: 'C:\\perfil\\system-auto.md' };
+const geminiProfile = { policy: 'C:\\perfil\\policy.toml', systemPrompt: 'C:\\perfil\\system.md', systemPromptAuto: 'C:\\perfil\\system-auto.md' };
 
 test('suporte por CLI: exato no Claude Code e no Gemini, pela pasta nos demais', () => {
   assert.equal(conversationSupport('claude-code'), 'exact');

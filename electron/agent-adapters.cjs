@@ -223,10 +223,8 @@ async function listModels(adapter, { env = process.env, execFileImpl = defaultEx
 // `.env` sem passar pela regra de `read`. As negações explícitas sobrescrevem
 // valores de outra configuração mesclada, onde a ordem das chaves decide a regra.
 const DENIED_TOOLS = ['bash', 'edit', 'write', 'patch', 'grep', 'task', 'webfetch', 'websearch', 'codesearch', 'external_directory', 'skill', 'todowrite'];
-function orchestratorPermission(mode = 'coordinate') {
+function coordinatePermission() {
   const read = { '*': 'allow', '*.env': 'deny', '*.env.*': 'deny', '*.env.example': 'allow' };
-  // Modo auto: as demais ferramentas seguem as permissões do próprio OpenCode.
-  if (mode === 'auto') return { read, 'atlas_*': 'allow' };
   return {
     '*': 'deny',
     ...Object.fromEntries(DENIED_TOOLS.map((tool) => [tool, 'deny'])),
@@ -256,9 +254,6 @@ function assertOrchestratorSupport(adapter) {
 // tira shell e execução de código e ignora as configurações do usuário e do
 // repositório; só a ponte do ATLAS entra como servidor MCP.
 const CLAUDE_ORCHESTRATOR_TOOLS = 'Read,Grep,Glob';
-// Modo auto: escrita e shell, com as aprovações do Claude Code; `--restricted`
-// continua ignorando as configurações do usuário e do repositório.
-const CLAUDE_ORCHESTRATOR_AUTO_TOOLS = 'Read,Grep,Glob,Edit,Write,Bash,PowerShell';
 const ORCHESTRATOR_MODES = ['coordinate', 'auto'];
 
 // O Codex no Windows é um shim .cmd: a linha passa pelo cmd.exe. Os valores dos
@@ -350,17 +345,16 @@ function baseLaunch({ adapter, role = 'agent', model = null, orchestratorProfile
     const config = {};
     if (bridge) config.mcp = { atlas: { type: 'local', command: [bridge.command, ...bridge.args], environment: bridge.env, enabled: true } };
     if (role === 'orchestrator') {
-      // A permissão vale para a run inteira e os agentes padrão (build, plan) saem:
-      // trocar de agente na TUI não devolve escrita nem shell à principal.
-      config.permission = orchestratorPermission(orchestratorMode);
+      // No modo de coordenação, trocar de agente na TUI não devolve escrita nem shell.
+      const permission = auto ? undefined : coordinatePermission();
+      if (permission) config.permission = permission;
       config.agent = {
-        build: { disable: true },
-        plan: { disable: true },
+        ...(permission ? { build: { disable: true }, plan: { disable: true } } : {}),
         [ORCHESTRATOR_AGENT]: {
           description: 'Planejamento e acompanhamento do projeto autorizado no ATLAS',
           mode: 'primary',
           prompt: orchestratorInstructions('atlas_', { mode: orchestratorMode }),
-          permission: orchestratorPermission(orchestratorMode),
+          permission,
         },
       };
     }
@@ -368,7 +362,7 @@ function baseLaunch({ adapter, role = 'agent', model = null, orchestratorProfile
       args: [...adapter.spawnArgs, ...modelArgs, ...(role === 'orchestrator' ? ['--agent', ORCHESTRATOR_AGENT] : [])],
       // Na principal, a configuração do repositório (opencode.json, .opencode/) é
       // ignorada: ela poderia reabrir permissões ou iniciar plugins e servidores MCP.
-      env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(config), ...(role === 'orchestrator' ? { OPENCODE_DISABLE_PROJECT_CONFIG: '1' } : {}) },
+      env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(config), ...(role === 'orchestrator' && !auto ? { OPENCODE_DISABLE_PROJECT_CONFIG: '1' } : {}) },
     };
   }
   if (adapter.id === 'claude-code') {
@@ -378,7 +372,8 @@ function baseLaunch({ adapter, role = 'agent', model = null, orchestratorProfile
     const args = [...adapter.spawnArgs, ...modelArgs];
     if (bridge && claudeProfile?.mcpConfig) args.push('--mcp-config', claudeProfile.mcpConfig);
     if (role === 'orchestrator') {
-      args.push('--restricted', '--tools', auto ? CLAUDE_ORCHESTRATOR_AUTO_TOOLS : CLAUDE_ORCHESTRATOR_TOOLS, '--strict-mcp-config', '--settings', claudeProfile.settings, '--append-system-prompt-file', auto ? claudeProfile.instructionsAuto : claudeProfile.instructions);
+      if (!auto) args.push('--restricted', '--tools', CLAUDE_ORCHESTRATOR_TOOLS, '--strict-mcp-config', '--settings', claudeProfile.settings);
+      args.push('--append-system-prompt-file', auto ? claudeProfile.instructionsAuto : claudeProfile.instructions);
     }
     // A versão conferida não deve mudar por autoatualização ao iniciar a run.
     return { args, env: { DISABLE_AUTOUPDATER: '1' } };
@@ -386,16 +381,12 @@ function baseLaunch({ adapter, role = 'agent', model = null, orchestratorProfile
   if (adapter.id === 'gemini') {
     if (role !== 'orchestrator') return { args: [...adapter.spawnArgs, ...modelArgs], env: {} };
     if (!geminiProfile) throw new Error('Perfil do orquestrador não configurado.');
-    // Shim .cmd: os caminhos do perfil passam pelo cmd.exe.
-    const policy = auto ? geminiProfile.policyAuto : geminiProfile.policy;
+    // O caminho da política passa pelo shim .cmd. O prompt chega pelo ambiente.
+    const policy = geminiProfile.policy;
     const systemPrompt = auto ? geminiProfile.systemPromptAuto : geminiProfile.systemPrompt;
-    for (const file of [policy, systemPrompt]) {
-      if (!CMD_SAFE_VALUE.test(file)) throw new Error('Pasta de perfis do ATLAS insegura para o cmd.exe; a principal no Gemini não pode iniciar.');
-    }
-    // Política: só leitura de arquivos (sem grep) e as ferramentas do ATLAS; só a
-    // ponte do ATLAS como servidor MCP. O prompt da principal substitui o do CLI.
+    if (!auto && !CMD_SAFE_VALUE.test(policy)) throw new Error('Pasta de perfis do ATLAS insegura para o cmd.exe; a principal no Gemini não pode iniciar.');
     return {
-      args: [...adapter.spawnArgs, ...modelArgs, '--policy', policy, '--allowed-mcp-server-names', 'atlas'],
+      args: [...adapter.spawnArgs, ...modelArgs, ...(auto ? [] : ['--policy', policy, '--allowed-mcp-server-names', 'atlas'])],
       env: { GEMINI_SYSTEM_MD: systemPrompt },
     };
   }

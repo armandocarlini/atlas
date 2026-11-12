@@ -22,6 +22,7 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const { discoverAdapters, launchFor } = require('../electron/agent-adapters.cjs');
 const { ensureClaudeProfile } = require('../electron/orchestrator-profile.cjs');
+const nativePermissions = process.argv.includes('--native-permissions');
 
 const claude = (await discoverAdapters()).find((adapter) => adapter.id === 'claude-code');
 if (claude.status !== 'available') {
@@ -72,7 +73,16 @@ const profile = ensureClaudeProfile(userData, { command: process.execPath, args:
 
 // Roteiro: uma chamada de ferramenta por requisição principal.
 const projectPath = project.replaceAll('\\', '/');
-const script = [
+const outsideDirectory = path.join(fixture, 'Referências');
+const outsideFile = path.join(outsideDirectory, 'handoff.md');
+const outsideContent = 'handoff fora do projeto na fixture do ATLAS';
+if (nativePermissions) {
+  fs.mkdirSync(outsideDirectory);
+  fs.writeFileSync(outsideFile, outsideContent);
+}
+const script = nativePermissions ? [
+  { tool: 'Read', input: { file_path: outsideFile.replaceAll('\\', '/') } },
+] : [
   { tool: 'Grep', input: { pattern: 'SEGREDO_DO_SMOKE', path: projectPath, output_mode: 'content' } },
   { tool: 'Read', input: { file_path: `${projectPath}/.env` } },
   { tool: 'Bash', input: { command: 'echo shell' } },
@@ -120,7 +130,7 @@ const passed = [];
 const pass = (label) => { passed.push(label); console.log(`PASS ${label}`); };
 let failure = null;
 try {
-  const launch = launchFor({ adapter: claude, role: 'orchestrator', model: 'claude-opus-5-5', claudeProfile: profile, bridge: { command: process.execPath, args: [bridgeScript], env: {} } });
+  const launch = launchFor({ adapter: claude, role: 'orchestrator', orchestratorMode: nativePermissions ? 'auto' : 'coordinate', model: 'claude-opus-5-5', claudeProfile: profile, bridge: { command: process.execPath, args: [bridgeScript], env: {} } });
   const token = `token-${Date.now()}`;
   const env = {
     ...process.env,
@@ -133,7 +143,8 @@ try {
   };
   delete env.ANTHROPIC_AUTH_TOKEN;
   const output = await new Promise((resolve, reject) => {
-    const child = spawn(claude.executable, [...launch.args, '-p', 'roteiro do smoke'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const permissions = nativePermissions ? ['--add-dir', outsideDirectory] : [];
+    const child = spawn(claude.executable, [...launch.args, ...permissions, '-p', 'roteiro do smoke'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let text = '';
     child.stdout.on('data', (chunk) => { text += chunk; });
     child.stderr.on('data', (chunk) => { text += chunk; });
@@ -150,27 +161,33 @@ try {
   assert(system.includes('sessão principal de planejamento do ATLAS') && system.includes('mcp__atlas__tasks_delegate'));
   pass('instruções da principal entram por --append-system-prompt-file');
   const tools = requests.at(-1).tools.map((tool) => tool.name).filter((name) => !/Placeholder$/.test(name)).sort();
-  assert.deepEqual(tools, ['Glob', 'Grep', 'Read', 'mcp__atlas__ping']);
-  pass(`ferramentas da principal: ${tools.join(', ')}`);
-
   const results = new Map();
   for (const message of requests.at(-1).messages) {
     if (!Array.isArray(message.content)) continue;
     for (const block of message.content) if (block.type === 'tool_result') results.set(block.tool_use_id, { error: Boolean(block.is_error), text: JSON.stringify(block.content) });
   }
   const result = (index) => results.get(`toolu_${index + 1}`);
-  assert(!result(0).text.includes('SEGREDO_DO_SMOKE'), `Grep leu o .env: ${result(0).text}`);
-  assert(result(1).error && /denied/i.test(result(1).text), `Read do .env não foi negado: ${result(1).text}`);
-  pass('.env negado para Read e Grep');
-  assert(result(2).error && /No such tool available: Bash/.test(result(2).text), `Bash não foi recusado: ${result(2).text}`);
-  assert(result(3).error && /No such tool available: Write/.test(result(3).text), `Write não foi recusado: ${result(3).text}`);
-  assert(!fs.existsSync(path.join(project, 'escrito.txt')));
-  pass('shell e escrita recusados, mesmo com o .claude/settings.json hostil do repositório');
-  assert(!result(4).error && result(4).text.includes('pong'), `ponte do ATLAS não respondeu sem pedir permissão: ${result(4).text}`);
+  if (nativePermissions) {
+    assert(result(0) && !result(0).error && result(0).text.includes(outsideContent), `Read do handoff externo falhou: ${result(0)?.text}`);
+    pass('Read lê um handoff fora da pasta do projeto');
+    assert(tools.includes('Bash') && tools.includes('Write'), `ferramentas disponíveis: ${tools.join(', ')}`);
+    pass('o conjunto nativo inclui shell e escrita');
+  } else {
+    assert.deepEqual(tools, ['Glob', 'Grep', 'Read', 'mcp__atlas__ping']);
+    pass(`ferramentas da principal: ${tools.join(', ')}`);
+    assert(!result(0).text.includes('SEGREDO_DO_SMOKE'), `Grep leu o .env: ${result(0).text}`);
+    assert(result(1).error && /denied/i.test(result(1).text), `Read do .env não foi negado: ${result(1).text}`);
+    pass('.env negado para Read e Grep');
+    assert(result(2).error && /No such tool available: Bash/.test(result(2).text), `Bash não foi recusado: ${result(2).text}`);
+    assert(result(3).error && /No such tool available: Write/.test(result(3).text), `Write não foi recusado: ${result(3).text}`);
+    assert(!fs.existsSync(path.join(project, 'escrito.txt')));
+    pass('shell e escrita recusados, mesmo com o .claude/settings.json hostil do repositório');
+    assert(!result(4).error && result(4).text.includes('pong'), `ponte do ATLAS não respondeu sem pedir permissão: ${result(4).text}`);
+  }
   const bridgeRuns = fs.readFileSync(bridgeLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert(bridgeRuns.length > 0 && bridgeRuns.every((run) => run.token === token && run.endpoint === 'fixture-endpoint'));
   assert(!launch.args.some((item) => item.includes(token)), 'token fora da linha de comando');
-  pass('ponte recebe endpoint e token pelo ambiente e responde sem pedir permissão');
+  pass('ponte recebe endpoint e token pelo ambiente');
 } catch (error) {
   failure = error;
 } finally {

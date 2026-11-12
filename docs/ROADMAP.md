@@ -19,6 +19,7 @@ São correções da v0.1, sem mudar o escopo do produto.
 3. **Coordenação real pela principal — entregue.** Plano: `docs/planos/PLANO_COORDENACAO_PRINCIPAL.md` (aprovado pelo mantenedor em 12/11/2026). Falta o primeiro uso real com modelo. No primeiro uso real, a principal pediu o agente certo, mas ele abriu parado, e ela não conseguiu criar tarefas. A correção tem duas partes:
    - **`tasks_create` para a principal:** ela cria a tarefa e pede o agente com `taskId` e `worktree: true`, então a worktree nasce pelo ATLAS. Só o usuário conclui.
    - **Prompt inicial na aprovação:** o agente aprovado abre com um texto fixo do ATLAS e o propósito que o usuário leu no cartão, e consulta handoffs e mensagens. Sem flags de autonomia, com as aprovações do próprio CLI. As mensagens seguintes continuam fora do terminal.
+4. **Permissões da principal para trabalho direto.** Com "Principal só coordena" desligada, Claude Code, OpenCode e Gemini seguem as permissões do CLI para arquivos externos e web. A ponte continua vinculada ao projeto, e o perfil de leitura segue disponível pela mesma chave.
 
 ## Próximo — v0.2 (cada item precisa de plano aprovado)
 
