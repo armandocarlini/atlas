@@ -64,10 +64,12 @@ Plano: `docs/planos/PLANO_V0_2_EQUIPE_MULTI_IA.md`. A investigação da fase 1 (
 - chave por projeto "Principal só coordena", ligada por padrão; desligada, a principal faz sozinha o que é pequeno e delega o resto;
 - revisão cruzada: a principal vê qual IA trabalhou em cada tarefa e prefere outra para revisar, e o cartão avisa quando é a mesma.
 
-### 5. Itens já previstos na arquitetura
+### 5. Paralelismo, políticas e sessões externas — em andamento
 
-- Paralelismo ampliado e mais políticas além do modo assistido.
-- Anexar sessões externas.
+Plano: `docs/planos/PLANO_V0_2_PARALELISMO_POLITICAS.md`, pedido pelo mantenedor em 12/11/2026 e executado na ausência dele; as escolhas marcadas como decisão do agente aguardam revisão.
+
+- **Fase 1, política de agentes por projeto — entregue:** limites de 1 a 6 e modo autônomo controlado, desligado por padrão.
+- **Fase 2, anexar sessão externa:** um CLI aberto fora do ATLAS entra na equipe pela ponte, com um card sem terminal.
 
 ## Depois — v0.3 em diante
 
@@ -110,5 +112,6 @@ Pontos observados em 27/10/2026 que continuam valendo:
 | Equipe com várias IAs | Entregue (PRs #59 a #69); mudou duas invariantes da principal (somente leitura por padrão e visão de CLI e modelo) |
 | Continuidade ao reabrir | Entregue (PRs #80 e #81); relançar sem confirmação é exceção decidida pelo mantenedor em 10/11/2026 |
 | Coordenação real pela principal | Entregue: `tasks_create` e prompt inicial na aprovação (aprovada em 12/11/2026) |
+| Política de agentes | Fase 1 do item 5 entregue; o teto de 6 e a exigência de tarefa com worktree no modo autônomo são decisões do agente, a revisar |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |

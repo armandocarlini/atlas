@@ -12,7 +12,7 @@ const { createAgentRequestHost } = require('../electron/agent-request-host.cjs')
 
 const START = Date.parse('2026-10-27T10:00:00.000Z');
 
-function harness(t, { policy, createAgent, countActive = () => 0 } = {}) {
+function harness(t, { policy, createAgent, countActive = () => 0, worktrees, allowed = [], resolveLaunch } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-agent-requests-'));
   const filename = path.join(directory, 'requests.sqlite');
   const clock = { at: START };
@@ -28,10 +28,10 @@ function harness(t, { policy, createAgent, countActive = () => 0 } = {}) {
   const changes = [];
   const agentHost = {
     countActive,
-    resolveLaunch: async (adapterId, model) => {
+    resolveLaunch: resolveLaunch || (async (adapterId, model) => {
       if (!adapterId) throw new Error('Escolha o CLI do agente entre os detectados.');
       return { adapter: { id: adapterId }, model: model ?? null };
-    },
+    }),
     createAgent: createAgent || (async (request, options) => {
       spawns.push({ request, options });
       const id = `criado-${spawns.length}`;
@@ -39,12 +39,13 @@ function harness(t, { policy, createAgent, countActive = () => 0 } = {}) {
       return { id, name: request.name, origin: options.origin, cwd: request.cwd, state: 'running' };
     }),
   };
-  const projectHost = { ready: Promise.resolve(), isAllowedCwd: (cwd) => projects.some((project) => project.path === cwd), getProjectForCwd: (cwd) => projects.find((project) => project.path === cwd) };
-  createAgentRequestHost({ ipcMain: { handle: (name, handler) => handlers.set(name, handler) }, projectHost, store, isMainSender: (event) => event.sender === 'main', agentHost, policy, onChange: (projectId) => changes.push(projectId) });
+  const projectHost = { ready: Promise.resolve(), refreshRoot: async () => {}, isAllowedCwd: (cwd) => projects.some((project) => project.path === cwd) || allowed.includes(cwd), getProjectForCwd: (cwd) => projects.find((project) => project.path === cwd) };
+  const autoApproved = [];
+  const requestHost = createAgentRequestHost({ ipcMain: { handle: (name, handler) => handlers.set(name, handler) }, projectHost, store, isMainSender: (event) => event.sender === 'main', agentHost, policy, onChange: (projectId) => changes.push(projectId), onAutoApproved: (projectId, result) => autoApproved.push({ projectId, result }), ...(worktrees ? { worktrees } : {}) });
   t.after(() => { store.close(); fs.rmSync(directory, { recursive: true, force: true }); });
   const call = async (name, request, sender = 'main') => handlers.get(name)({ sender }, request);
   const ask = (overrides = {}) => store.requestAgent({ projectId: 'project-a', requestedBy: 'orchestrator-a', name: 'revisor-ansi', purpose: 'Revisar a divergência ANSI relatada pela sessão manual.', idempotencyKey: `pedido-${Math.random().toString(16).slice(2, 10)}`, ...overrides });
-  return { store, filename, clock, call, ask, spawns, changes, session };
+  return { store, filename, clock, call, ask, spawns, changes, session, requestHost, autoApproved };
 }
 
 test('pedido da principal fica pendente com hash, validade, comando auditado e evento', (t) => {
@@ -137,7 +138,7 @@ test('aprovação pela interface inicia agente com origem orchestrator e conclui
   const { ask, call, spawns, changes, store } = harness(t);
   const request = ask();
   const listed = await call('agent-request:list', { cwd: '/fixture/a' });
-  assert.deepEqual(listed.policy, { maxPending: 3, ttlMinutes: 15, maxActiveAgents: 2 });
+  assert.deepEqual(listed.policy, { mode: 'assisted', maxPending: 3, ttlMinutes: 15, maxActiveAgents: 2 });
   assert.equal(listed.items[0].payloadHash, request.payloadHash);
   const result = await call('agent-request:approve', { cwd: '/fixture/a', requestId: request.id, payloadHash: request.payloadHash, adapterId: 'kimi-code' });
   assert.equal(spawns.length, 1);
@@ -377,4 +378,134 @@ test('oferta impossível na aprovação cai para a mensagem com o motivo; falha 
   store.sendMessage = original;
   assert.equal(failed.request.state, 'fulfilled');
   assert.equal(failed.deliveryError, 'banco indisponível');
+});
+
+// Item 5 da v0.2: política de agentes por projeto.
+function fakeWorktrees(created = []) {
+  return {
+    planWorktree: ({ taskId }) => ({ path: '/fixture/a-wt/' + taskId, branch: 'atlas/task-' + taskId }),
+    createWorktree: async (plan) => { created.push(plan.path); return { repositoryPath: '/fixture/a', path: '/fixture/a-wt', branch: plan.branch, baseCommit: 'a'.repeat(40) }; },
+  };
+}
+
+function autonomousHarness(t, options = {}) {
+  const created = [];
+  const context = harness(t, { worktrees: fakeWorktrees(created), allowed: ['/fixture/a-wt'], ...options });
+  const { store } = context;
+  const implementar = store.getFunctionBySlug('implementar');
+  store.updateFunction({ id: implementar.id, expectedVersion: implementar.version, adapterId: 'opencode', model: 'prov/forte' });
+  const task = (title = 'Tarefa autônoma') => store.createTask({ projectId: 'project-a', title, acceptance: 'Critério.', idempotencyKey: 'tarefa-' + Math.random().toString(16).slice(2, 10), actor: 'agent:orchestrator-a' });
+  const setPolicy = (overrides = {}) => store.setAgentPolicy({ projectId: 'project-a', mode: 'autonomous', maxActiveAgents: 2, maxPending: 3, ...overrides });
+  return { ...context, created, task, setPolicy };
+}
+
+test('política: padrão da v0.1, faixa de 1 a 6, modo válido, projeto existente e versão conferida', (t) => {
+  const { store } = harness(t);
+  assert.deepEqual(store.getAgentPolicy('project-a'), { mode: 'assisted', maxActiveAgents: 2, maxPending: 3, ttlMs: 15 * 60 * 1000, version: 0 });
+  const saved = store.setAgentPolicy({ projectId: 'project-a', mode: 'autonomous', maxActiveAgents: 4, maxPending: 5, expectedVersion: 0 });
+  assert.deepEqual({ ...saved }, { mode: 'autonomous', maxActiveAgents: 4, maxPending: 5, ttlMs: 15 * 60 * 1000, version: 1 });
+  assert.equal(store.getAgentPolicy('project-b').mode, 'assisted', 'cada projeto tem a sua');
+  assert.throws(() => store.setAgentPolicy({ projectId: 'project-a', mode: 'auto', maxActiveAgents: 2, maxPending: 3 }), /Modo da política/);
+  for (const value of [0, 7, 2.5, '3']) {
+    assert.throws(() => store.setAgentPolicy({ projectId: 'project-a', mode: 'assisted', maxActiveAgents: value, maxPending: 3 }), /Agentes ativos/);
+    assert.throws(() => store.setAgentPolicy({ projectId: 'project-a', mode: 'assisted', maxActiveAgents: 2, maxPending: value }), /Pedidos aguardando/);
+  }
+  assert.throws(() => store.setAgentPolicy({ projectId: 'nenhum', mode: 'assisted', maxActiveAgents: 2, maxPending: 3 }), /Projeto não encontrado/);
+  assert.throws(() => store.setAgentPolicy({ projectId: 'project-a', mode: 'assisted', maxActiveAgents: 2, maxPending: 3, expectedVersion: 0 }), /alterada em outra janela/);
+  const audited = store.listEvents('project-a').filter((item) => item.type === 'agent.policy');
+  assert.deepEqual(audited.map((item) => item.payload), [{ mode: 'autonomous', maxActiveAgents: 4, maxPending: 5, actor: 'user' }]);
+});
+
+test('política: limites do projeto valem para pedidos pendentes e para a aprovação no cartão', async (t) => {
+  const { store, ask, call } = harness(t, { countActive: () => 1 });
+  store.setAgentPolicy({ projectId: 'project-a', mode: 'assisted', maxActiveAgents: 1, maxPending: 1 });
+  const first = ask();
+  assert.throws(() => ask({ name: 'segundo' }), /já há 1 pedidos de agente aguardando/);
+  await assert.rejects(call('agent-request:approve', { cwd: '/fixture/a', requestId: first.id, payloadHash: first.payloadHash, adapterId: 'kimi-code' }), /Limite da política: 1 agentes/);
+  store.setAgentPolicy({ projectId: 'project-a', mode: 'assisted', maxActiveAgents: 2, maxPending: 1 });
+  const approved = await call('agent-request:approve', { cwd: '/fixture/a', requestId: first.id, payloadHash: first.payloadHash, adapterId: 'kimi-code' });
+  assert.equal(approved.request.state, 'fulfilled');
+  assert.equal(approved.request.resolvedBy, 'user');
+});
+
+test('modo autônomo aprova sozinho o pedido elegível com o CLI e o modelo salvos na função', async (t) => {
+  const { store, ask, requestHost, spawns, created, task, setPolicy, autoApproved } = autonomousHarness(t);
+  setPolicy();
+  const work = task();
+  const request = ask({ taskId: work.id, worktree: true, functionSlug: 'implementar' });
+  await requestHost.evaluate('project-a');
+  assert.equal(spawns.length, 1);
+  assert.deepEqual(spawns[0].request, { adapterId: 'opencode', model: 'prov/forte', name: 'revisor-ansi', cwd: '/fixture/a-wt', functionSlug: 'implementar', functionOverridden: false });
+  assert.deepEqual(spawns[0].options.kickoff, true);
+  assert.equal(created.length, 1, 'worktree nova para a tarefa');
+  const resolved = store.getAgentRequest('project-a', request.id);
+  assert.equal(resolved.state, 'fulfilled');
+  assert.equal(resolved.resolvedBy, 'policy');
+  assert.equal(store.listEvents('project-a').find((item) => item.type === 'approval.resolved' && item.payload.requestId === request.id).payload.by, 'policy');
+  assert.equal(autoApproved.length, 1);
+  assert.equal(autoApproved[0].result.delivery.handoffId, store.listHandoffs('project-a').find((item) => item.taskId === work.id).id, 'a tarefa é oferecida ao agente');
+});
+
+test('modo autônomo deixa com o usuário, com o motivo no cartão, o que não cumpre as regras', async (t) => {
+  const { store, ask, call, requestHost, spawns, created, task, setPolicy } = autonomousHarness(t);
+  setPolicy();
+  const noTask = ask({ name: 'sem-tarefa', functionSlug: 'implementar' });
+  const noWorktree = ask({ name: 'sem-worktree', taskId: task('Sem worktree').id, functionSlug: 'implementar' });
+  const noFunction = ask({ name: 'sem-funcao', taskId: task('Sem função').id, worktree: true });
+  await requestHost.evaluate('project-a');
+  // A função revisar ainda não tem CLI salvo.
+  const listed = (await call('agent-request:list', { cwd: '/fixture/a' })).items;
+  const note = (id) => listed.find((item) => item.id === id).autoNote;
+  assert.match(note(noTask.id), /Sem tarefa com worktree/);
+  assert.match(note(noWorktree.id), /Sem tarefa com worktree/);
+  assert.match(note(noFunction.id), /Sem função indicada/);
+  assert.equal(spawns.length, 0);
+  assert.equal(created.length, 0);
+  assert(listed.every((item) => item.state === 'pending'));
+  store.rejectAgentRequest({ projectId: 'project-a', requestId: noTask.id });
+  const unconfigured = ask({ name: 'revisar', taskId: task('Revisar').id, worktree: true, functionSlug: 'revisar' });
+  await requestHost.evaluate('project-a');
+  assert.match((await call('agent-request:list', { cwd: '/fixture/a' })).items.find((item) => item.id === unconfigured.id).autoNote, /ainda não tem CLI salvo/);
+  assert.equal(spawns.length, 0);
+});
+
+test('modo autônomo espera vaga e aprova quando um agente termina; assistido não aprova nada', async (t) => {
+  let active = 2;
+  const { store, ask, call, requestHost, spawns, task, setPolicy } = autonomousHarness(t, { countActive: () => active });
+  const request = ask({ taskId: task().id, worktree: true, functionSlug: 'implementar' });
+  await requestHost.evaluate('project-a');
+  assert.equal(spawns.length, 0, 'modo assistido: nada é aprovado sozinho');
+  assert.equal((await call('agent-request:list', { cwd: '/fixture/a' })).items[0].autoNote, undefined);
+  setPolicy();
+  await requestHost.evaluate('project-a');
+  assert.match((await call('agent-request:list', { cwd: '/fixture/a' })).items[0].autoNote, /Aguardando vaga: 2 de 2/);
+  active = 1;
+  await requestHost.evaluate('project-a');
+  assert.equal(spawns.length, 1);
+  assert.equal(store.getAgentRequest('project-a', request.id).resolvedBy, 'policy');
+});
+
+test('modo autônomo sem CLI disponível não consome o pedido nem cria worktree', async (t) => {
+  const { store, ask, call, requestHost, spawns, created, task, setPolicy } = autonomousHarness(t, { resolveLaunch: async () => { throw new Error('Codex não está disponível.'); } });
+  setPolicy();
+  const request = ask({ taskId: task().id, worktree: true, functionSlug: 'implementar' });
+  await requestHost.evaluate('project-a');
+  assert.equal(store.getAgentRequest('project-a', request.id).state, 'pending');
+  assert.equal(spawns.length, 0);
+  assert.equal(created.length, 0);
+  assert.match((await call('agent-request:list', { cwd: '/fixture/a' })).items[0].autoNote, /não conseguiu iniciar: Codex não está disponível/);
+});
+
+test('diálogo da política: só a janela principal lê e altera; ligar o modo reavalia os pendentes', async (t) => {
+  const { store, ask, call, spawns, task } = autonomousHarness(t);
+  await assert.rejects(call('agent-policy:get', { cwd: '/fixture/a' }, 'popup'), /Janela não autorizada/);
+  await assert.rejects(call('agent-policy:set', { cwd: '/fixture/a', mode: 'autonomous', maxActiveAgents: 2, maxPending: 3 }, 'popup'), /Janela não autorizada/);
+  assert.deepEqual(await call('agent-policy:get', { cwd: '/fixture/a' }), { projectId: 'project-a', policy: { mode: 'assisted', maxActiveAgents: 2, maxPending: 3, version: 0 }, range: { min: 1, max: 6 } });
+  ask({ taskId: task().id, worktree: true, functionSlug: 'implementar' });
+  const saved = await call('agent-policy:set', { cwd: '/fixture/a', mode: 'autonomous', maxActiveAgents: 3, maxPending: 3, expectedVersion: 0 });
+  assert.deepEqual(saved, { projectId: 'project-a', policy: { mode: 'autonomous', maxActiveAgents: 3, maxPending: 3, version: 1 } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(spawns.length, 1, 'o pedido que esperava foi aprovado ao ligar o modo');
+  await assert.rejects(call('agent-policy:set', { cwd: '/fixture/a', mode: 'autonomous', maxActiveAgents: 9, maxPending: 3, expectedVersion: 1 }), /Agentes ativos/);
+  assert.equal(store.getAgentPolicy('project-a').maxActiveAgents, 3);
 });

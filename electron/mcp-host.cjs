@@ -241,7 +241,12 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
         idempotencyKey: agentIdempotencyKey(grant.sessionId, args.idempotencyKey ?? randomUUID()),
       });
       onAgentRequest(grant.projectId, request);
-      return { requestId: request.id, state: request.state, expiresAt: request.expiresAt, note: 'Aguardando a decisão do usuário no ATLAS. Nenhum agente foi iniciado ainda.' };
+      // Modo autônomo controlado: o ATLAS pode aprovar sozinho, dentro das regras do usuário.
+      const autonomous = store.getAgentPolicy?.(grant.projectId).mode === 'autonomous';
+      const note = autonomous
+        ? 'O usuário ligou o modo autônomo controlado neste projeto: o ATLAS aprova sozinho o pedido com tarefa, worktree: true e função com CLI salvo, se houver vaga; os demais esperam o usuário. Nenhum agente foi iniciado ainda; acompanhe com agents_request_status.'
+        : 'Aguardando a decisão do usuário no ATLAS. Nenhum agente foi iniciado ainda.';
+      return { requestId: request.id, state: request.state, expiresAt: request.expiresAt, note };
     },
     agents_request_status(grant, args) {
       const request = store.getAgentRequest(grant.projectId, text(args.requestId));

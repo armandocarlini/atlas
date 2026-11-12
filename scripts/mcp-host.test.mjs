@@ -376,7 +376,12 @@ test('principal pede agente pela ponte: pedido pendente, aviso à interface e st
   assert.equal(asked.isError, false, asked.text);
   assert.equal(asked.value.state, 'pending');
   assert.match(asked.value.note, /Nenhum agente foi iniciado/);
-  assert.deepEqual(agentRequests, ['project-a']);
+  assert.doesNotMatch(asked.value.note, /autônomo/);
+  store.setAgentPolicy({ projectId: 'project-a', mode: 'autonomous', maxActiveAgents: 2, maxPending: 3 });
+  const autonomousNote = (await orchestrator.call('agents_request', { name: 'revisor-auto', purpose: 'Com a política ligada.', idempotencyKey: 'pedido-auto-01' })).value.note;
+  assert.match(autonomousNote, /modo autônomo controlado/);
+  assert.match(autonomousNote, /Nenhum agente foi iniciado/);
+  assert.deepEqual(agentRequests, ['project-a', 'project-a'], 'cada pedido novo avisa a interface');
   assert.equal((await orchestrator.call('agents_request', { name: 'revisor-ansi', purpose: 'Investigar a divergência de resize.', idempotencyKey: 'pedido-ansi-01' })).value.requestId, asked.value.requestId);
   const stored = store.getAgentRequest('project-a', asked.value.requestId);
   assert.equal(stored.requestedBy, 'orchestrator-a');

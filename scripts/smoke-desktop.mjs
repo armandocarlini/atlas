@@ -1156,6 +1156,8 @@ process.stdin.on('data', (data) => {
   await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão selecionado na paleta');
   await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
   await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'paleta fechada');
+  // A gravação no localStorage acontece num efeito depois do render: espera por ela.
+  await until(async () => Object.keys(await savedTracks()).length === 0, 'tamanhos zerados gravados');
   assert.deepEqual(await savedTracks(), {}, 'Restaurar layout zera os tamanhos dos terminais');
   await ensurePanels(main);
   await focus('smoke-dois');
@@ -1905,6 +1907,38 @@ process.stdin.on('data', (data) => {
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'worktree request rejected');
   console.log('PASS pedido com worktree mostra tarefa e recusa honesta sem repositório Git');
   await ensureStatus(main);
+  // Política de agentes (item 5 da v0.2): padrão da v0.1, diálogo acessível, modo
+  // autônomo com aviso e volta ao assistido. Sem pedidos pendentes nesta hora.
+  assert.equal(await main.evaluate(`document.querySelectorAll('.agent-request').length`), 0);
+  await until(() => main.evaluate(`document.querySelector('.agent-policy-status')?.innerText.includes('assistido · até 2 ativos')`), 'agent policy status');
+  const openPolicy = async () => {
+    await ensureStatus(main);
+    await click(main, '.agent-policy-status button', 'Configurar');
+    await until(() => main.evaluate(`Boolean(document.querySelector('.agent-policy-modal [name=agent-policy-mode]'))`), 'agent policy dialog loaded');
+    assert.equal(await main.evaluate(`Boolean(document.querySelector('#workspace-status'))`), false, 'o estado do projeto não fica por cima do diálogo');
+  };
+  await openPolicy();
+  const policyDialog = await main.evaluate(`(() => { const dialog = document.querySelector('.agent-policy-modal'); return { modal: dialog.getAttribute('aria-modal'), focused: document.activeElement?.value, active: dialog.querySelector('[name=max-active]').value, pending: dialog.querySelector('[name=max-pending]').value, options: dialog.querySelector('[name=max-active]').options.length, warning: Boolean(dialog.querySelector('.regression-warning')) }; })()`);
+  assert.deepEqual(policyDialog, { modal: 'true', focused: 'assisted', active: '2', pending: '3', options: 6, warning: false });
+  await main.evaluate(`document.querySelector('.agent-policy-modal [value=autonomous]').click()`);
+  await choose(main, '.agent-policy-modal', 'max-active', '4');
+  await until(() => main.evaluate(`Boolean(document.querySelector('.agent-policy-modal .regression-warning'))`), 'autonomous warning');
+  const policyAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+  assert.equal(policyAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in agent policy dialog');
+  await screenshot(main, 'agent-policy-autonomous');
+  await click(main, '.agent-policy-modal button', 'Salvar');
+  await until(() => main.evaluate(`!document.querySelector('.agent-policy-modal')`), 'agent policy dialog closed');
+  await ensureStatus(main);
+  await until(() => main.evaluate(`document.querySelector('.agent-policy-status.autonomous')?.innerText.includes('autônomo controlado · até 4 ativos')`), 'autonomous status');
+  // Volta ao assistido: o resto do smoke decide pedidos no cartão.
+  await openPolicy();
+  assert.equal(await main.evaluate(`document.querySelector('.agent-policy-modal [name=max-active]').value`), '4', 'a política salva volta ao reabrir');
+  await main.evaluate(`document.querySelector('.agent-policy-modal [value=assisted]').click()`);
+  await click(main, '.agent-policy-modal button', 'Salvar');
+  await until(() => main.evaluate(`!document.querySelector('.agent-policy-modal')`), 'agent policy dialog closed again');
+  await ensureStatus(main);
+  await until(() => main.evaluate(`document.querySelector('.agent-policy-status:not(.autonomous)')?.innerText.includes('assistido · até 4 ativos')`), 'assisted status');
+  console.log('PASS política de agentes: padrão da v0.1, diálogo com foco e contraste, autônomo com aviso, persistência e volta ao assistido');
   // Suíte de regressão configurada pelo usuário no estado do projeto. A sugestão
   // vem do package.json da fixture e só entra no campo pelo botão.
   fs.writeFileSync(path.join(extraProject, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
@@ -1930,7 +1964,11 @@ process.stdin.on('data', (data) => {
   assert.equal(suiteAudit.filter((item) => item.ratio < 4.5).length, 0, `Low contrast in regression dialog: ${JSON.stringify(suiteAudit.filter((item) => item.ratio < 4.5))}`);
   await screenshot(main, 'regression-suite-dialog');
   await main.evaluate(`document.querySelector('.regression-modal form').requestSubmit()`);
-  await until(() => main.evaluate(`!document.querySelector('.regression-modal') && document.querySelector('.regression-status')?.innerText.includes('ligada · 10 min')`), 'regression suite saved');
+  await until(() => main.evaluate(`!document.querySelector('.regression-modal')`), 'regression dialog closed');
+  // Abrir o diálogo fecha o estado do projeto, que não fica por cima do modal.
+  assert.equal(await main.evaluate(`Boolean(document.querySelector('#workspace-status'))`), false, 'estado do projeto fechado ao configurar');
+  await ensureStatus(main);
+  await until(() => main.evaluate(`document.querySelector('.regression-status')?.innerText.includes('ligada · 10 min')`), 'regression suite saved');
   const savedSuite = await main.evaluate(`window.atlasDesktop.getRegressionSuite({ cwd: ${JSON.stringify(extraProject)} })`);
   assert.deepEqual([savedSuite.suite.enabled, savedSuite.suite.command, savedSuite.suite.timeoutSeconds], [true, 'npm test', 600]);
   console.log('PASS suíte de regressão: diálogo modal, sugestão só por escolha, sem prazo padrão e validação');

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { AgentChoice } from './AgentChoice.jsx';
 import { choiceFromFunction, pickRecommendation, sameAiWorkers } from './agent-functions.js';
 
@@ -68,9 +69,10 @@ function AgentRequestCard({ request, policy, requesterName, adapters, functions,
       </div>)}
     <p className="agent-request-policy">
       {pending ? `Vale até ${formatTime(request.expiresAt)}. ` : ''}
-      Inicia o CLI escolhido, interativo, {request.useWorktree ? 'na worktree da tarefa' : 'no diretório do projeto'}, sem flags de autonomia nem prompt inicial; permissões continuam no harness.
-      {policy ? ` Política: até ${policy.maxActiveAgents} agentes da principal em execução.` : ''}
+      Inicia o CLI escolhido, interativo, {request.useWorktree ? 'na worktree da tarefa' : 'no diretório do projeto'}, sem flags de autonomia; o ATLAS entrega este propósito {request.taskId ? 'com a oferta da tarefa' : 'por mensagem'} e o agente começa por ele (no Kimi, espera você). Permissões continuam no harness.
+      {policy ? ` Política: ${policy.mode === 'autonomous' ? 'autônomo controlado, ' : ''}até ${policy.maxActiveAgents} agentes da principal em execução.` : ''}
     </p>
+    {pending && request.autoNote && <p className="agent-request-auto-note" role="note"><AlertTriangle size={12} aria-hidden="true" /><span>Não aprovado sozinho: {request.autoNote}</span></p>}
     {pending && <div className="agent-request-function">
       <label>Função do agente
         <select name="function" value={functionSlug} onChange={(event) => selectFunction(event.target.value)} disabled={Boolean(busy)}>

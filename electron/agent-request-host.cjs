@@ -1,14 +1,28 @@
-const { AGENT_REQUEST_POLICY } = require('./operational-store.cjs');
+const { AGENT_REQUEST_POLICY, AGENT_POLICY_RANGE } = require('./operational-store.cjs');
 const path = require('node:path');
 const worktreeManager = require('./worktree-manager.cjs');
 const { waitForCwd } = require('./project-host.cjs');
 
-// Aprovação, pelo usuário, dos agentes pedidos pela sessão principal. A decisão
-// vale apenas para o payload exibido e é revalidada no ponto de execução:
-// pendência, validade, hash e limite de agentes ativos antes do spawn.
-function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, agentHost, policy = AGENT_REQUEST_POLICY, onChange = () => {}, worktrees = worktreeManager }) {
+// Aprovação dos agentes pedidos pela sessão principal: pelo usuário no cartão ou,
+// no modo autônomo controlado do projeto, pelo ATLAS dentro das regras da política
+// (docs/planos/PLANO_V0_2_PARALELISMO_POLITICAS.md). A decisão vale apenas para o
+// payload exibido e é revalidada no ponto de execução: pendência, validade, hash e
+// limite de agentes ativos antes do spawn.
+function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, agentHost, policy: override = {}, onChange = () => {}, onAutoApproved = () => {}, worktrees = worktreeManager }) {
   const reserved = new Map();
-  const publicPolicy = { maxPending: policy.maxPending, ttlMinutes: Math.round(policy.ttlMs / 60000), maxActiveAgents: policy.maxActiveAgents };
+  // Motivo, por pedido pendente, de o modo autônomo não o ter aprovado.
+  const autoNotes = new Map();
+  // Uma avaliação automática por projeto de cada vez.
+  const evaluations = new Map();
+
+  function policyFor(projectId) {
+    return { ...(store.getAgentPolicy ? store.getAgentPolicy(projectId) : { ...AGENT_REQUEST_POLICY, mode: 'assisted', version: 0 }), ...override };
+  }
+
+  function publicPolicy(projectId) {
+    const current = policyFor(projectId);
+    return { mode: current.mode, maxPending: current.maxPending, ttlMinutes: Math.round(current.ttlMs / 60000), maxActiveAgents: current.maxActiveAgents };
+  }
 
   async function projectForRequest(event, request) {
     if (!isMainSender(event)) throw new Error('Janela não autorizada a decidir pedidos de agente.');
@@ -27,27 +41,47 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
 
   ipcMain.handle('agent-request:list', async (event, request) => {
     const project = await projectForRequest(event, request);
+    const autonomous = policyFor(project.id).mode === 'autonomous';
     // Pedidos pendentes com worktree mostram caminho e branch antes da decisão (sem chamar o Git).
     const items = store.listAgentRequests(project.id).map((item) => {
-      if (!item.useWorktree || item.state !== 'pending') return item;
+      const withNote = autonomous && item.state === 'pending' && autoNotes.has(item.id) ? { ...item, autoNote: autoNotes.get(item.id) } : item;
+      if (!item.useWorktree || item.state !== 'pending') return withNote;
       try {
         const { path: plannedPath, branch } = worktrees.planWorktree({ project, taskId: item.taskId });
         // O cartão avisa quando a escrita acontece fora da pasta autorizada pelo usuário.
         const relative = path.relative(project.path, plannedPath);
         const outsideProject = relative.startsWith('..') || path.isAbsolute(relative);
-        return { ...item, plannedWorktree: { path: plannedPath, branch, outsideProject } };
+        return { ...withNote, plannedWorktree: { path: plannedPath, branch, outsideProject } };
       } catch (error) {
-        return { ...item, plannedWorktree: { error: error.message } };
+        return { ...withNote, plannedWorktree: { error: error.message } };
       }
     });
-    return { projectId: project.id, policy: publicPolicy, items };
+    return { projectId: project.id, policy: publicPolicy(project.id), items };
   });
 
   ipcMain.handle('agent-request:reject', async (event, request) => {
     const project = await projectForRequest(event, request);
     const rejected = store.rejectAgentRequest({ projectId: project.id, requestId: requireId(request.requestId, 'Pedido') });
+    autoNotes.delete(rejected?.id);
     onChange(project.id);
     return rejected;
+  });
+
+  // Só o usuário lê e altera a política, pela janela principal; a ponte MCP não altera.
+  ipcMain.handle('agent-policy:get', async (event, request) => {
+    const project = await projectForRequest(event, request);
+    const { mode, maxActiveAgents, maxPending, version } = policyFor(project.id);
+    return { projectId: project.id, policy: { mode, maxActiveAgents, maxPending, version }, range: { ...AGENT_POLICY_RANGE } };
+  });
+
+  ipcMain.handle('agent-policy:set', async (event, request) => {
+    const project = await projectForRequest(event, request);
+    const saved = store.setAgentPolicy({ projectId: project.id, mode: request.mode, maxActiveAgents: request.maxActiveAgents, maxPending: request.maxPending, expectedVersion: request.expectedVersion });
+    onChange(project.id);
+    // Ligar o modo (ou abrir vagas) reavalia o que já estava esperando.
+    if (saved.mode === 'autonomous') evaluate(project.id);
+    const { mode, maxActiveAgents, maxPending, version } = saved;
+    return { projectId: project.id, policy: { mode, maxActiveAgents, maxPending, version } };
   });
 
   // Só depois da aprovação: cria a worktree da tarefa, registra e atualiza a
@@ -94,19 +128,23 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     return { messageId: message.id, ...(offerError ? { offerError } : {}) };
   }
 
-  ipcMain.handle('agent-request:approve', async (event, request) => {
-    const project = await projectForRequest(event, request);
-    const requestId = requireId(request.requestId, 'Pedido');
-    const payloadHash = requireId(request.payloadHash, 'Conteúdo aprovado');
-    const fn = chosenFunction(request.functionSlug);
-    // O usuário escolhe o CLI e o modelo na aprovação; a escolha é conferida antes
-    // de aprovar, para que um CLI indisponível não consuma o pedido nem crie worktree.
-    const launch = await agentHost.resolveLaunch(request.adapterId, request.model);
+  function activeCount(projectId) {
+    return agentHost.countActive({ projectId, origin: 'orchestrator' }) + (reserved.get(projectId) || 0);
+  }
+
+  // Caminho único de aprovação: o cartão (`user`) e o modo autônomo (`policy`).
+  async function approve(project, { requestId, payloadHash, adapterId, model, functionSlug }, by) {
+    const fn = chosenFunction(functionSlug);
+    // A escolha é conferida antes de aprovar, para que um CLI indisponível não
+    // consuma o pedido nem crie worktree.
+    const launch = await agentHost.resolveLaunch(adapterId, model);
     // Vagas reservadas durante o spawn evitam que aprovações simultâneas excedam o limite.
     const inFlight = reserved.get(project.id) || 0;
-    const active = agentHost.countActive({ projectId: project.id, origin: 'orchestrator' }) + inFlight;
-    if (active >= policy.maxActiveAgents) throw new Error(`Limite da política: ${active} agentes criados pela principal já estão em execução neste projeto. Encerre um deles antes de aprovar.`);
-    const approved = store.approveAgentRequest({ projectId: project.id, requestId, payloadHash });
+    const active = activeCount(project.id);
+    const limit = policyFor(project.id).maxActiveAgents;
+    if (active >= limit) throw new Error(`Limite da política: ${active} agentes criados pela principal já estão em execução neste projeto. Encerre um deles antes de aprovar.`);
+    const approved = store.approveAgentRequest({ projectId: project.id, requestId, payloadHash, by });
+    autoNotes.delete(requestId);
     // Auditoria: a run guarda a função final e se o usuário trocou a sugestão (outra
     // função, ou CLI e modelo diferentes dos salvos nela).
     const functionOverridden = fn || approved.functionSlug
@@ -146,9 +184,74 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
       reserved.set(project.id, (reserved.get(project.id) || 1) - 1);
       onChange(project.id);
     }
+  }
+
+  ipcMain.handle('agent-request:approve', async (event, request) => {
+    const project = await projectForRequest(event, request);
+    return approve(project, {
+      requestId: requireId(request.requestId, 'Pedido'),
+      payloadHash: requireId(request.payloadHash, 'Conteúdo aprovado'),
+      adapterId: request.adapterId,
+      model: request.model,
+      functionSlug: request.functionSlug,
+    }, 'user');
   });
 
-  return { policy: publicPolicy };
+  // Regras do modo autônomo controlado. Devolve o motivo de não aprovar, ou null.
+  function autoBlock(item, projectId) {
+    if (!item.taskId || !item.useWorktree) return 'Sem tarefa com worktree: o modo autônomo só aprova trabalho isolado numa worktree nova. Decida você.';
+    if (!item.functionSlug) return 'Sem função indicada pela principal. Decida você.';
+    const fn = store.getFunctionBySlug?.(item.functionSlug);
+    if (!fn || fn.kind === 'orchestrator') return `A função ${item.functionSlug} não existe mais. Decida você.`;
+    if (!fn.adapterId) return `A função ${fn.name} ainda não tem CLI salvo. Configure-a ou decida você.`;
+    const { maxActiveAgents } = policyFor(projectId);
+    const active = activeCount(projectId);
+    if (active >= maxActiveAgents) return `Aguardando vaga: ${active} de ${maxActiveAgents} agentes ativos.`;
+    return null;
+  }
+
+  function projectById(projectId) {
+    const row = store.listProjects?.().find((item) => item.id === projectId);
+    const project = row && projectHost.getProjectForCwd(row.path);
+    return project && project.id === projectId && projectHost.isAllowedCwd(project.path) ? project : null;
+  }
+
+  async function evaluateNow(projectId) {
+    if (policyFor(projectId).mode !== 'autonomous') return;
+    const project = projectById(projectId);
+    if (!project) return;
+    let changed = false;
+    for (const item of store.listAgentRequests(projectId).filter((request) => request.state === 'pending')) {
+      // O modo pode ter sido desligado durante uma aprovação anterior.
+      if (policyFor(projectId).mode !== 'autonomous') break;
+      const reason = autoBlock(item, projectId);
+      if (reason) {
+        if (autoNotes.get(item.id) !== reason) changed = true;
+        autoNotes.set(item.id, reason);
+        continue;
+      }
+      const fn = store.getFunctionBySlug(item.functionSlug);
+      try {
+        const result = await approve(project, { requestId: item.id, payloadHash: item.payloadHash, adapterId: fn.adapterId, model: fn.model || null, functionSlug: fn.slug }, 'policy');
+        onAutoApproved(projectId, result);
+      } catch (error) {
+        // Antes de aprovar (CLI ou modelo indisponível), o pedido continua com o usuário;
+        // depois, a falha do spawn já está registrada no pedido.
+        autoNotes.set(item.id, `O modo autônomo não conseguiu iniciar: ${error.message}`);
+        changed = true;
+      }
+    }
+    if (changed) onChange(projectId);
+  }
+
+  function evaluate(projectId) {
+    const previous = evaluations.get(projectId) || Promise.resolve();
+    const next = previous.then(() => evaluateNow(projectId)).catch((error) => console.error('Avaliação automática de pedidos de agente falhou:', error));
+    evaluations.set(projectId, next);
+    return next;
+  }
+
+  return { policy: publicPolicy, evaluate };
 }
 
 module.exports = { createAgentRequestHost };

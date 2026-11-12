@@ -49,7 +49,7 @@ Não quebre estas regras sem plano e decisão explícita do mantenedor.
   - identidade única por projeto;
   - nova run explícita após a saída, com nova escolha de CLI e modelo (exceto ao reabrir o ATLAS, quando a principal aberta volta com a mesma escolha);
   - cria tarefas por `tasks_create` (em `backlog`) e delega por `tasks_delegate`, sem afirmar aceite antes de ele ocorrer.
-- **Aprovação humana:** a principal pede agentes por `agents_request`, e o usuário aprova cada pedido (modo assistido, política fixa da v0.1). Não existe aprovação automática nem modo autônomo. Só o usuário conclui tarefas (`done`). Não há merge automático.
+- **Aprovação humana:** a principal pede agentes por `agents_request`. Por padrão (modo assistido), o usuário aprova cada pedido. Por projeto, só o usuário pode ligar o **modo autônomo controlado** e definir os limites (1 a 6 agentes ativos e pedidos aguardando), pela janela principal; a ponte MCP não altera a política. Nesse modo, o ATLAS aprova sozinho apenas o pedido com tarefa, worktree nova e função que já tem CLI salvo, usando o CLI e o modelo salvos nela, e só se houver vaga; o resto espera o usuário, com o motivo no cartão. A aprovação automática fica registrada como `policy`. Só o usuário conclui tarefas (`done`). Não há merge automático. Plano: `docs/planos/PLANO_V0_2_PARALELISMO_POLITICAS.md`.
 - **Tarefas, claim e worktrees:**
   - tarefas nascem pelo usuário ou pela principal (`tasks_create`); ao aprovar um pedido com `taskId`, o ATLAS oferece a tarefa ao novo agente com o propósito do cartão (sem tarefa, entrega o propósito como mensagem da principal);
   - o agente aceita o handoff pelo token da run e passa a deter o claim (`claim_epoch` como fencing);
