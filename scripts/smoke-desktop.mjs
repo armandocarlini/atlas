@@ -1658,6 +1658,12 @@ process.stdin.on('data', (data) => {
   await screenshot(main, 'orchestrator-mode-auto');
   await main.evaluate(`${modeSwitch}.click()`);
   assert(await main.evaluate(`${modeSwitch}.checked`));
+  await choose(main, '.modal', 'cli', 'codex');
+  await until(() => main.evaluate(`document.querySelector('#orchestrator-mode-help').innerText.includes('Desligue “Principal só coordena”')`), 'Codex orienta a trocar de modo');
+  assert(await main.evaluate(`document.querySelector('.modal button[type=submit]').disabled`));
+  await main.evaluate(`${modeSwitch}.click()`);
+  await until(() => main.evaluate(`!document.querySelector('.modal button[type=submit]').disabled`), 'Codex pode iniciar com permissões nativas');
+  await main.evaluate(`${modeSwitch}.click()`);
   await choose(main, '.modal', 'cli', 'opencode');
   await until(() => main.evaluate(`document.querySelectorAll('.modal select[name=model] option').length === 3`), 'modelos para a principal');
   await choose(main, '.modal', 'model', 'fixture/modelo-forte');

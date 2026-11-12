@@ -594,6 +594,8 @@ function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, 
   // "Principal só coordena": ligada por padrão; só o usuário desliga, e vale para esta e as próximas runs.
   const [coordinateOnly, setCoordinateOnly] = useState(mode !== 'auto');
   useEffect(() => { if (mode) setCoordinateOnly(mode !== 'auto'); }, [mode]);
+  const modeError = coordinateOnly && adapters.find((adapter) => adapter.id === choice.adapterId)?.coordinateModeError;
+  const canStart = choice.ready && !busy && mode && !modeError;
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section ref={dialogRef} className="modal" onMouseDown={(event) => event.stopPropagation()} aria-modal="true" role="dialog" aria-labelledby="orchestrator-choice-title">
@@ -604,19 +606,19 @@ function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, 
           </div>
           <button className="icon-button" onClick={onClose} title="Fechar" aria-label="Fechar"><X size={18} /></button>
         </header>
-        <form onSubmit={(event) => { event.preventDefault(); if (choice.ready && !busy && mode) onStart({ ...choice, orchestratorMode: coordinateOnly ? 'coordinate' : 'auto' }); }}>
+        <form onSubmit={(event) => { event.preventDefault(); if (canStart) onStart({ ...choice, orchestratorMode: coordinateOnly ? 'coordinate' : 'auto' }); }}>
           <p className="agent-choice-note">{orchestrator?.adapterId ? 'Preenchido com o que você salvou para o Orquestrador. Confirme ou troque.' : 'Recomendado: o modelo mais capaz que você tiver; o Orquestrador planeja e delega, e um erro dele se espalha pelos agentes. Salve a escolha em Funções de agente para vir preenchida.'}</p>
           <AgentChoice adapters={adapters} value={choice} onChange={setChoice} disabled={busy} recommendation={pickRecommendation(functions?.recommendations, 'orquestrador', adapters)} />
           <label className="regression-switch orchestrator-mode-switch">
             <input type="checkbox" role="switch" name="coordinate-only" checked={coordinateOnly} disabled={busy || !mode} aria-describedby="orchestrator-mode-help" onChange={(event) => setCoordinateOnly(event.target.checked)} />
             <span>Principal só coordena</span>
           </label>
-          <p id="orchestrator-mode-help" className={`agent-choice-note${coordinateOnly ? '' : ' orchestrator-mode-warning'}`} role={coordinateOnly ? undefined : 'note'}>{coordinateOnly
+          <p id="orchestrator-mode-help" className={`agent-choice-note${coordinateOnly && !modeError ? '' : ' orchestrator-mode-warning'}`} role={modeError ? 'status' : coordinateOnly ? undefined : 'note'}>{modeError || (coordinateOnly
             ? 'Ela só lê e delega: todo trabalho com escrita vai para um agente, que passa pela revisão e pela suíte.'
-            : 'A principal usa as permissões do CLI, inclusive para arquivos fora do projeto e acesso à web. As edições diretas ficam fora da revisão de tarefas e da suíte de regressão. A escolha vale para este projeto.'}</p>
-          <div className="scope-note"><ShieldCheck size={16} /><span>{coordinateOnly ? 'A principal planeja e delega: abre somente leitura, com as ferramentas do ATLAS deste projeto.' : 'A principal planeja, delega e faz o que é pequeno, com as ferramentas do ATLAS deste projeto.'}{previousCli ? ` A execução anterior usou ${previousCli}; a identidade, as tarefas e as mensagens continuam.` : ''}</span></div>
+            : 'A principal usa as permissões do CLI, inclusive para arquivos fora do projeto e acesso à web. As edições diretas ficam fora da revisão de tarefas e da suíte de regressão. A escolha vale para este projeto.')}</p>
+          <div className="scope-note"><ShieldCheck size={16} /><span>A principal usa as ferramentas do ATLAS deste projeto.{previousCli ? ` A execução anterior usou ${previousCli}; a identidade, as tarefas e as mensagens continuam.` : ''}</span></div>
           {error && <div className="scope-note error-note" role="alert"><ShieldCheck size={16} /><span>{error}</span></div>}
-          <footer><button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancelar</button><button type="submit" className="button primary" disabled={busy || !choice.ready || !mode}>{busy ? 'Iniciando…' : 'Iniciar principal'}</button></footer>
+          <footer><button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancelar</button><button type="submit" className="button primary" disabled={!canStart}>{busy ? 'Iniciando…' : 'Iniciar principal'}</button></footer>
         </form>
       </section>
     </div>

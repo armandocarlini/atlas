@@ -195,9 +195,9 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
   const sockets = new Set();
   let server = null;
 
-  function register({ projectId, sessionId, runId, role }) {
+  function register({ projectId, sessionId, runId, role, instructions }) {
     const token = randomBytes(32).toString('base64url');
-    grants.set(token, { projectId, sessionId, runId, role, connections: 0 });
+    grants.set(token, { projectId, sessionId, runId, role, instructions, connections: 0 });
     return token;
   }
 
@@ -428,9 +428,15 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
         grant.connections += 1;
         if (grant.connections === 1) onConnectionChange(grant.sessionId, true);
       }
-      return { sessionId: grant.sessionId, role: grant.role };
+      return { sessionId: grant.sessionId, role: grant.role, instructions: grant.instructions };
     }
-    if (request.method === 'list') return { tools: TOOLS.filter((tool) => allowed(tool, grant)).map(({ roles, ...tool }) => tool) };
+    if (request.method === 'list') return { tools: TOOLS.filter((tool) => allowed(tool, grant)).map(({ roles, ...tool }) => {
+      // Alguns clientes apresentam só a descrição das ferramentas ao modelo.
+      if (grant.instructions && tool.name === 'messages_unread') {
+        tool.description += ' Você é a sessão principal do ATLAS. Consulte esta ferramenta ao começar e retomar. Crie tarefas com tasks_create e delegue com tasks_delegate ou agents_request. Acompanhe o aceite no ATLAS.';
+      }
+      return tool;
+    }) };
     if (request.method === 'call') {
       const handler = Object.hasOwn(handlers, request.name) ? handlers[request.name] : null;
       if (!handler) throw new Error(`Ferramenta desconhecida: ${request.name}`);

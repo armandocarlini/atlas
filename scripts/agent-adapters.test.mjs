@@ -233,10 +233,14 @@ test('lançamento do Codex: ponte só por -c, cmd.exe seguro e token fora da lin
   assert(!agent.args.some((item) => /bypass|dangerously|full-auto|approve-for-me/.test(item)), 'sem flags de autonomia');
 });
 
-test('Codex não é oferecido como principal enquanto o somente leitura não estiver comprovado', () => {
-  assert.throws(() => assertOrchestratorSupport({ ...codex, version: '0.164.0' }), /Codex indisponível para a principal.*disponível como agente/);
-  assert.throws(() => launchFor({ adapter: codex, role: 'orchestrator' }), /Codex indisponível para a principal/);
+test('Codex pode ser principal com as mesmas permissões e ponte de um agente', () => {
+  assert.throws(() => assertOrchestratorSupport(codex), /Desligue “Principal só coordena”/);
+  assert.throws(() => launchFor({ adapter: codex, role: 'orchestrator' }), /Desligue “Principal só coordena”/);
   assert.doesNotThrow(() => assertOrchestratorSupport({ ...claude, version: '2.1.319' }));
+  const bridge = { command: 'C:\\ATLAS\\electron.exe', args: ['bridge.cjs'], env: {} };
+  const agent = launchFor({ adapter: codex, model: 'gpt-5.5', bridge });
+  const principal = launchFor({ adapter: codex, role: 'orchestrator', orchestratorMode: 'auto', model: 'gpt-5.5', bridge });
+  assert.deepEqual(principal, agent);
 });
 
 test('modelos do Gemini vêm de `gemini --list-models`, um por linha sem recuo', async () => {
@@ -260,7 +264,10 @@ test('lançamento do Gemini: agente só com o modelo; principal com política e 
 
 test('modo auto da principal usa as permissões nativas e mantém a integração do ATLAS', () => {
   assert.throws(() => launchFor({ adapter: claude, role: 'orchestrator', orchestratorMode: 'tudo', claudeProfile: {} }), /Modo da principal inválido/);
-  assert.throws(() => launchFor({ adapter: { ...kimi, version: '2.3.3' }, role: 'orchestrator', orchestratorProfile: 'C:\\p.md', orchestratorMode: 'auto' }), /não foi verificado no Kimi Code/);
+  for (const version of ['2.3.3', '2.4.1', '2.5.2']) {
+    const adapter = { ...kimi, version };
+    assert.deepEqual(launchFor({ adapter, role: 'orchestrator', orchestratorMode: 'auto' }), launchFor({ adapter }));
+  }
   const bridge = { command: 'C:\\ATLAS\\electron.exe', args: ['bridge.cjs'], env: {} };
   const opencodeLaunch = launchFor({ adapter: opencode, role: 'orchestrator', orchestratorMode: 'auto', bridge });
   const opencodeAuto = JSON.parse(opencodeLaunch.env.OPENCODE_CONFIG_CONTENT);

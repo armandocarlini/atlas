@@ -1,5 +1,6 @@
 const { randomUUID } = require('node:crypto');
-const { discoverAdapters, listModels, launchFor, conversationSupport, MODEL_PATTERN, assertOrchestratorSupport } = require('./agent-adapters.cjs');
+const { discoverAdapters, listModels, launchFor, conversationSupport, MODEL_PATTERN, assertOrchestratorSupport, coordinateModeError } = require('./agent-adapters.cjs');
+const { orchestratorInstructions } = require('./orchestrator-profile.cjs');
 const { waitForCwd } = require('./project-host.cjs');
 
 const MODELS_CACHE_MS = 60 * 1000;
@@ -93,7 +94,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
 
   ipcMain.handle('agent:list-adapters', async (event) => {
     if (!isMainSender(event)) return [];
-    return listAdapters();
+    return (await listAdapters()).map((adapter) => ({ ...adapter, coordinateModeError: coordinateModeError(adapter) }));
   });
 
   ipcMain.handle('agent:list', (event) => {
@@ -156,7 +157,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     const { adapter, model } = resolved || await resolveLaunch(request.adapterId, request.model);
     if (resume && existing && store?.getSession(existing.id)?.removed_at) throw new Error('A sessão foi excluída.');
     const orchestratorMode = role === 'orchestrator' ? (request.orchestratorMode || 'coordinate') : null;
-    if (role === 'orchestrator') assertOrchestratorSupport(adapter);
+    if (role === 'orchestrator') assertOrchestratorSupport(adapter, orchestratorMode);
     if (request.functionSlug !== undefined && request.functionSlug !== null && (typeof request.functionSlug !== 'string' || (store && !store.getFunctionBySlug?.(request.functionSlug)))) throw new Error('Função de agente desconhecida.');
 
     const cwd = request.cwd || projectHost.getDefaultCwd();
@@ -172,7 +173,10 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     // Cada run recebe um token próprio para as ferramentas do ATLAS; a ponte
     // MCP herda endpoint e token do ambiente do PTY e o token morre com a run.
     const id = existing?.id || randomUUID();
-    const atlasToken = mcpHost && project ? mcpHost.register({ projectId: project.id, sessionId: id, role }) : null;
+    const instructions = orchestratorMode === 'auto' && ['codex', 'kimi-code'].includes(adapter.id)
+      ? orchestratorInstructions('mcp__atlas__', { mode: orchestratorMode })
+      : null;
+    const atlasToken = mcpHost && project ? mcpHost.register({ projectId: project.id, sessionId: id, role, ...(instructions ? { instructions } : {}) }) : null;
     // Sempre definidas, mesmo vazias: o PTY nunca herda endpoint ou token do ambiente do próprio ATLAS.
     const env = { ATLAS_MCP_ENDPOINT: atlasToken ? mcpHost.endpoint : '', ATLAS_MCP_TOKEN: atlasToken || '' };
     // CLIs que recebem a ponte por run (OpenCode) levam a entrada com o token desta run.
