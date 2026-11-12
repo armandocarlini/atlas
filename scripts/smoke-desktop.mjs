@@ -1651,8 +1651,8 @@ process.stdin.on('data', (data) => {
   await until(() => main.evaluate(`${modeSwitch} && !${modeSwitch}.disabled`), 'modo da principal carregado');
   assert.deepEqual(await main.evaluate(`[${modeSwitch}.checked, ${modeSwitch}.getAttribute('role'), ${modeSwitch}.getAttribute('aria-describedby')]`), [true, 'switch', 'orchestrator-mode-help'], 'só coordena ligada por padrão');
   await main.evaluate(`${modeSwitch}.click()`);
-  await until(() => main.evaluate(`document.querySelector('#orchestrator-mode-help')?.innerText.includes('não passam pela revisão de tarefa')`), 'aviso do modo auto');
-  assert(await main.evaluate(`document.querySelector('#orchestrator-mode-help').innerText.includes('.env')`), 'aviso diz que o shell lê o .env');
+  await until(() => main.evaluate(`document.querySelector('#orchestrator-mode-help')?.innerText.includes('arquivos fora do projeto e acesso à web')`), 'aviso das permissões nativas');
+  assert(await main.evaluate(`document.querySelector('#orchestrator-mode-help').innerText.includes('permissões do CLI')`), 'aviso identifica quem controla o acesso');
   const modeAudit = await main.evaluate(`(${auditInterface.toString()})()`);
   assert.equal(modeAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in orchestrator mode warning');
   await screenshot(main, 'orchestrator-mode-auto');

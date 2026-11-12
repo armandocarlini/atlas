@@ -613,7 +613,7 @@ function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, 
           </label>
           <p id="orchestrator-mode-help" className={`agent-choice-note${coordinateOnly ? '' : ' orchestrator-mode-warning'}`} role={coordinateOnly ? undefined : 'note'}>{coordinateOnly
             ? 'Ela só lê e delega: todo trabalho com escrita vai para um agente, que passa pela revisão e pela suíte.'
-            : 'Ela pode fazer sozinha alterações pequenas e claras na pasta do projeto, com as aprovações do CLI, e delega o resto. Essas edições não passam pela revisão de tarefa nem pela suíte de regressão, e o shell do CLI consegue ler o .env. Vale para este projeto até você ligar de novo.'}</p>
+            : 'A principal usa as permissões do CLI, inclusive para arquivos fora do projeto e acesso à web. As edições diretas ficam fora da revisão de tarefas e da suíte de regressão. A escolha vale para este projeto.'}</p>
           <div className="scope-note"><ShieldCheck size={16} /><span>{coordinateOnly ? 'A principal planeja e delega: abre somente leitura, com as ferramentas do ATLAS deste projeto.' : 'A principal planeja, delega e faz o que é pequeno, com as ferramentas do ATLAS deste projeto.'}{previousCli ? ` A execução anterior usou ${previousCli}; a identidade, as tarefas e as mensagens continuam.` : ''}</span></div>
           {error && <div className="scope-note error-note" role="alert"><ShieldCheck size={16} /><span>{error}</span></div>}
           <footer><button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancelar</button><button type="submit" className="button primary" disabled={busy || !choice.ready || !mode}>{busy ? 'Iniciando…' : 'Iniciar principal'}</button></footer>

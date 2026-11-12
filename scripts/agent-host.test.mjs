@@ -675,7 +675,8 @@ test('modo da principal: só coordena por padrão; a escolha do diálogo fica sa
   assert.equal(spawns.length, 0);
   const auto = await handlers.get('agent:open-orchestrator')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'claude-code', orchestratorMode: 'auto' });
   assert.equal(auto.role, 'orchestrator');
-  assert(spawns[0].args.includes('Read,Grep,Glob,Edit,Write,Bash,PowerShell') && spawns[0].args.includes('C:\\perfil\\claude-orchestrator-auto.md'));
+  assert(spawns[0].args.includes('C:\\perfil\\claude-orchestrator-auto.md'));
+  for (const flag of ['--restricted', '--tools', '--strict-mcp-config', '--settings']) assert(!spawns[0].args.includes(flag), flag);
   assert.equal(fixture.store.getOrchestratorMode('project-a'), 'auto');
   assert.deepEqual(await handlers.get('agent:orchestrator-mode')(mainEvent, { cwd: 'C:\\projeto' }), { projectId: 'project-a', mode: 'auto' });
 });
