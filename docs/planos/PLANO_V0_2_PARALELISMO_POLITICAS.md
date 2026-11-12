@@ -1,6 +1,6 @@
 # Plano: item 5 da v0.2, paralelismo, políticas e sessões externas
 
-Situação: pedido pelo mantenedor em 12/11/2026 ("faça o item 5"), executado na ausência dele. As escolhas marcadas **(decisão do agente)** foram tomadas sem consulta e ficam abertas à revisão; todas começam desligadas ou com os valores de hoje, de modo que nada muda para quem não abrir as configurações.
+Situação: pedido pelo mantenedor em 12/11/2026 ("faça o item 5"), executado na ausência dele e entregue nas fases 1 (PR #92) e 2. As escolhas marcadas **(decisão do agente)** foram tomadas sem consulta e ficam abertas à revisão; todas começam desligadas ou com os valores de hoje, de modo que nada muda para quem não abrir as configurações.
 
 ## Por quê
 
@@ -38,10 +38,10 @@ Migration 17, `agent_policies` (projeto, modo `assisted` ou `autonomous`, limite
 Um CLI aberto fora do ATLAS (por exemplo, no Terminal do Windows) entra na equipe do projeto: recebe mensagens, ofertas de tarefa e pode pedir revisão, como um agente criado pelo ATLAS.
 
 - "Anexar sessão externa" (paleta e menu de nova sessão) pede nome, CLI e, opcionalmente, função. O ATLAS registra a sessão com origem `external`, abre uma run e gera o comando para conectar.
-- O comando é um script PowerShell no perfil do ATLAS que define o endpoint e o token da run só naquele processo e inicia o CLI escolhido com a ponte do ATLAS, do mesmo jeito que a run interna (arquivo `--mcp-config` no Claude Code, `-c` no Codex, `OPENCODE_CONFIG_CONTENT` no OpenCode; Kimi e Gemini usam a entrada consentida, que já lê o endpoint e o token do ambiente).
+- O comando é um texto para colar num PowerShell: entra na pasta, define o endpoint e o token da run só naquele processo e inicia o CLI escolhido com a ponte do ATLAS, do mesmo jeito que a run interna (arquivo `--mcp-config` no Claude Code, `-c` no Codex, `OPENCODE_CONFIG_CONTENT` no OpenCode; Kimi e Gemini usam a entrada consentida, que já lê o endpoint e o token do ambiente). Todo valor vai como literal do PowerShell (aspas simples). **Mudança na execução:** a primeira versão previa um script `.ps1` no perfil; rodá-lo exigiria contornar a política de execução do PowerShell, o que as regras do projeto não permitem, e deixaria o token em disco. Colar o comando não esbarra na política e não grava nada.
 - O card da sessão externa não tem terminal: mostra se a ponte está conectada, o comando para copiar e "Desanexar", que revoga o token, encerra a run e libera o claim, como o fim de qualquer run.
 - Ao fechar o ATLAS a run termina; a sessão externa não é reaberta sozinha, porque o processo não é do ATLAS.
-- O script fica no perfil do app, nunca no repositório, e é apagado ao desanexar. Ele contém o token da run; a fronteira de confiança continua sendo o usuário local, como no ambiente do PTY.
+- O token aparece só no que vai para a área de transferência; o card mostra o comando com o token oculto. A fronteira de confiança continua sendo o usuário local, como no ambiente do PTY. Desanexar revoga o token.
 
 ## Invariantes alteradas (`AGENTS.md`)
 
