@@ -1,6 +1,6 @@
 # Roadmap do ATLAS
 
-Última revisão em 11/11/2026.
+Última revisão em 12/11/2026.
 
 Este arquivo diz **o que vem depois e em que ordem**. O estado atual está em `docs/CONTEXTO.md`. A visão completa e os requisitos de longo prazo estão em `ATLAS_PLANEJAMENTO_ARQUITETURA.md`. Quando os dois divergirem sobre ordem ou escopo, vale este arquivo.
 
@@ -14,8 +14,11 @@ O aceite dos 12 passos foi demonstrado em 27/10/2026 (`docs/historico/ACEITE_V0_
 
 São correções da v0.1, sem mudar o escopo do produto.
 
-1. **Distribuição oficial corrigida do Kimi.** A contenção das versões 2.4.0/2.4.1 está implementada. O candidato temporário `2.4.1+atlas-profile-fix.1` passou em `smoke:kimi-profile -- --switch-model` e no `smoke:agent` completo, sem API, incluindo modelos, perfil, pedidos, worktree e reinício. Próximo passo: validar uma distribuição oficial corrigida com esses mesmos smokes antes de liberar a principal Kimi e seu botão de troca. Em 03/11/2026 a última estável ainda era a 2.4.1, e o `main` do fornecedor ainda não tinha a correção (issues e PRs upstream listados no diagnóstico). A correção local não equivale a suporte oficial; não instalar o candidato nem publicar uma correção externa automaticamente. Patch, reprodução e limites: `docs/diagnosticos/KIMI_2_4_MCP.md`. Até lá, o OpenCode é o CLI com integração completa.
+1. **Distribuição oficial corrigida do Kimi.** A contenção das versões 2.4.0/2.4.1 está implementada. O candidato temporário `2.4.1+atlas-profile-fix.1` passou em `smoke:kimi-profile -- --switch-model` e no `smoke:agent` completo, sem API, incluindo modelos, perfil, pedidos, worktree e reinício. Próximo passo: validar uma distribuição oficial corrigida com esses mesmos smokes antes de liberar a principal Kimi e seu botão de troca. Em 03/11/2026 a última estável ainda era a 2.4.1, e o `main` do fornecedor ainda não tinha a correção (issues e PRs upstream listados no diagnóstico). A correção local não equivale a suporte oficial; não instalar o candidato nem publicar uma correção externa automaticamente. Patch, reprodução e limites: `docs/diagnosticos/KIMI_2_4_MCP.md`. Até lá, a principal roda no OpenCode, no Claude Code ou no Gemini.
 2. **Acompanhar as intermitências** do instalador silencioso e do `test:desktop` (veja `docs/CONTEXTO.md`). O timeout de captura voltou com renderer oculto, mesmo após a hipótese de oclusão; o smoke agora exige janela visível e um frame antes de capturar. A digitação do comando de dimensões também aguarda o prompt do PowerShell. Investigar novas ocorrências; não reexecutar às cegas.
+3. **Coordenação real pela principal — entregue.** Plano: `docs/planos/PLANO_COORDENACAO_PRINCIPAL.md` (aprovado pelo mantenedor em 12/11/2026). Falta o primeiro uso real com modelo. No primeiro uso real, a principal pediu o agente certo, mas ele abriu parado, e ela não conseguiu criar tarefas. A correção tem duas partes:
+   - **`tasks_create` para a principal:** ela cria a tarefa e pede o agente com `taskId` e `worktree: true`, então a worktree nasce pelo ATLAS. Só o usuário conclui.
+   - **Prompt inicial na aprovação:** o agente aprovado abre com um texto fixo do ATLAS e o propósito que o usuário leu no cartão, e consulta handoffs e mensagens. Sem flags de autonomia, com as aprovações do próprio CLI. As mensagens seguintes continuam fora do terminal.
 
 ## Próximo — v0.2 (cada item precisa de plano aprovado)
 
@@ -30,7 +33,7 @@ O objetivo é escolher CLI e modelo uma vez por *função*, em vez de a cada ses
 - Cinco funções padrão (*planejar*, *explorar*, *implementar*, *revisar*, *testes*) e o Orquestrador da principal; o usuário troca CLI e modelo delas e cria as dele.
 - O Orquestrador escolhe a função ao pedir um agente. O cartão vem preenchido, e o usuário aprova ou troca a função ou o LLM.
 - O ATLAS recomenda modelos por função, a partir de uma lista curada pelo mantenedor, sem nunca escolher pelo usuário.
-- Escopo global na v0.2. O novo texto da regra "CLIs e modelos" entra no `AGENTS.md` junto com a fase 3.
+- Escopo global na v0.2. O texto da regra "CLIs e modelos" está no `AGENTS.md`.
 
 ### 2. Trocar o LLM de um agente sem perder a tela — entregue (falta verificar a principal no Kimi)
 
@@ -38,11 +41,9 @@ Plano: `docs/planos/PLANO_V0_2_TROCA_DE_MODELO.md`.
 
 Requisito do mantenedor: trocar o modelo de um agente em execução **sem perder o que está na tela**.
 
-- Hoje o modelo vai como `--model` no início da run, e a migration 9 registra CLI e modelo por run.
-- Caminhos a investigar com os CLIs reais:
-  - comando nativo de troca de modelo dentro da TUI, com o ATLAS registrando a troca;
-  - nova run com a mesma identidade, mantendo o scrollback anterior visível no card e entregando um resumo (handoff) ao novo modelo.
-- Decidir depois da investigação: o que conta como "não perder". Pode ser só a tela, ou também o contexto da conversa no modelo.
+- Entregue pelo comando nativo de cada CLI: o usuário troca no terminal (`/model` no Kimi, `/models` no OpenCode) e informa ao ATLAS em "Trocar modelo". A mesma run guarda o modelo de início e o informado (migration 12), e o ATLAS não digita no terminal.
+- Na principal, a troca está liberada só no OpenCode, o único CLI em que o perfil somente leitura foi verificado depois da troca.
+- No Claude Code, que não lista modelos ao ATLAS, a troca pelo `/model` funciona no terminal, mas não fica registrada no card.
 
 ### 3. Suíte de regressão liga/desliga — entregue
 
@@ -87,7 +88,7 @@ Previstos na arquitetura e retirados da v0.2 em 04/11/2026. O mantenedor conside
 
 ### Redesign visual do ATLAS
 
-Em andamento, a pedido do mantenedor (06/11/2026). A direção está definida: mármore, marfim e ouro, com a estátua do logo como personagem. Plano em `docs/planos/PLANO_IDENTIDADE_VISUAL.md`. As fases 1 a 3 da identidade foram entregues. Em 09/11/2026 foi aprovada a evolução terminal-first, com o Alethe como referência: densidade, árvore lateral, quatro layouts e ocultação sem encerrar processos. O refinamento de 10/11/2026 elimina gaps, bordas e filetes, agrupa as ações das sessões e estabiliza os controles. No mesmo dia, a janela principal passou a ter uma barra superior só, com os controles do sistema sobre ela, e os selects ganharam lista no material do ATLAS. Plano em `docs/planos/PLANO_WORKSPACE_TERMINAL_FIRST.md`. Continuidade e persistência ficam fora desse marco. As fases 4 (modo Conversa) e 5 (várias equipes por repositório) estão marcadas **[decidir]**.
+Em andamento, a pedido do mantenedor (06/11/2026). A direção está definida: mármore, marfim e ouro, com a estátua do logo como personagem. Plano em `docs/planos/PLANO_IDENTIDADE_VISUAL.md`. As fases 1 a 3 da identidade foram entregues. Em 09/11/2026 foi aprovada a evolução terminal-first, com o Alethe como referência: densidade, árvore lateral, quatro layouts e ocultação sem encerrar processos. O refinamento de 10/11/2026 elimina gaps, bordas e filetes, agrupa as ações das sessões e estabiliza os controles. O PR #84 levou Restaurar layout, Funções de agente e Aparência para a paleta, liberou o rodapé da navegação, suavizou as junções entre as colunas e desenhou em vetor o lettering ATLAS da barra de título. No mesmo dia, a janela principal passou a ter uma barra superior só, com os controles do sistema sobre ela, e os selects ganharam lista no material do ATLAS. Plano em `docs/planos/PLANO_WORKSPACE_TERMINAL_FIRST.md`. Continuidade e persistência ficam fora desse marco. As fases 4 (modo Conversa) e 5 (várias equipes por repositório) estão marcadas **[decidir]**.
 
 Em 11/11/2026, o workspace passou a ter divisórias persistidas para Navegação, Terminais e Painéis; os extremos compactos preservam acesso por ícones, flyouts e nomes acessíveis. Terminais também ganharam cópia automática da seleção, ações de Responder/Reescrever/Colar em outra sessão, colagem segura de caminhos e entrada por arrastar arquivos.
 
@@ -105,5 +106,7 @@ Pontos observados em 27/10/2026 que continuam valendo:
 | Troca de modelo sem perder a tela | Entregue; a principal no Kimi espera a correção da ponte e a preservação efetiva do perfil de leitura nas versões 2.4 |
 | Suíte de regressão liga/desliga | Entregue (PRs #53 a #56) |
 | Equipe com várias IAs | Entregue (PRs #59 a #69); mudou duas invariantes da principal (somente leitura por padrão e visão de CLI e modelo) |
+| Continuidade ao reabrir | Entregue (PRs #80 e #81); relançar sem confirmação é exceção decidida pelo mantenedor em 10/11/2026 |
+| Coordenação real pela principal | Entregue: `tasks_create` e prompt inicial na aprovação (aprovada em 12/11/2026) |
 | Publicação da v0.1 | Aceite feito; release e tag aguardam o mantenedor |
 | Núcleo Node vs. Rust, retenção de scrollback | Ver a seção 19 da arquitetura |

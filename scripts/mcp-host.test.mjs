@@ -400,9 +400,17 @@ test('ferramentas de delegação seguem o papel: principal oferece, agente respo
   for (const name of ['handoffs_pending', 'handoffs_accept', 'handoffs_reject', 'tasks_update', 'tasks_release']) {
     assert(agentTools.includes(name) && !principalTools.includes(name), name);
   }
-  for (const name of ['tasks_delegate', 'handoffs_cancel']) assert(principalTools.includes(name) && !agentTools.includes(name), name);
+  for (const name of ['tasks_create', 'tasks_delegate', 'handoffs_cancel']) assert(principalTools.includes(name) && !agentTools.includes(name), name);
   const refused = await manual.call('tasks_delegate', { taskId: 'x', toSessionId: 'manual-a', objective: 'Profundidade 2.' });
   assert.match(refused.text, /Somente a sessão principal/);
+  // A principal cria a tarefa pela ponte; o agente não cria.
+  const createdByPrincipal = await orchestrator.call('tasks_create', { title: 'Criada pela principal', acceptance: 'Critério verificável.', idempotencyKey: 'principal-tarefa-01' });
+  assert.equal(createdByPrincipal.value.state, 'backlog');
+  const listedCreated = (await orchestrator.call('tasks_list', {})).value.tasks.find((item) => item.id === createdByPrincipal.value.taskId);
+  assert.equal(listedCreated.title, 'Criada pela principal');
+  assert.equal((await orchestrator.call('tasks_create', { title: 'Criada pela principal', acceptance: 'Critério verificável.', idempotencyKey: 'principal-tarefa-01' })).value.taskId, createdByPrincipal.value.taskId, 'mesma chave, mesma tarefa');
+  const agentCreate = await manual.call('tasks_create', { title: 'Do agente', acceptance: 'x' });
+  assert.match(agentCreate.text, /Somente a sessão principal/);
   const principalAccept = await orchestrator.call('handoffs_accept', { handoffId: 'x' });
   assert.match(principalAccept.text, /sessões de agente que recebem tarefas/);
 });
