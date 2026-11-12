@@ -22,8 +22,9 @@ const ADAPTERS = [
     name: 'Kimi Code',
     command: 'kimi',
     versionArgs: ['--version'],
-    // Sem flags de autonomia, prompt inicial ou configuração do harness:
-    // a sessão nasce interativa e as permissões permanecem no CLI.
+    // Sem flags de autonomia nem configuração do harness: a sessão nasce
+    // interativa e as permissões permanecem no CLI. Sem prompt inicial: o -p do
+    // Kimi não é interativo.
     spawnArgs: [],
     // Modelos são os aliases do config.toml do Kimi; as ferramentas do ATLAS
     // chegam pelo mcp.json, gravado só com consentimento.
@@ -308,11 +309,28 @@ function conversationArgs(adapter, role, conversation) {
   return { prefix: [], suffix: ['--continue'] };
 }
 
-function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, geminiProfile = null, bridge = null, orchestratorMode = 'coordinate', conversation = null }) {
+// Prompt inicial da run criada pela aprovação de um pedido de agente. Texto
+// constante do ATLAS, nunca o propósito escrito pela principal: nos shims .cmd a
+// linha passa pelo cmd.exe. O propósito chega pela oferta ou pela mensagem.
+const AGENT_KICKOFF_PROMPT = 'Voce foi iniciado pelo ATLAS a pedido da sessao principal. Use as ferramentas do ATLAS: consulte handoffs_pending e messages_unread e comece pelo que encontrar.';
+// `--` encerra as opções: no Claude Code, --mcp-config aceita vários valores.
+const KICKOFF_ARGS = {
+  'claude-code': (text) => ['--', text],
+  codex: (text) => ['--', text],
+  gemini: (text) => ['-i', text],
+  opencode: (text) => ['--prompt', text],
+};
+
+function kickoffArgs(adapter, role, conversation, kickoff) {
+  if (!kickoff || role !== 'agent' || (conversation && conversation.mode !== 'new')) return [];
+  return KICKOFF_ARGS[adapter.id]?.(AGENT_KICKOFF_PROMPT) || [];
+}
+
+function launchFor({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, geminiProfile = null, bridge = null, orchestratorMode = 'coordinate', conversation = null, kickoff = false }) {
   const launch = baseLaunch({ adapter, role, model, orchestratorProfile, claudeProfile, geminiProfile, bridge, orchestratorMode });
   const { prefix, suffix } = conversationArgs(adapter, role, conversation);
   const spawnArgs = adapter.spawnArgs || [];
-  return { ...launch, args: [...spawnArgs, ...prefix, ...launch.args.slice(spawnArgs.length), ...suffix] };
+  return { ...launch, args: [...spawnArgs, ...prefix, ...launch.args.slice(spawnArgs.length), ...suffix, ...kickoffArgs(adapter, role, conversation, kickoff)] };
 }
 
 function baseLaunch({ adapter, role = 'agent', model = null, orchestratorProfile = null, claudeProfile = null, geminiProfile = null, bridge = null, orchestratorMode = 'coordinate' }) {
@@ -387,4 +405,4 @@ function baseLaunch({ adapter, role = 'agent', model = null, orchestratorProfile
   throw new Error(`${adapter.name} não tem lançamento definido no ATLAS.`);
 }
 
-module.exports = { ADAPTERS, VERSION_TIMEOUT_MS, MODEL_PATTERN, ORCHESTRATOR_AGENT, discoverAdapters, parseVersion, resolveOnPath, listModels, launchFor, conversationSupport, runCli, assertOrchestratorSupport };
+module.exports = { ADAPTERS, VERSION_TIMEOUT_MS, MODEL_PATTERN, ORCHESTRATOR_AGENT, AGENT_KICKOFF_PROMPT, CMD_SAFE_VALUE, discoverAdapters, parseVersion, resolveOnPath, listModels, launchFor, conversationSupport, runCli, assertOrchestratorSupport };

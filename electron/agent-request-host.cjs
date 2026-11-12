@@ -75,6 +75,25 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     return item;
   }
 
+  // O propósito que o usuário leu no cartão chega ao novo agente pelo próprio ATLAS:
+  // como oferta da tarefa do pedido ou, sem tarefa (ou se a oferta falhar), como
+  // mensagem da principal. O prompt inicial fixo manda o agente consultar os dois.
+  function deliverPurpose(projectId, approved, agentId) {
+    const base = { projectId, fromSessionId: approved.requestedBy, toSessionId: agentId, actor: 'user' };
+    let offerError = null;
+    if (approved.taskId) {
+      try {
+        const handoff = store.offerHandoff({ ...base, taskId: approved.taskId, objective: approved.purpose, idempotencyKey: `atlas-kickoff-${approved.id}` });
+        return { handoffId: handoff.id };
+      } catch (error) {
+        offerError = error.message;
+      }
+    }
+    const body = offerError ? `${approved.purpose}\n\nA tarefa não pôde ser oferecida automaticamente: ${offerError}` : approved.purpose;
+    const message = store.sendMessage({ ...base, kind: 'note', subject: `Pedido aprovado: ${approved.name}`, body: body.slice(0, 4000), idempotencyKey: `atlas-kickoff-${approved.id}` });
+    return { messageId: message.id, ...(offerError ? { offerError } : {}) };
+  }
+
   ipcMain.handle('agent-request:approve', async (event, request) => {
     const project = await projectForRequest(event, request);
     const requestId = requireId(request.requestId, 'Pedido');
@@ -99,7 +118,7 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
       let created = null;
       try {
         const cwd = approved.useWorktree ? (created = await prepareWorktree(project, approved)).path : project.path;
-        agent = await agentHost.createAgent({ adapterId: launch.adapter.id, model: launch.model, name: approved.name, cwd, functionSlug: fn?.slug || null, functionOverridden }, { origin: 'orchestrator', launch });
+        agent = await agentHost.createAgent({ adapterId: launch.adapter.id, model: launch.model, name: approved.name, cwd, functionSlug: fn?.slug || null, functionOverridden }, { origin: 'orchestrator', launch, kickoff: true });
       } catch (error) {
         // A worktree criada permanece: o ATLAS não remove nada automaticamente.
         if (created) error.message = `Worktree criada em ${created.path}, mas o agente não iniciou: ${error.message}`;
@@ -112,10 +131,16 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
       }
       // O agente já está em execução: uma falha ao registrar o resultado não pode
       // marcá-lo como falho nem escondê-lo da interface.
+      let completed;
       try {
-        return { request: store.completeAgentRequest({ projectId: project.id, requestId, sessionId: agent.id }), agent };
+        completed = store.completeAgentRequest({ projectId: project.id, requestId, sessionId: agent.id });
       } catch (error) {
         return { request: null, agent, recordError: error.message };
+      }
+      try {
+        return { request: completed, agent, delivery: deliverPurpose(project.id, approved, agent.id) };
+      } catch (error) {
+        return { request: completed, agent, deliveryError: error.message };
       }
     } finally {
       reserved.set(project.id, (reserved.get(project.id) || 1) - 1);

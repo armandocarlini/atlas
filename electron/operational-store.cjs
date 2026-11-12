@@ -470,8 +470,11 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   }
 
   return {
+    // Criada pelo usuário na interface ou pela principal pela ponte (`agent:<sessão>`).
     createTask(request) {
       const payload = taskPayload(request);
+      const actor = request.actor ?? 'user';
+      if (actor !== 'user' && !/^agent:[A-Za-z0-9-]{1,80}$/.test(actor)) throw new Error('Ator de tarefa inválido.');
       const encoded = JSON.stringify(payload);
       const hash = createHash('sha256').update(encoded).digest('hex');
       return transaction(db, () => {
@@ -480,13 +483,17 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
           if (previous.payload_hash !== hash) throw new Error('Chave de idempotência já usada com outro conteúdo.');
           return JSON.parse(previous.result);
         }
+        if (actor !== 'user') {
+          const creator = db.prepare('SELECT role FROM sessions WHERE id = ? AND project_id = ? AND removed_at IS NULL').get(actor.slice('agent:'.length), request.projectId);
+          if (creator?.role !== 'orchestrator') throw new Error('Somente a sessão principal deste projeto cria tarefas.');
+        }
         const id = randomUUID();
         const commandId = randomUUID();
         const at = now();
-        const task = { id, projectId: request.projectId, ...payload, state: 'backlog', version: 1, createdBy: 'user', createdAt: at, updatedAt: at, assignedSessionId: null, assigneeName: null, claimRunId: null, claimEpoch: 0, blockedReason: null };
-        db.prepare('INSERT INTO tasks (id, project_id, title, description, acceptance, state, version, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, request.projectId, payload.title, payload.description, payload.acceptance, 'backlog', 1, 'user', at, at);
-        db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'task.create', id, encoded, hash, request.idempotencyKey, 'completed', 'user', at, at, JSON.stringify(task), commandId);
-        event({ projectId: request.projectId, type: 'task.created', payload: { taskId: id }, correlationId: commandId, at });
+        const task = { id, projectId: request.projectId, ...payload, state: 'backlog', version: 1, createdBy: actor, createdAt: at, updatedAt: at, assignedSessionId: null, assigneeName: null, claimRunId: null, claimEpoch: 0, blockedReason: null };
+        db.prepare('INSERT INTO tasks (id, project_id, title, description, acceptance, state, version, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, request.projectId, payload.title, payload.description, payload.acceptance, 'backlog', 1, actor, at, at);
+        db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(commandId, request.projectId, 'task.create', id, encoded, hash, request.idempotencyKey, 'completed', actor, at, at, JSON.stringify(task), commandId);
+        event({ projectId: request.projectId, type: 'task.created', payload: { taskId: id, actor }, correlationId: commandId, at });
         return task;
       });
     },

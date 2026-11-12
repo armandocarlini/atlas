@@ -24,6 +24,7 @@ test('perfil principal é estático, local ao perfil do app e limitado à leitur
   assert(PROFILE.includes('${base_prompt}'));
   assert(!PROFILE.includes('  - Bash'));
   assert(PROFILE.includes('mcp__atlas__tasks_delegate') && PROFILE.includes('não afirme que ele assumiu'), 'principal delega sem afirmar aceite');
+  assert(PROFILE.includes('mcp__atlas__tasks_create') && PROFILE.includes('não precisa delegar de novo'), 'principal cria a tarefa e não repete a delegação');
   assert(PROFILE.includes('worktree: true') && PROFILE.includes('remover worktrees'), 'principal conhece a worktree por tarefa e seus limites');
   assert(PROFILE.includes('só o usuário conclui') && PROFILE.includes('estado done'), 'principal não afirma conclusão antes do aceite');
   assert(PROFILE.includes('lastReview.regression') && PROFILE.includes('uma suíte verde não conclui a tarefa'), 'principal lê a suíte como verificação que só informa');

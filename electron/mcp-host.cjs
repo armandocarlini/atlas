@@ -45,6 +45,22 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { requestId: { type: 'string' } }, required: ['requestId'], additionalProperties: false },
   },
   {
+    name: 'tasks_create',
+    roles: ['orchestrator'],
+    description: 'Cria uma tarefa neste projeto, em backlog, com título, descrição e critérios de aceite. Depois peça o agente com agents_request informando taskId (e worktree: true para trabalho com escrita): ao aprovar, o ATLAS oferece a tarefa ao novo agente com o propósito do pedido. Só o usuário conclui tarefas.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', maxLength: 160 },
+        description: { type: 'string', maxLength: 8000 },
+        acceptance: { type: 'string', maxLength: 4000 },
+        idempotencyKey: { type: 'string', pattern: '^[a-zA-Z0-9-]{8,64}$' },
+      },
+      required: ['title', 'acceptance'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'tasks_delegate',
     roles: ['orchestrator'],
     description: 'Oferece uma tarefa backlog ou ready a uma sessão de agente em execução deste projeto, com objetivo, contexto e próximos passos. O agente decide aceitar ou recusar; acompanhe por tasks_list e não afirme que ele assumiu antes disso.',
@@ -278,6 +294,18 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
           workedBy: workers[id] || [],
         })),
       };
+    },
+    tasks_create(grant, args) {
+      const task = store.createTask({
+        projectId: grant.projectId,
+        title: args.title,
+        description: args.description ?? '',
+        acceptance: args.acceptance,
+        idempotencyKey: agentIdempotencyKey(grant.sessionId, args.idempotencyKey),
+        actor: `agent:${grant.sessionId}`,
+      });
+      onTaskChange(grant.projectId);
+      return { taskId: task.id, title: task.title, state: task.state, note: 'Tarefa criada em backlog. Peça o agente com agents_request e este taskId; a aprovação oferece a tarefa a ele.' };
     },
     tasks_delegate(grant, args) {
       const handoff = store.offerHandoff({

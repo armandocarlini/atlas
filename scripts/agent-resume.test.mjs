@@ -62,3 +62,21 @@ test('ID de conversa e modo são validados antes de chegar à linha de comando',
   assert.throws(() => launchFor({ adapter: claude, conversation: { mode: 'fork', id } }), /Retomada de conversa inválida/);
   assert.deepEqual(launchFor({ adapter: claude }).args, [], 'sem controle de conversa, nada muda');
 });
+
+test('prompt inicial fixo só na run criada pela aprovação, seguro para o cmd.exe e nunca no Kimi', () => {
+  const { AGENT_KICKOFF_PROMPT, CMD_SAFE_VALUE } = createRequire(import.meta.url)('../electron/agent-adapters.cjs');
+  assert.match(AGENT_KICKOFF_PROMPT, CMD_SAFE_VALUE, 'o texto passa pelo cmd.exe nos shims .cmd');
+  assert(AGENT_KICKOFF_PROMPT.includes('handoffs_pending') && AGENT_KICKOFF_PROMPT.includes('messages_unread'));
+  const claude = adapter('claude-code');
+  const bridge = { command: 'C:\\atlas\\electron.exe', args: ['C:\\atlas\\bridge.cjs'], env: {} };
+  // O -- encerra o --mcp-config, que aceita vários valores.
+  assert.deepEqual(launchFor({ adapter: claude, model: 'opus', claudeProfile, bridge, conversation: { mode: 'new', id }, kickoff: true }).args,
+    ['--model', 'opus', '--mcp-config', claudeProfile.mcpConfig, '--session-id', id, '--', AGENT_KICKOFF_PROMPT]);
+  assert.deepEqual(launchFor({ adapter: adapter('codex'), kickoff: true }).args.slice(-2), ['--', AGENT_KICKOFF_PROMPT]);
+  assert.deepEqual(launchFor({ adapter: adapter('gemini'), kickoff: true }).args.slice(-2), ['-i', AGENT_KICKOFF_PROMPT]);
+  assert.deepEqual(launchFor({ adapter: adapter('opencode'), kickoff: true }).args.slice(-2), ['--prompt', AGENT_KICKOFF_PROMPT]);
+  assert(!launchFor({ adapter: adapter('kimi-code'), kickoff: true }).args.includes(AGENT_KICKOFF_PROMPT), 'o -p do Kimi não é interativo');
+  assert(!launchFor({ adapter: claude, conversation: { mode: 'new', id } }).args.includes(AGENT_KICKOFF_PROMPT), 'sessão manual não recebe prompt');
+  assert(!launchFor({ adapter: claude, conversation: { mode: 'resume', id }, kickoff: true }).args.includes(AGENT_KICKOFF_PROMPT), 'retomar conversa não repete o prompt');
+  assert(!launchFor({ adapter: claude, role: 'orchestrator', claudeProfile, kickoff: true }).args.includes(AGENT_KICKOFF_PROMPT), 'a principal não recebe o prompt de agente');
+});
