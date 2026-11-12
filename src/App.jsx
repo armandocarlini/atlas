@@ -62,6 +62,7 @@ const INTEGRATION_CLIS = {
 };
 import { AgentRequestsPanel } from './AgentRequests.jsx';
 import { RegressionSuiteModal, RegressionSuiteStatus } from './RegressionSuite.jsx';
+import { AgentPolicyModal, AgentPolicyStatus } from './AgentPolicy.jsx';
 import { AgentFunctionsModal } from './AgentFunctions.jsx';
 import { ModelSwitchModal } from './ModelSwitch.jsx';
 import { canSwitch, modelLabel } from './model-switch.js';
@@ -800,6 +801,8 @@ export default function App() {
   const geminiDetected = Array.isArray(adapters) && adapters.some((adapter) => adapter.id === 'gemini' && adapter.status === 'available');
   const [regressionSuite, setRegressionSuite] = useState(null);
   const [regressionModalOpen, setRegressionModalOpen] = useState(false);
+  const [agentPolicy, setAgentPolicy] = useState(null);
+  const [agentPolicyModalOpen, setAgentPolicyModalOpen] = useState(false);
   // CLI cujo diálogo de consentimento está aberto ('kimi' ou 'gemini').
   const [integrationModal, setIntegrationModal] = useState(null);
   const [integrationNoticeDismissed, setIntegrationNoticeDismissed] = useState({});
@@ -1332,6 +1335,35 @@ export default function App() {
     return () => { active = false; };
   }, [isSecondaryWindow, taskState.projectId]);
 
+  // Política de agentes do projeto (item 5 da v0.2): só a janela principal lê e altera.
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow || !desktop.getAgentPolicy || !taskState.projectId) {
+      setAgentPolicy(null);
+      return undefined;
+    }
+    let active = true;
+    setAgentPolicy({ projectId: taskState.projectId, loading: true });
+    desktop.getAgentPolicy({ cwd: taskScope.current.cwd }).then((result) => {
+      if (active) setAgentPolicy({ projectId: taskState.projectId, policy: result.policy });
+    }).catch((error) => {
+      if (active) setAgentPolicy({ projectId: taskState.projectId, error: cleanIpcError(error) });
+    });
+    return () => { active = false; };
+  }, [isSecondaryWindow, taskState.projectId]);
+
+  // Agente iniciado pelo modo autônomo controlado: entra na área de trabalho com aviso.
+  useEffect(() => {
+    if (!desktop?.isDesktop || isSecondaryWindow || !desktop.onAgentAutoApproved) return undefined;
+    return desktop.onAgentAutoApproved((result) => {
+      if (!result?.agent) return;
+      setSessions((current) => mergeAgentSessions(current, [result.agent]));
+      notify(result.deliveryError
+        ? `Agente ${result.agent.name} iniciado pela política do projeto, mas o propósito não chegou a ele: ${result.deliveryError}`
+        : `Agente ${result.agent.name} iniciado pela política do projeto (autônomo controlado)`, 7000);
+      reloadAgentRequests();
+    });
+  }, [isSecondaryWindow]);
+
   const regressionActions = desktop?.isDesktop && !isSecondaryWindow && desktop.getRegressionRun ? {
     load: (id) => desktop.getRegressionRun({ cwd: workingDirectory, id }),
     async cancel(id) {
@@ -1832,6 +1864,7 @@ export default function App() {
       { id: 'appearance', group: 'Preferências', label: 'Aparência e configurações', keywords: 'tema cor fundo', shortcut: 'Ctrl ,', run: () => setAppearanceOpen(true) },
     );
     if (desktop?.isDesktop && desktop.listAgentFunctions) commands.push({ id: 'functions', group: 'Preferências', label: 'Funções de agente', hint: pendingFunctions ? `${pendingFunctions} a configurar` : null, keywords: 'cli modelo orquestrador', run: () => setFunctionsOpen(true) });
+    if (agentPolicy?.projectId && agentPolicy.projectId === currentProject?.id && !agentPolicy.loading) commands.push({ id: 'agent-policy', group: 'Preferências', label: 'Política de agentes', hint: agentPolicy.policy ? (agentPolicy.policy.mode === 'autonomous' ? 'autônomo controlado' : 'assistido') : null, keywords: 'paralelismo limite aprovação autônomo assistido', run: () => setAgentPolicyModalOpen(true) });
     commands.push({ id: 'add-project', group: 'Projetos', label: 'Autorizar pasta de projeto', keywords: 'adicionar repositorio', run: addProject });
     (desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((name) => ({ name }))).forEach((project) => commands.push({ id: `project-${project.id || project.name}`, group: 'Projetos', label: `Ir para ${project.name}`, hint: project.path, keywords: 'projeto repositorio', run: () => selectProject(project) }));
     projectSessions.forEach((session) => {
@@ -2138,7 +2171,8 @@ export default function App() {
               {statusOpen && <section id="workspace-status" className="workspace-status-popover" aria-label="Estado do projeto">
                 <div className="workspace-status-heading"><strong>{projectSessions.length} sessões neste projeto</strong><button type="button" className="icon-button subtle" aria-label="Fechar estado do projeto" onClick={() => setStatusOpen(false)}><X size={14} /></button></div>
                 <div className="workspace-status-items">
-                  {regressionSuite?.projectId === currentProject?.id && <RegressionSuiteStatus suite={regressionSuite} onManage={() => setRegressionModalOpen(true)} />}
+                  {regressionSuite?.projectId === currentProject?.id && <RegressionSuiteStatus suite={regressionSuite} onManage={() => { setStatusOpen(false); setRegressionModalOpen(true); }} />}
+                  {agentPolicy?.projectId === currentProject?.id && <AgentPolicyStatus state={agentPolicy} onManage={() => { setStatusOpen(false); setAgentPolicyModalOpen(true); }} />}
                   {desktop?.isDesktop && !isSecondaryWindow && kimiIntegration
                     ? <KimiIntegrationStatus status={kimiIntegration} onManage={() => setIntegrationModal('kimi')} />
                     : <span>{desktop?.isDesktop ? 'Histórico e sessões locais' : 'Wireframe ilustrativo'}</span>}
@@ -2319,6 +2353,12 @@ export default function App() {
         setRegressionSuite((current) => current?.projectId === suite.projectId ? { projectId: suite.projectId, suite } : current);
         setRegressionModalOpen(false);
         notify(suite.enabled ? 'Suíte de regressão ligada' : 'Suíte de regressão desligada');
+      }} />}
+      {agentPolicyModalOpen && agentPolicy?.projectId && <AgentPolicyModal desktop={desktop} cwd={workingDirectory} projectName={taskState.projectName} onClose={() => setAgentPolicyModalOpen(false)} onSaved={(saved) => {
+        setAgentPolicy((current) => current?.projectId === saved.projectId ? { projectId: saved.projectId, policy: saved.policy } : current);
+        setAgentPolicyModalOpen(false);
+        reloadAgentRequests();
+        notify(saved.policy.mode === 'autonomous' ? `Modo autônomo controlado ligado: até ${saved.policy.maxActiveAgents} agentes da principal` : `Modo assistido: você aprova cada pedido (até ${saved.policy.maxActiveAgents} agentes)`);
       }} />}
       {taskModalOpen && <NewTaskModal projectName={taskState.projectName} cwd={workingDirectory} onCreate={createTask} onClose={() => setTaskModalOpen(false)} />}
       {integrationModal && integrations[integrationModal] && !integrations[integrationModal].loading && <KimiIntegrationModal key={integrationModal} cli={INTEGRATION_CLIS[integrationModal].name} status={integrations[integrationModal]} onInstall={() => installIntegration(integrationModal)} onRemove={() => removeIntegration(integrationModal)} onRefresh={() => refreshIntegration(integrationModal)} onClose={() => setIntegrationModal(null)} />}

@@ -716,7 +716,7 @@ body { transition: background-color .18s ease, color .18s ease; }
 .evidence-review-state, .evidence-footnote { margin: 0; color: var(--muted); font-size: 12px; }
 .task-modal form > p { font-size: 12px; color: var(--muted); }
 .task-modal textarea { width: 100%; resize: vertical; min-height: 70px; border: 1px solid var(--border); border-radius: 5px; padding: 10px; color: var(--text); background: var(--surface); font: inherit; }
-.integration-status, .regression-status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font: 11px var(--mono); }
+.integration-status, .regression-status, .agent-policy-status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font: 11px var(--mono); }
 .link-button { padding: 2px 4px; border: 0; border-radius: 3px; background: transparent; color: var(--accent-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .link-button:hover { color: var(--text); }
 .link-button:focus-visible, .integration-entry:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
@@ -838,6 +838,14 @@ body { transition: background-color .18s ease, color .18s ease; }
 .regression-test-files p { margin: 0; padding: 0; border: 0; background: none; }
 .regression-test-files ul { display: grid; gap: 2px; margin: 0; padding-left: 16px; color: var(--text); font-size: 11px; max-height: 160px; overflow-y: auto; }
 .regression-log { border: 1px solid var(--border); border-radius: 5px; background: var(--surface); }
+
+/* Política de agentes (item 5 da v0.2): estado na subbarra, diálogo e motivo no cartão. */
+.agent-policy-status.autonomous { color: var(--text); }
+.agent-policy-status.autonomous svg { flex: none; color: var(--warning); }
+.agent-policy-rules { display: grid; gap: 4px; margin: -4px 0 0; padding-left: 40px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.agent-policy-limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.agent-request-auto-note { display: flex; align-items: flex-start; gap: 6px; margin: 0; color: var(--text); font-size: 11px; line-height: 1.5; }
+.agent-request-auto-note svg { flex: none; margin-top: 2px; color: var(--warning); }
 .regression-log summary { min-height: 32px; display: flex; align-items: center; padding: 0 10px; color: var(--text); font-size: 12px; cursor: pointer; }
 .regression-log summary:focus-visible, .regression-log pre:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 .regression-log > p { margin: 0; padding: 0 10px 8px; border: 0; background: none; color: var(--muted); }

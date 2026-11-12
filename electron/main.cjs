@@ -29,6 +29,7 @@ let operationalStore = null;
 let mcpHost = null;
 let regressionRunner = null;
 let agentHost = null;
+let agentRequests = null;
 let terminalHost = null;
 // Fechamento: grava as runs como fechadas pelo app antes de matar os processos, para
 // reabrir de onde estavam (docs/planos/PLANO_CONTINUIDADE_SESSOES.md).
@@ -314,7 +315,11 @@ app.whenReady().then(async () => {
   const toolsHost = createMcpHost({
     store: operationalStore,
     onConnectionChange: (sessionId, connected) => sendToMain('agent:atlas-tools', { sessionId, connected }),
-    onAgentRequest: (projectId) => sendToMain('agent-request:changed', { projectId }),
+    onAgentRequest: (projectId) => {
+      sendToMain('agent-request:changed', { projectId });
+      // Modo autônomo controlado: o ATLAS avalia o pedido novo pelas regras do projeto.
+      agentRequests?.evaluate(projectId);
+    },
     onTaskChange: (projectId) => sendToMain('task:changed', { projectId }),
     onReviewRequested: (request) => {
       const run = operationalStore.enqueueRegressionRun(request);
@@ -341,15 +346,20 @@ app.whenReady().then(async () => {
     geminiProfile: ensureGeminiProfile(app.getPath('userData')),
     mcpHost,
     bridgeEntry: integration.entry,
-    onRunEnded: (projectId) => sendToMain('task:changed', { projectId }),
+    onRunEnded: (projectId) => {
+      sendToMain('task:changed', { projectId });
+      // Uma vaga aberta pode liberar pedidos que aguardavam no modo autônomo.
+      agentRequests?.evaluate(projectId);
+    },
   });
-  createAgentRequestHost({
+  agentRequests = createAgentRequestHost({
     ipcMain,
     projectHost,
     store: operationalStore,
     isMainSender: terminalHost.isMainSender,
     agentHost,
     onChange: (projectId) => sendToMain('agent-request:changed', { projectId }),
+    onAutoApproved: (projectId, result) => sendToMain('agent-request:auto-approved', { projectId, ...result }),
   });
   // A janela não espera a varredura Git: os projetos chegam conforme terminam.
   await projectHost.rootsReady;

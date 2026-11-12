@@ -284,7 +284,23 @@ const MIGRATIONS = [{
 }, {
   version: 16,
   sql: 'ALTER TABLE sessions ADD COLUMN removed_at TEXT;',
+}, {
+  // Política de agentes por projeto (docs/planos/PLANO_V0_2_PARALELISMO_POLITICAS.md).
+  // Sem linha, valem o modo assistido e os limites da v0.1.
+  version: 17,
+  sql: `
+    CREATE TABLE agent_policies (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id),
+      mode TEXT NOT NULL CHECK(mode IN ('assisted', 'autonomous')),
+      max_active INTEGER NOT NULL CHECK(max_active BETWEEN 1 AND 6),
+      max_pending INTEGER NOT NULL CHECK(max_pending BETWEEN 1 AND 6),
+      version INTEGER NOT NULL, updated_at TEXT NOT NULL
+    ) STRICT;
+  `,
 }];
+
+const AGENT_POLICY_MODES = ['assisted', 'autonomous'];
+const AGENT_POLICY_RANGE = Object.freeze({ min: 1, max: 6 });
 
 const ORCHESTRATOR_MODES = ['coordinate', 'auto'];
 
@@ -461,6 +477,17 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   }
 
   // { taskId: [{ adapter, model, function }] } para a revisão cruzada.
+  function getAgentPolicy(projectId) {
+    const row = db.prepare('SELECT mode, max_active, max_pending, version FROM agent_policies WHERE project_id = ?').get(projectId);
+    return {
+      mode: row?.mode || 'assisted',
+      maxActiveAgents: row?.max_active ?? AGENT_REQUEST_POLICY.maxActiveAgents,
+      maxPending: row?.max_pending ?? AGENT_REQUEST_POLICY.maxPending,
+      ttlMs: AGENT_REQUEST_POLICY.ttlMs,
+      version: row?.version ?? 0,
+    };
+  }
+
   function listTaskWorkers(projectId) {
     const workers = {};
     for (const row of db.prepare(TASK_WORKERS_SELECT).all(projectId)) {
@@ -572,9 +599,29 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
         return true;
       });
     },
+    getAgentPolicy,
+
+    // Só o usuário altera, pelo diálogo "Política de agentes" (IPC da janela principal).
+    setAgentPolicy({ projectId, mode, maxActiveAgents, maxPending, expectedVersion }) {
+      if (!AGENT_POLICY_MODES.includes(mode)) throw new Error('Modo da política de agentes inválido.');
+      for (const [label, value] of [['Agentes ativos', maxActiveAgents], ['Pedidos aguardando', maxPending]]) {
+        if (!Number.isInteger(value) || value < AGENT_POLICY_RANGE.min || value > AGENT_POLICY_RANGE.max) throw new Error(`${label}: escolha de ${AGENT_POLICY_RANGE.min} a ${AGENT_POLICY_RANGE.max}.`);
+      }
+      return transaction(db, () => {
+        if (!db.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId)) throw new Error('Projeto não encontrado.');
+        const current = getAgentPolicy(projectId);
+        if (expectedVersion !== undefined && expectedVersion !== current.version) throw new Error('A política foi alterada em outra janela. Reabra o diálogo.');
+        const at = now();
+        if (current.version) db.prepare('UPDATE agent_policies SET mode = ?, max_active = ?, max_pending = ?, version = version + 1, updated_at = ? WHERE project_id = ?').run(mode, maxActiveAgents, maxPending, at, projectId);
+        else db.prepare('INSERT INTO agent_policies (project_id, mode, max_active, max_pending, version, updated_at) VALUES (?, ?, ?, ?, 1, ?)').run(projectId, mode, maxActiveAgents, maxPending, at);
+        event({ projectId, type: 'agent.policy', payload: { mode, maxActiveAgents, maxPending, actor: 'user' }, at });
+        return getAgentPolicy(projectId);
+      });
+    },
+
     requestAgent(request) {
       const payload = agentRequestPayload(request);
-      const policy = { ...AGENT_REQUEST_POLICY, ...(request.policy || {}) };
+      const policy = { ...getAgentPolicy(request.projectId), ...(request.policy || {}) };
       const hash = createHash('sha256').update(JSON.stringify({ ...payload, projectId: request.projectId, requestedBy: request.requestedBy })).digest('hex');
       return transaction(db, () => {
         const previous = db.prepare('SELECT payload_hash, result FROM commands WHERE project_id = ? AND idempotency_key = ?').get(request.projectId, request.idempotencyKey);
@@ -632,7 +679,9 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ? AND r.project_id = ?`).get(requestId, projectId));
     },
     // Aprovação vinculada ao payload exibido e à validade, verificada no momento da execução.
-    approveAgentRequest({ projectId, requestId, payloadHash }) {
+    // `by`: 'user' no cartão ou 'policy' no modo autônomo controlado do projeto.
+    approveAgentRequest({ projectId, requestId, payloadHash, by = 'user' }) {
+      if (!['user', 'policy'].includes(by)) throw new Error('Origem da aprovação inválida.');
       return transaction(db, () => {
         const at = now();
         expirePending(projectId, at);
@@ -646,8 +695,8 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
           const task = db.prepare('SELECT state FROM tasks WHERE id = ?').get(row.task_id);
           if (!task || !['backlog', 'ready'].includes(task.state)) throw new Error(`A tarefa do pedido não está mais disponível (${task?.state || 'removida'}). Recuse o pedido.`);
         }
-        db.prepare("UPDATE agent_requests SET state = 'approved', resolved_at = ?, resolved_by = 'user', version = version + 1 WHERE id = ?").run(at, requestId);
-        event({ projectId, sessionId: row.requested_by, type: 'approval.resolved', payload: { requestId, decision: 'approved' }, correlationId: requestId, at });
+        db.prepare("UPDATE agent_requests SET state = 'approved', resolved_at = ?, resolved_by = ?, version = version + 1 WHERE id = ?").run(at, by, requestId);
+        event({ projectId, sessionId: row.requested_by, type: 'approval.resolved', payload: { requestId, decision: 'approved', by }, correlationId: requestId, at });
         return agentRequestRow(db.prepare(`${AGENT_REQUEST_SELECT} WHERE r.id = ?`).get(requestId));
       });
     },
@@ -843,4 +892,4 @@ function closeOperationalStore(store, onError = console.error) {
   }
 }
 
-module.exports = { AGENT_REQUEST_POLICY, createOperationalStore, closeOperationalStore, migrate, MIGRATIONS };
+module.exports = { AGENT_REQUEST_POLICY, AGENT_POLICY_RANGE, createOperationalStore, closeOperationalStore, migrate, MIGRATIONS };
