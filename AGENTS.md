@@ -56,6 +56,7 @@ Não quebre estas regras sem plano e decisão explícita do mantenedor.
   - o fim da run tira o claim sem concluir nem devolver a tarefa;
   - worktrees nascem só da aprovação de um pedido com `taskId` + `worktree: true`;
   - o ATLAS nunca remove worktrees nem branches.
+- **Sessão externa:** um CLI aberto fora do ATLAS entra na equipe só quando o usuário a anexa (paleta, "Anexar sessão externa"). O ATLAS não abre processo nem vê o terminal dela; o usuário cola num PowerShell o comando com endpoint e token da run, que o card mostra com o token oculto. Desanexar revoga o token e encerra a run, que libera o claim. A sessão externa nunca é reaberta sozinha.
 - **Mensagens:** são registros persistidos com entrega e leitura. Nunca são digitadas no terminal do destinatário.
 - **Git do usuário:** a descoberta é somente leitura. Não inicialize nem altere repositórios do usuário como parte dela.
 - **Integração MCP:**

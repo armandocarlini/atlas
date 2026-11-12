@@ -63,3 +63,17 @@ test('aviso da retomada diz o que voltou, o que abriu conversa nova e o que falh
     '2 sessões voltaram de onde estavam. oc-antigo e kimi voltaram com conversa nova: o CLI não retoma aquela conversa. Não foi possível retomar codex (Codex não encontrado no PATH.).',
   );
 });
+
+test('sessão externa: rótulo próprio, sem terminal e histórico ao desanexar', () => {
+  const running = agentSession({ id: 'externa', name: 'externa', cli: 'Claude Code', origin: 'user', role: 'agent', state: 'running', ptyId: null, external: true, atlasTools: true });
+  assert.equal(running.external, true);
+  assert.equal(running.origin, 'externa');
+  assert.match(running.role, /roda fora do ATLAS/);
+  assert.equal(running.ptyId, null);
+  assert.equal(running.exited, false);
+  const history = agentSession({ id: 'externa', name: 'externa', cli: 'Claude Code', origin: 'user', role: 'agent', archived: true, runState: 'succeeded', external: true });
+  assert.equal(history.external, true);
+  assert.equal(history.exited, true);
+  assert.equal(history.atlasTools, false);
+  assert.equal(agentSession({ id: 'manual', name: 'manual', cli: 'Kimi Code', origin: 'user', state: 'running', ptyId: 'pty-1' }).external, false);
+});

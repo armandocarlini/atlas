@@ -18,13 +18,15 @@ export function agentSession(agent) {
     name: agent.name, cli: agent.cli, version: agent.version,
     role: archived ? 'Histórico de sessão; nenhum processo conectado'
       : agent.role === 'orchestrator' ? 'Planejamento do projeto; pede novos agentes com aprovação do usuário'
-        : agent.origin === 'orchestrator' ? 'Agente pedido pela sessão principal e aprovado pelo usuário' : 'Sessão de agente criada pelo usuário',
-    origin: agent.role === 'orchestrator' ? 'principal' : agent.origin === 'orchestrator' ? 'orquestrador' : 'manual',
+        : agent.external ? 'Sessão externa: o CLI roda fora do ATLAS e colabora pela ponte'
+          : agent.origin === 'orchestrator' ? 'Agente pedido pela sessão principal e aprovado pelo usuário' : 'Sessão de agente criada pelo usuário',
+    origin: agent.role === 'orchestrator' ? 'principal' : agent.external ? 'externa' : agent.origin === 'orchestrator' ? 'orquestrador' : 'manual',
     status, color: archived ? '#8d959d' : '#4ecb8d', worktree: agent.cwd,
     archived, runState: agent.runState, reason: agent.reason, createdAt: agent.createdAt,
     endedAt: agent.endedAt, model: agent.model ?? null, currentModel: agent.currentModel ?? null, adapterId: agent.adapterId ?? null,
     functionSlug: agent.functionSlug ?? null, effort: null, lines: [],
     atlasTools: !archived && Boolean(agent.atlasTools),
+    external: Boolean(agent.external),
   };
 }
 

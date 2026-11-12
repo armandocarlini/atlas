@@ -64,6 +64,9 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   openRegressionLog: (request) => ipcRenderer.invoke('regression-run:open-log', request),
   listAgents: () => ipcRenderer.invoke('agent:list'),
   removeAgent: (sessionId) => ipcRenderer.invoke('agent:remove', sessionId),
+  attachExternalSession: (request) => ipcRenderer.invoke('agent:attach-external', request),
+  getExternalCommand: (sessionId) => ipcRenderer.invoke('agent:external-command', sessionId),
+  detachExternalSession: (sessionId) => ipcRenderer.invoke('agent:detach-external', sessionId),
   // Retomada ao reabrir: estado (pendente ou resultado) e aviso de quando termina.
   getRestoreStatus: () => ipcRenderer.invoke('agent:restore-status'),
   onAgentsRestored: (callback) => subscribe('agent:restored', callback),

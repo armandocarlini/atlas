@@ -63,6 +63,7 @@ const INTEGRATION_CLIS = {
 import { AgentRequestsPanel } from './AgentRequests.jsx';
 import { RegressionSuiteModal, RegressionSuiteStatus } from './RegressionSuite.jsx';
 import { AgentPolicyModal, AgentPolicyStatus } from './AgentPolicy.jsx';
+import { ExternalAttachModal, ExternalSessionPanel } from './ExternalSession.jsx';
 import { AgentFunctionsModal } from './AgentFunctions.jsx';
 import { ModelSwitchModal } from './ModelSwitch.jsx';
 import { canSwitch, modelLabel } from './model-switch.js';
@@ -418,7 +419,7 @@ function SessionActions({ session, onFocus, onPopup, onHide, onRestart, onSendDi
   </div>;
 }
 
-function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, onStop, onRemove, tabbed = false, placement, pasteTargets }) {
+function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, onPopup, onHide, onExit, onRestart, onSendDiscovery, atlasConnected = false, desktop, theme, detached = false, popup = false, functions = null, onSetFunction, onSwitchModel, onStop, onRemove, onDetachExternal, tabbed = false, placement, pasteTargets }) {
   const [draft, setDraft] = useState('');
   const [localLines, setLocalLines] = useState([]);
   const cli = session.cli.toLowerCase();
@@ -465,8 +466,8 @@ function SessionCard({ session, selected, focused, onSelect, onFocus, onSend, on
       </header>
 
       {detached ? <div className="detached-terminal-placeholder"><span>Terminal aberto em outra janela.</span><button className="button secondary compact" onClick={() => onPopup(session)}>Reintegrar</button></div> : <>
-        <div className={`terminal-window harness-${harness} ${session.ptyId ? 'real-terminal' : ''}`} aria-label={session.archived ? `Histórico de ${session.name}` : `Terminal interativo nativo do ${session.cli}`}>
-          {session.archived ? <div className="session-history">
+        <div className={`terminal-window harness-${harness} ${session.ptyId ? 'real-terminal' : ''}`} aria-label={session.archived ? `Histórico de ${session.name}` : session.external ? `Sessão externa ${session.name}` : `Terminal interativo nativo do ${session.cli}`}>
+          {session.external && !session.archived ? <ExternalSessionPanel session={session} desktop={desktop} connected={atlasConnected} onDetach={onDetachExternal} /> : session.archived ? <div className="session-history">
             <strong>Histórico de sessão</strong>
             <p>{session.status}. Nenhum processo está conectado.</p>
             <p>O conteúdo do terminal não foi salvo. Abra uma nova sessão para continuar o trabalho.</p>
@@ -803,6 +804,7 @@ export default function App() {
   const [regressionModalOpen, setRegressionModalOpen] = useState(false);
   const [agentPolicy, setAgentPolicy] = useState(null);
   const [agentPolicyModalOpen, setAgentPolicyModalOpen] = useState(false);
+  const [externalModalOpen, setExternalModalOpen] = useState(false);
   // CLI cujo diálogo de consentimento está aberto ('kimi' ou 'gemini').
   const [integrationModal, setIntegrationModal] = useState(null);
   const [integrationNoticeDismissed, setIntegrationNoticeDismissed] = useState({});
@@ -1482,7 +1484,7 @@ export default function App() {
     return () => { active = false; unsubscribe?.(); };
   }, []);
 
-  const needsAdapters = modal === 'session' || functionsOpen || Boolean(orchestratorChoice) || agentRequestState.items.some((request) => request.state === 'pending');
+  const needsAdapters = modal === 'session' || externalModalOpen || functionsOpen || Boolean(orchestratorChoice) || agentRequestState.items.some((request) => request.state === 'pending');
   const sessionModalOpen = modal === 'session';
   useEffect(() => {
     if (!needsAdapters || !desktop?.isDesktop) return undefined;
@@ -1730,6 +1732,22 @@ export default function App() {
     if (broadcast && isSecondaryWindow) panelChannelRef.current?.postMessage({ type: 'session-exit', sessionId, exit });
   }
 
+  // Sessão externa: o CLI roda fora do ATLAS e entra na equipe pela ponte.
+  async function attachExternalSession(choice) {
+    const agent = await desktop.attachExternalSession({ cwd: workingDirectory, ...choice });
+    setSessions((current) => mergeAgentSessions(current, [agent]));
+    setSelectedId(agent.id);
+    setExternalModalOpen(false);
+    notify(`Sessão externa ${agent.name} anexada. Copie o comando no card e cole num PowerShell.`, 5000);
+  }
+
+  async function detachExternalSession(session) {
+    await desktop.detachExternalSession(session.id);
+    const agents = await desktop.listAgents();
+    setSessions((current) => mergeAgentSessions(current, agents.filter((agent) => agent.id === session.id)));
+    notify(`Sessão externa ${session.name} desanexada; o token deixou de valer.`);
+  }
+
   async function applySessionAction({ session, kind }) {
     if (kind === 'stop') {
       const requested = await desktop.stopPty(session.ptyId);
@@ -1864,6 +1882,7 @@ export default function App() {
       { id: 'appearance', group: 'Preferências', label: 'Aparência e configurações', keywords: 'tema cor fundo', shortcut: 'Ctrl ,', run: () => setAppearanceOpen(true) },
     );
     if (desktop?.isDesktop && desktop.listAgentFunctions) commands.push({ id: 'functions', group: 'Preferências', label: 'Funções de agente', hint: pendingFunctions ? `${pendingFunctions} a configurar` : null, keywords: 'cli modelo orquestrador', run: () => setFunctionsOpen(true) });
+    if (desktop?.isDesktop && !isSecondaryWindow && desktop.attachExternalSession && currentProject) commands.push({ id: 'attach-external', group: 'Sessões', label: 'Anexar sessão externa', keywords: 'cli fora terminal windows externo conectar', run: () => setExternalModalOpen(true) });
     if (agentPolicy?.projectId && agentPolicy.projectId === currentProject?.id && !agentPolicy.loading) commands.push({ id: 'agent-policy', group: 'Preferências', label: 'Política de agentes', hint: agentPolicy.policy ? (agentPolicy.policy.mode === 'autonomous' ? 'autônomo controlado' : 'assistido') : null, keywords: 'paralelismo limite aprovação autônomo assistido', run: () => setAgentPolicyModalOpen(true) });
     commands.push({ id: 'add-project', group: 'Projetos', label: 'Autorizar pasta de projeto', keywords: 'adicionar repositorio', run: addProject });
     (desktop?.isDesktop ? projects : ['ATLAS', 'Exemplo API', 'Exemplo UI'].map((name) => ({ name }))).forEach((project) => commands.push({ id: `project-${project.id || project.name}`, group: 'Projetos', label: `Ir para ${project.name}`, hint: project.path, keywords: 'projeto repositorio', run: () => selectProject(project) }));
@@ -2237,6 +2256,7 @@ export default function App() {
                   onExit={updateSessionExit}
                   onStop={desktop?.isDesktop ? (session) => setSessionAction({ kind: 'stop', session }) : undefined}
                   onRemove={desktop?.isDesktop ? (session) => setSessionAction({ kind: 'remove', session }) : undefined}
+                  onDetachExternal={desktop?.isDesktop ? detachExternalSession : undefined}
                   onRestart={openOrchestratorChoice}
                   atlasConnected={toolConnections[session.id] ?? session.atlasTools}
                   onSendDiscovery={desktop?.isDesktop && projectSessions.some((session) => session.roleKind === 'orchestrator') ? (session) => setMessageModal({ session }) : undefined}
@@ -2354,6 +2374,7 @@ export default function App() {
         setRegressionModalOpen(false);
         notify(suite.enabled ? 'Suíte de regressão ligada' : 'Suíte de regressão desligada');
       }} />}
+      {externalModalOpen && currentProject && <ExternalAttachModal adapters={adapters} functions={agentFunctions.items} projectName={taskState.projectName || currentProject.name} onAttach={attachExternalSession} onClose={() => setExternalModalOpen(false)} />}
       {agentPolicyModalOpen && agentPolicy?.projectId && <AgentPolicyModal desktop={desktop} cwd={workingDirectory} projectName={taskState.projectName} onClose={() => setAgentPolicyModalOpen(false)} onSaved={(saved) => {
         setAgentPolicy((current) => current?.projectId === saved.projectId ? { projectId: saved.projectId, policy: saved.policy } : current);
         setAgentPolicyModalOpen(false);

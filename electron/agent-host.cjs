@@ -12,8 +12,15 @@ const MODELS_CACHE_MS = 60 * 1000;
 const RESUME_GRACE_MS = 4000;
 const graceDelay = () => new Promise((resolve) => setTimeout(resolve, RESUME_GRACE_MS));
 
+// Literal do PowerShell: aspas simples, com as internas dobradas. Nada é interpretado.
+function psLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discover = discoverAdapters, listModelsImpl = listModels, store, onPersistenceError = console.error, orchestratorProfile, claudeProfile = null, geminiProfile = null, mcpHost = null, bridgeEntry = null, onRunEnded = () => {}, resumeGrace = graceDelay }) {
   const agents = new Map();
+  // Token da ponte de cada sessão externa anexada; nunca sai pela listagem.
+  const externalTokens = new Map();
   const pendingOrchestrators = new Map();
   const modelCache = new Map();
   let discoveryPromise = null;
@@ -46,6 +53,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
       runStartedAt: agent.runStartedAt,
       runAttempt: agent.runAttempt,
       atlasTools: Boolean(mcpHost?.isConnected(agent.id)),
+      external: Boolean(agent.external),
     };
   }
 
@@ -69,6 +77,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
           exit: run.exit_code === null ? null : { exitCode: run.exit_code, signal: run.signal },
           createdAt: session.created_at, endedAt: run.ended_at,
           role: session.role, runStartedAt: run.started_at, runAttempt: run.attempt,
+          external: session.attachment === 'external',
         });
       }
     }
@@ -251,6 +260,89 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
   ipcMain.handle('agent:create', async (event, request = {}) => {
     if (!isMainSender(event)) throw new Error('Janela não autorizada a criar sessões de agente.');
     return createAgent({ ...request, ...functionAudit(request?.functionSlug, request?.adapterId, request?.model) });
+  });
+
+  // Sessão externa (docs/planos/PLANO_V0_2_PARALELISMO_POLITICAS.md, fase 2): um CLI
+  // aberto fora do ATLAS entra na equipe pela ponte. O ATLAS não tem o processo; a run
+  // vive até o usuário desanexar ou o app fechar, e não é reaberta na abertura seguinte.
+  async function attachExternal(request = {}) {
+    if (!mcpHost || !store) throw new Error('O canal de ferramentas do ATLAS não está disponível; não há como anexar uma sessão externa.');
+    await waitForCwd(projectHost, request.cwd);
+    const cwd = request.cwd;
+    if (typeof cwd !== 'string' || !projectHost.isAllowedCwd(cwd)) throw new Error('Selecione uma pasta autorizada ou uma worktree descoberta.');
+    const project = projectHost.getProjectForCwd?.(cwd);
+    if (!project) throw new Error('Projeto não encontrado para a pasta autorizada. Atualize os projetos.');
+    const adapter = await requireAdapter(request.adapterId);
+    const { functionSlug } = functionAudit(request.functionSlug, adapter.id, null);
+    const requestedName = typeof request.name === 'string' ? request.name.trim().slice(0, 60) : '';
+    const id = randomUUID();
+    const at = new Date().toISOString();
+    const agent = {
+      id, name: requestedName || `${adapter.id}-externa`, adapterId: adapter.id, cli: adapter.name, version: adapter.version,
+      model: null, cwd, origin: 'user', ptyId: null, state: 'running', exit: null, createdAt: at, runStartedAt: at,
+      role: 'agent', projectId: project.id, functionSlug, functionOverridden: null, external: true, adapter,
+    };
+    const token = mcpHost.register({ projectId: project.id, sessionId: id, role: 'agent' });
+    try {
+      const run = store.startSession({ ...agent, attachment: 'external' });
+      agent.runId = run.id;
+      agent.runVersion = run.version;
+      agent.runAttempt = run.attempt;
+      mcpHost.bindRun(token, run.id);
+    } catch (error) {
+      mcpHost.revoke(token);
+      throw new Error(`Não foi possível registrar a sessão externa: ${error.message}`);
+    }
+    externalTokens.set(id, token);
+    agents.set(id, agent);
+    return describe(agent);
+  }
+
+  // Comando para colar num PowerShell: endpoint e token só naquele processo, e o CLI
+  // aberto com a ponte do ATLAS como numa run interna. Nada é gravado em disco.
+  function externalCommand(sessionId) {
+    const agent = agents.get(sessionId);
+    const token = externalTokens.get(sessionId);
+    if (!agent?.external || !token) throw new Error('Sessão externa não encontrada ou já desanexada.');
+    const env = { ATLAS_MCP_ENDPOINT: mcpHost.endpoint, ATLAS_MCP_TOKEN: token };
+    const bridge = bridgeEntry ? { command: bridgeEntry.command, args: bridgeEntry.args, env: { ...bridgeEntry.env, ...env } } : null;
+    const launch = launchFor({ adapter: agent.adapter, role: 'agent', claudeProfile, geminiProfile, bridge });
+    const lines = [
+      `Set-Location -LiteralPath ${psLiteral(agent.cwd)}`,
+      ...Object.entries({ ...env, ...launch.env }).map(([key, value]) => `$env:${key} = ${psLiteral(value)}`),
+      [`& ${psLiteral(agent.adapter.executable)}`, ...launch.args.map(psLiteral)].join(' '),
+    ];
+    // Kimi e Gemini leem a ponte da entrada consentida no arquivo do próprio CLI.
+    const needsConsent = agent.adapter.atlasTools === 'consent' || agent.adapterId === 'gemini';
+    return { sessionId, command: lines.join('\n'), needsConsent };
+  }
+
+  function detachExternal(sessionId) {
+    const agent = agents.get(sessionId);
+    if (!agent?.external) throw new Error('Sessão externa não encontrada ou já desanexada.');
+    const token = externalTokens.get(sessionId);
+    if (token) mcpHost.revoke(token);
+    externalTokens.delete(sessionId);
+    agents.delete(sessionId);
+    // O fim da run tira o claim das tarefas dela, como em qualquer run.
+    store.finishRun({ runId: agent.runId, expectedVersion: agent.runVersion, exitCode: 0 });
+    onRunEnded(agent.projectId);
+    return { sessionId, detached: true };
+  }
+
+  ipcMain.handle('agent:attach-external', async (event, request = {}) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a anexar sessões.');
+    return attachExternal(request || {});
+  });
+
+  ipcMain.handle('agent:external-command', (event, sessionId) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a ler o comando de conexão.');
+    return externalCommand(sessionId);
+  });
+
+  ipcMain.handle('agent:detach-external', (event, sessionId) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a desanexar sessões.');
+    return detachExternal(sessionId);
   });
 
   ipcMain.handle('agent:remove', (event, sessionId) => {

@@ -1939,6 +1939,46 @@ process.stdin.on('data', (data) => {
   await ensureStatus(main);
   await until(() => main.evaluate(`document.querySelector('.agent-policy-status:not(.autonomous)')?.innerText.includes('assistido · até 4 ativos')`), 'assisted status');
   console.log('PASS política de agentes: padrão da v0.1, diálogo com foco e contraste, autônomo com aviso, persistência e volta ao assistido');
+
+  // Sessão externa (item 5 da v0.2, fase 2): anexada pela paleta, conectada por uma
+  // ponte real com o endpoint e o token do comando, e desanexada no card.
+  await main.evaluate(`document.querySelector('.cockpit').focus()`);
+  await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+  await until(() => main.evaluate(`Boolean(document.querySelector('.command-palette input'))`), 'paleta aberta para anexar');
+  for (const char of 'sessao externa') await key(main, char, { text: char });
+  await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Anexar sessão externa'`), 'Anexar sessão externa na paleta');
+  await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+  await until(() => main.evaluate(`document.querySelectorAll('.external-modal [name=external-cli] option').length > 0`), 'CLIs no diálogo de sessão externa');
+  const externalDialog = await main.evaluate(`(() => { const dialog = document.querySelector('.external-modal'); return { modal: dialog.getAttribute('aria-modal'), focused: document.activeElement?.name }; })()`);
+  assert.deepEqual(externalDialog, { modal: 'true', focused: 'external-name' });
+  await main.evaluate(`(() => { const field = document.querySelector('.external-modal [name=external-name]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, 'externa-smoke'); field.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await click(main, '.external-modal button', 'Anexar');
+  await until(() => main.evaluate(`document.querySelector('[aria-label="Sessão externa externa-smoke"] .external-state')?.innerText.includes('Aguardando conexão')`), 'card da sessão externa aguardando');
+  const externalAgent = (await native('invoke', { channel: 'agent:list' })).find((agent) => agent.name === 'externa-smoke' && !agent.archived);
+  assert.equal(externalAgent.external, true);
+  assert.equal(externalAgent.ptyId, null, 'o ATLAS não abre processo para a sessão externa');
+  const { command: externalCommand } = await native('invoke', { channel: 'agent:external-command', args: [externalAgent.id] });
+  const externalEndpoint = /\$env:ATLAS_MCP_ENDPOINT = '([^']*)'/.exec(externalCommand)[1];
+  const externalToken = /\$env:ATLAS_MCP_TOKEN = '([^']*)'/.exec(externalCommand)[1];
+  const shownCommand = await main.evaluate(`document.querySelector('[aria-label="Sessão externa externa-smoke"] .external-command').textContent`);
+  assert(shownCommand.includes('••••••••') && !shownCommand.includes(externalToken), 'o card não mostra o token');
+  const externalBridge = spawn(process.execPath, [path.join(root, 'electron', 'atlas-mcp-bridge.cjs')], { env: { ...process.env, ATLAS_MCP_ENDPOINT: externalEndpoint, ATLAS_MCP_TOKEN: externalToken }, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    externalBridge.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'smoke-externa', version: '0' } } })}\n`);
+    await until(() => main.evaluate(`document.querySelector('[aria-label="Sessão externa externa-smoke"] .external-state')?.innerText.includes('Conectada ao ATLAS')`), 'sessão externa conectada pela ponte');
+    const externalAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+    assert.equal(externalAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in external session card');
+    await screenshot(main, 'external-session');
+    await click(main, '[aria-label="Sessão externa externa-smoke"] button', 'Desanexar');
+    await until(() => main.evaluate(`!document.querySelector('[aria-label="Sessão externa externa-smoke"]')`), 'card da sessão externa sai da área de trabalho');
+    const detachedAgent = (await native('invoke', { channel: 'agent:list' })).find((agent) => agent.id === externalAgent.id);
+    assert.deepEqual([detachedAgent.archived, detachedAgent.external, detachedAgent.runState], [true, true, 'succeeded'], 'a sessão desanexada fica no histórico');
+    await assert.rejects(native('invoke', { channel: 'agent:external-command', args: [externalAgent.id] }), /já desanexada/);
+  } finally {
+    externalBridge.kill();
+  }
+  await ensureStatus(main);
+  console.log('PASS sessão externa: paleta, diálogo, card sem terminal e sem token, ponte real conectada e desanexar');
   // Suíte de regressão configurada pelo usuário no estado do projeto. A sugestão
   // vem do package.json da fixture e só entra no campo pelo botão.
   fs.writeFileSync(path.join(extraProject, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));

@@ -680,3 +680,80 @@ test('modo da principal: só coordena por padrão; a escolha do diálogo fica sa
   assert.deepEqual(await handlers.get('agent:orchestrator-mode')(mainEvent, { cwd: 'C:\\projeto' }), { projectId: 'project-a', mode: 'auto' });
 });
 
+
+// Item 5 da v0.2, fase 2: sessão externa anexada pela ponte, sem PTY do ATLAS.
+const EXTERNAL_PROFILE = { mcpConfig: 'C:\\perfil\\mcp.json', settings: 'C:\\perfil\\settings.json', instructions: 'C:\\perfil\\principal.md', instructionsAuto: 'C:\\perfil\\auto.md' };
+const EXTERNAL_BRIDGE = { command: 'C:\\atlas\\electron.exe', args: ['C:\\atlas\\atlas-mcp-bridge.cjs'], env: { ELECTRON_RUN_AS_NODE: '1' } };
+
+test('sessão externa: registro sem PTY, token fora da listagem, comando do PowerShell, desanexar libera o claim', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const mcpHost = fakeMcpHost();
+  let ended = 0;
+  const { handlers, mainEvent, spawns } = createHarness({ ...fixture, mcpHost, adapters: [CLAUDE], claudeProfile: EXTERNAL_PROFILE, bridgeEntry: EXTERNAL_BRIDGE, allowedCwds: ['C:\\projeto', "C:\\proj'eto"], onRunEnded: () => { ended += 1; } });
+  const { store } = fixture;
+  const agent = await handlers.get('agent:attach-external')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'claude-code', name: 'claude-no-terminal', functionSlug: 'implementar' });
+  assert.equal(agent.external, true);
+  assert.equal(agent.ptyId, null);
+  assert.equal(agent.state, 'running');
+  assert.equal(agent.functionSlug, 'implementar');
+  assert.equal(spawns.length, 0, 'o ATLAS não inicia processo');
+  assert.equal(store.getSession(agent.id).attachment, 'external');
+  const grant = mcpHost.grants.get('token-1');
+  assert.deepEqual({ sessionId: grant.sessionId, role: grant.role, runId: grant.runId }, { sessionId: agent.id, role: 'agent', runId: agent.runId });
+  assert(!JSON.stringify(handlers.get('agent:list')(mainEvent)).includes('token-1'), 'o token não sai pela listagem');
+
+  const { command, needsConsent } = handlers.get('agent:external-command')(mainEvent, agent.id);
+  assert.equal(needsConsent, false);
+  assert.deepEqual(command.split('\n'), [
+    "Set-Location -LiteralPath 'C:\\projeto'",
+    "$env:ATLAS_MCP_ENDPOINT = '\\\\.\\pipe\\atlas-mcp-teste'",
+    "$env:ATLAS_MCP_TOKEN = 'token-1'",
+    "$env:DISABLE_AUTOUPDATER = '1'",
+    "& 'C:\\cli\\claude.exe' '--mcp-config' 'C:\\perfil\\mcp.json'",
+  ]);
+  // Aspas simples na pasta viram literais do PowerShell, sem interpretação.
+  const quoted = await handlers.get('agent:attach-external')(mainEvent, { cwd: "C:\\proj'eto", adapterId: 'claude-code' });
+  assert.equal(quoted.name, 'claude-code-externa');
+  assert.equal(handlers.get('agent:external-command')(mainEvent, quoted.id).command.split('\n')[0], "Set-Location -LiteralPath 'C:\\proj''eto'");
+
+  // A sessão externa aceita tarefa como qualquer agente; desanexar tira o claim.
+  const principal = store.startSession({ id: 'principal', projectId: 'project-a', name: 'Principal', adapterId: 'claude-code', cli: 'Claude Code', version: '2.1.318', cwd: 'C:\\projeto', origin: 'user', createdAt: new Date().toISOString(), role: 'orchestrator' });
+  void principal;
+  const task = store.createTask({ projectId: 'project-a', title: 'Externa', acceptance: 'Aceite.', idempotencyKey: 'tarefa-externa-01' });
+  const handoff = store.offerHandoff({ projectId: 'project-a', fromSessionId: 'principal', toSessionId: agent.id, taskId: task.id, objective: 'Assumir.', idempotencyKey: 'oferta-externa-01' });
+  store.acceptHandoff({ projectId: 'project-a', handoffId: handoff.id, sessionId: agent.id, runId: agent.runId });
+  assert.equal(store.getTask('project-a', task.id).claimRunId, agent.runId);
+  assert.deepEqual(handlers.get('agent:detach-external')(mainEvent, agent.id), { sessionId: agent.id, detached: true });
+  assert.equal(mcpHost.grants.has('token-1'), false, 'token revogado');
+  assert.equal(store.getTask('project-a', task.id).claimRunId, null, 'o fim da run tira o claim');
+  assert.equal(ended, 1);
+  const history = handlers.get('agent:list')(mainEvent).find((item) => item.id === agent.id);
+  assert.equal(history.archived, true);
+  assert.equal(history.external, true);
+  assert.equal(history.runState, 'succeeded');
+  assert.throws(() => handlers.get('agent:external-command')(mainEvent, agent.id), /já desanexada/);
+  assert.throws(() => handlers.get('agent:detach-external')(mainEvent, agent.id), /já desanexada/);
+
+  // Fechar o ATLAS não reabre a sessão externa ainda anexada.
+  store.reconcileRuns('application_closed');
+  assert(!store.listRestorableRuns().some((item) => item.id === quoted.id), 'sessão externa não volta sozinha');
+});
+
+test('sessão externa: só a janela principal, CLI detectado, pasta autorizada e canal disponível', async (t) => {
+  const fixture = orchestratorFixture(t);
+  const mcpHost = fakeMcpHost();
+  const { handlers, mainEvent } = createHarness({ ...fixture, mcpHost, adapters: [CLAUDE] });
+  await assert.rejects(handlers.get('agent:attach-external')({ sender: 'popup' }, { cwd: 'C:\\projeto', adapterId: 'claude-code' }), /Janela não autorizada/);
+  assert.throws(() => handlers.get('agent:external-command')({ sender: 'popup' }, 'x'), /Janela não autorizada/);
+  assert.throws(() => handlers.get('agent:detach-external')({ sender: 'popup' }, 'x'), /Janela não autorizada/);
+  await assert.rejects(handlers.get('agent:attach-external')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'codex' }), /Adaptador desconhecido/);
+  await assert.rejects(handlers.get('agent:attach-external')(mainEvent, { cwd: 'C:\\outra', adapterId: 'claude-code' }), /pasta autorizada/);
+  await assert.rejects(handlers.get('agent:attach-external')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'claude-code', functionSlug: 'orquestrador' }), /Função de agente inválida/);
+  assert.equal(mcpHost.grants.size, 0, 'nenhum token sobra das tentativas recusadas');
+  const withoutChannel = createHarness({ ...fixture, adapters: [CLAUDE] });
+  await assert.rejects(withoutChannel.handlers.get('agent:attach-external')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'claude-code' }), /canal de ferramentas do ATLAS não está disponível/);
+  // Kimi e Gemini dependem da entrada consentida no arquivo do próprio CLI.
+  const kimi = createHarness({ ...fixture, mcpHost, adapters: [{ ...KIMI, atlasTools: 'consent' }] });
+  const attached = await kimi.handlers.get('agent:attach-external')(mainEvent, { cwd: 'C:\\projeto', adapterId: 'kimi-code' });
+  assert.equal(kimi.handlers.get('agent:external-command')(mainEvent, attached.id).needsConsent, true);
+});

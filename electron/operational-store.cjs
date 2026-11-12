@@ -297,6 +297,11 @@ const MIGRATIONS = [{
       version INTEGER NOT NULL, updated_at TEXT NOT NULL
     ) STRICT;
   `,
+}, {
+  // Sessão externa anexada: um CLI aberto fora do ATLAS que entra na equipe pela ponte,
+  // sem PTY do ATLAS. Não é reaberta ao abrir o app.
+  version: 18,
+  sql: "ALTER TABLE sessions ADD COLUMN attachment TEXT CHECK(attachment IS NULL OR attachment = 'external');",
 }];
 
 const AGENT_POLICY_MODES = ['assisted', 'autonomous'];
@@ -753,20 +758,21 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       });
     },
     getOrchestrator: (projectId) => db.prepare("SELECT * FROM sessions WHERE project_id = ? AND role = 'orchestrator'").get(projectId),
-    startSession({ id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, runStartedAt = createdAt, role = 'agent', model = null, functionSlug = null, functionOverridden = null }) {
+    startSession({ id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, runStartedAt = createdAt, role = 'agent', model = null, functionSlug = null, functionOverridden = null, attachment = null }) {
       return transaction(db, () => {
         const runId = randomUUID();
         const attempt = db.prepare('SELECT coalesce(max(attempt), 0) + 1 AS next FROM agent_runs WHERE session_id = ?').get(id).next;
         const existing = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
         if (existing) {
-          if (existing.role !== role || existing.project_id !== projectId || existing.cwd !== cwd) throw new Error('Identidade de sessão já existente.');
+          if (existing.role !== role || existing.project_id !== projectId || existing.cwd !== cwd || (existing.attachment ?? null) !== attachment) throw new Error('Identidade de sessão já existente.');
           if (db.prepare("SELECT 1 FROM agent_runs WHERE session_id = ? AND state = 'running'").get(id)) throw new Error('Identidade de sessão já existente.');
           // Agente: nova run só ao retomar a mesma sessão, com o mesmo CLI.
           if (role !== 'orchestrator' && (existing.removed_at || existing.adapter_id !== adapterId)) throw new Error('Identidade de sessão já existente.');
           // A identidade da principal continua; o CLI da nova run é o que o usuário escolheu.
           db.prepare('UPDATE sessions SET adapter_id = ?, cli = ?, cli_version = ?, removed_at = NULL WHERE id = ?').run(adapterId, cli, version, id);
         } else {
-          db.prepare('INSERT INTO sessions (id, project_id, name, adapter_id, cli, cli_version, cwd, origin, created_at, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, role);
+          if (attachment !== null && (attachment !== 'external' || role !== 'agent')) throw new Error('Só sessões de agente podem ser anexadas de fora do ATLAS.');
+          db.prepare('INSERT INTO sessions (id, project_id, name, adapter_id, cli, cli_version, cwd, origin, created_at, role, attachment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, projectId, name, adapterId, cli, version, cwd, origin, createdAt, role, attachment);
         }
         db.prepare(`INSERT INTO agent_runs (id, session_id, state, started_at, cli_version, cwd, attempt, adapter_id, model, function_slug, function_overridden) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`).run(runId, id, runStartedAt, version, cwd, attempt, adapterId, model, functionSlug, functionOverridden === null ? null : functionOverridden ? 1 : 0);
         event({ projectId, sessionId: id, runId, type: existing ? 'session.attached' : 'session.created', at: runStartedAt });
@@ -809,7 +815,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
       return db.prepare(`SELECT r.id AS run_id, r.started_at AS run_started_at, r.model, r.current_model, r.function_slug, r.function_overridden,
           s.id, s.project_id, s.name, s.adapter_id, s.cli, s.cwd, s.origin, s.role, s.created_at, s.conversation_id
         FROM agent_runs r JOIN sessions s ON s.id = r.session_id
-        WHERE r.state = 'lost' AND r.reason = 'application_closed' AND r.restored_at IS NULL AND s.removed_at IS NULL
+        WHERE r.state = 'lost' AND r.reason = 'application_closed' AND r.restored_at IS NULL AND s.removed_at IS NULL AND s.attachment IS NULL
           AND r.id IN (SELECT value FROM json_each(?))
           AND r.attempt = (SELECT max(attempt) FROM agent_runs latest WHERE latest.session_id = r.session_id)
         ORDER BY s.role = 'orchestrator' DESC, r.started_at DESC, s.id`).all(ids);
