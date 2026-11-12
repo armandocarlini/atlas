@@ -594,7 +594,7 @@ function OrchestratorChoiceModal({ adapters, previousCli, busy, error, onClose, 
   // "Principal só coordena": ligada por padrão; só o usuário desliga, e vale para esta e as próximas runs.
   const [coordinateOnly, setCoordinateOnly] = useState(mode !== 'auto');
   useEffect(() => { if (mode) setCoordinateOnly(mode !== 'auto'); }, [mode]);
-  const modeError = coordinateOnly && adapters.find((adapter) => adapter.id === choice.adapterId)?.coordinateModeError;
+  const modeError = coordinateOnly && adapters?.find((adapter) => adapter.id === choice.adapterId)?.coordinateModeError;
   const canStart = choice.ready && !busy && mode && !modeError;
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
