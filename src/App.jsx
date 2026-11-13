@@ -50,7 +50,7 @@ import CommandPalette from './CommandPalette.jsx';
 import useAttentionQueue from './useAttentionQueue.js';
 import { attentionDestination, attentionTargetStatus, countByProject, summaryLine, withPrincipalItem } from './attention-queue.js';
 import { nextVisibleSessionId, normalizeTerminalLayout, sessionsInLayout, visibleWorkspaceSessions, workspaceSessions } from './workspace-layout.js';
-import { agentSession, mergeAgentSessions, restoreSummary, sessionExit, terminalSession, usesGemini, usesKimi } from './session-state.js';
+import { agentSession, mergeAgentSessions, orchestratorStatusFor, restoreSummary, sessionExit, terminalSession, usesGemini, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
 import { PersistentTaskPanel, NewTaskModal, TaskEvidencePanel } from './PersistentTasks.jsx';
 import { SessionMessagesPanel, NewMessageModal, DemoMessagesPanel } from './SessionMessages.jsx';
@@ -1092,13 +1092,14 @@ export default function App() {
     desktop.openOrchestrator({ cwd: workingDirectory }).then((agent) => {
       if (!active) return;
       if (agent.needsChoice) {
-        setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: '', needsChoice: true, previousCli: agent.previousCli });
+        setOrchestratorStatus(orchestratorStatusFor(currentProject.id, agent));
         return;
       }
       if (removedSessionIds.current.has(agent.id)) return;
       setSessions((current) => mergeAgentSessions(current, [agent]));
       setSelectedId((current) => current === 'orchestrator' ? agent.id : current);
-      setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: '' });
+      // Principal em histórico ou encerrada continua pedindo a escolha ao voltar ao projeto.
+      setOrchestratorStatus(orchestratorStatusFor(currentProject.id, agent));
     }).catch((error) => { if (active) setOrchestratorStatus({ projectId: currentProject.id, loading: false, error: cleanIpcError(error) }); });
     return () => { active = false; };
   }, [isSecondaryWindow, currentProject?.id, restoreTick]);
