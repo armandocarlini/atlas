@@ -319,7 +319,7 @@
 .attention-flyout { max-height: min(70vh, 560px); }
 .attention-flyout .attention-queue { margin: 4px; background: transparent; }
 .attention-flyout .attention-items { max-height: none; }
-.tree-attention { flex: none; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--warning); color: var(--surface); font: 600 10px/16px var(--mono); text-align: center; }
+.tree-project-name > .tree-attention { flex: none; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--warning); color: var(--surface); font: 600 10px/16px var(--mono); text-align: center; }
 .rail-queue.has-items { color: var(--text); }
 
 .attention-menu { position: fixed; z-index: 90; display: flex; flex-direction: column; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text); box-shadow: 0 10px 28px rgba(0, 0, 0, .35); animation: attention-menu-in 160ms ease-out; }

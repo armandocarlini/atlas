@@ -111,7 +111,7 @@ export default function WorkspaceTree({
   }
 
   return (
-    <nav className={`workspace-tree ${attention ? 'with-attention' : ''}`} aria-label="Projetos, worktrees e sessões">
+    <nav className={attention ? 'workspace-tree with-attention' : 'workspace-tree'} aria-label="Projetos, worktrees e sessões">
       {attention && <AttentionQueue {...attention} />}
       <div className="workspace-tree-heading">
         <strong>Projetos</strong>
