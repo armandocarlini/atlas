@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { agentSession, mergeAgentSessions, sessionExit, usesKimi, restoreSummary } from '../src/session-state.js';
+import { agentSession, mergeAgentSessions, orchestratorStatusFor, sessionExit, usesKimi, restoreSummary } from '../src/session-state.js';
 
 const agent = { id: 'session-a', name: 'Agente', cli: 'Kimi Code', version: '2.3.2', cwd: '/fixture', projectId: 'project-a', state: 'running', ptyId: 'pty-a', origin: 'user' };
 
@@ -76,4 +76,13 @@ test('sessão externa: rótulo próprio, sem terminal e histórico ao desanexar'
   assert.equal(history.exited, true);
   assert.equal(history.atlasTools, false);
   assert.equal(agentSession({ id: 'manual', name: 'manual', cli: 'Kimi Code', origin: 'user', state: 'running', ptyId: 'pty-1' }).external, false);
+});
+
+test('principal sem processo vivo pede nova escolha, também ao voltar ao projeto', () => {
+  // Regressão: ao reentrar no projeto, a principal em histórico vinha sem needsChoice e o
+  // aviso e o item "Iniciar a sessão principal" sumiam.
+  assert.deepEqual(orchestratorStatusFor('p', { needsChoice: true, previousCli: 'OpenCode' }), { projectId: 'p', loading: false, error: '', needsChoice: true, previousCli: 'OpenCode' });
+  assert.deepEqual(orchestratorStatusFor('p', { ...agent, role: 'orchestrator', archived: true, cli: 'Fixture Agent' }), { projectId: 'p', loading: false, error: '', needsChoice: true, previousCli: 'Fixture Agent' });
+  assert.equal(orchestratorStatusFor('p', { ...agent, role: 'orchestrator', state: 'exited' }).needsChoice, true);
+  assert.deepEqual(orchestratorStatusFor('p', { ...agent, role: 'orchestrator' }), { projectId: 'p', loading: false, error: '' }, 'principal viva não pede escolha');
 });

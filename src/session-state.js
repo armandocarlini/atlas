@@ -88,3 +88,11 @@ export function usesKimi(sessions) {
 export function usesGemini(sessions) {
   return sessions.some((session) => typeof session.cli === 'string' && /gemini/i.test(session.cli));
 }
+
+// Estado da principal ao abrir o projeto: sem processo vivo (histórico ou encerrada), ela
+// espera uma nova run explícita, com nova escolha de CLI e modelo, como depois de excluí-la.
+export function orchestratorStatusFor(projectId, agent) {
+  if (agent?.needsChoice) return { projectId, loading: false, error: '', needsChoice: true, previousCli: agent.previousCli || null };
+  if (agent && (agent.archived || agent.state === 'exited')) return { projectId, loading: false, error: '', needsChoice: true, previousCli: agent.cli || null };
+  return { projectId, loading: false, error: '' };
+}
