@@ -532,6 +532,13 @@ try {
       await until(async () => (await native('invoke', { channel: 'terminal:attach', args: [session.ptyId] })).exit, 'PTY da fixture encerrado');
       await native('invoke', { channel: 'agent:remove', args: [session.id] });
     }
+    // Os handlers foram chamados pela fixture, fora do fluxo de remoção do renderer.
+    // Recarregue para que as sessões descartadas não interfiram nos testes dos terminais.
+    await main.call('Page.reload');
+    await until(() => main.evaluate(briefingVisible), 'Briefing depois de remover os PTYs da fixture');
+    await closeBriefing();
+    await until(() => main.evaluate(`[...document.querySelectorAll('.tree-project-name')].some(item => item.textContent.startsWith('Projeto adicional'))`), 'projetos carregados sem os PTYs descartados');
+    assert(!(await native('invoke', { channel: 'agent:list' })).some((session) => session.id === worker.id || session.id === principal.id));
     console.log('PASS Briefing: abertura, Escape, contador, projeto sem novidades, destino, PTY real com fixture e janela estreita');
   }
   await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
