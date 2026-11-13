@@ -479,6 +479,11 @@ test('modo autônomo espera vaga e aprova quando um agente termina; assistido n�
   setPolicy();
   await requestHost.evaluate('project-a');
   assert.match((await call('agent-request:list', { cwd: '/fixture/a' })).items[0].autoNote, /Aguardando vaga: 2 de 2/);
+  // A fila "Precisam de mim" lê o mesmo motivo, só no modo autônomo.
+  assert.match(requestHost.autoNoteFor(request.id, 'project-a'), /Aguardando vaga: 2 de 2/);
+  store.setAgentPolicy({ projectId: 'project-a', mode: 'assisted', maxActiveAgents: 2, maxPending: 3 });
+  assert.equal(requestHost.autoNoteFor(request.id, 'project-a'), null);
+  setPolicy();
   active = 1;
   await requestHost.evaluate('project-a');
   assert.equal(spawns.length, 1);
