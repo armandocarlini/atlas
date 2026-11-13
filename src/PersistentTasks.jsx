@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import useModalFocus from './useModalFocus.js';
 import { RegressionRunEvidence, regressionLabel } from './RegressionSuite.jsx';
 
@@ -151,8 +151,23 @@ function TaskAssignment({ task, handoffs, reviews, evidence, regressionRuns, reg
   </section>;
 }
 
-export function PersistentTaskPanel({ state, onNew, onCancelHandoff, onRelease, onDecideReview, regressionActions }) {
+export function PersistentTaskPanel({ state, focusTask = null, onNew, onCancelHandoff, onRelease, onDecideReview, regressionActions }) {
   const [selectedId, setSelectedId] = useState(null);
+  const focusPending = useRef(null);
+  // A fila "Precisam de mim" abre uma tarefa específica: seleciona e leva o foco a ela.
+  useEffect(() => {
+    if (!focusTask?.id) return;
+    setSelectedId(focusTask.id);
+    focusPending.current = focusTask.id;
+  }, [focusTask]);
+  useEffect(() => {
+    if (!focusPending.current || focusPending.current !== selectedId) return;
+    const target = document.querySelector(`.queue-item[data-task-id="${CSS.escape(selectedId)}"]`);
+    if (!target) return;
+    focusPending.current = null;
+    target.scrollIntoView({ block: 'nearest' });
+    target.focus({ preventScroll: true });
+  }, [selectedId, state.items]);
   const selected = state.items.find((task) => task.id === selectedId) || state.items[0];
   const handoffs = state.handoffs || [];
   const reviews = state.reviews || [];
@@ -164,7 +179,7 @@ export function PersistentTaskPanel({ state, onNew, onCancelHandoff, onRelease, 
       <p className="task-project-name">{state.projectName}</p>
       {!onNew && <p>Crie tarefas na janela principal.</p>}
       {!state.items.length ? <p>Nenhuma tarefa criada neste projeto.</p> : <>
-        <div className="task-queue" aria-label="Lista de tarefas">{state.items.map((task) => <button type="button" key={task.id} className={`queue-item ${task.id === selected.id ? 'active' : ''}`} aria-pressed={task.id === selected.id} onClick={() => setSelectedId(task.id)}><span><small>{stateLabel(task.state)}{task.assigneeName ? ` · ${task.assigneeName}` : ''}</small><strong>{task.title}</strong></span></button>)}</div>
+        <div className="task-queue" aria-label="Lista de tarefas">{state.items.map((task) => <button type="button" key={task.id} data-task-id={task.id} className={`queue-item ${task.id === selected.id ? 'active' : ''}`} aria-pressed={task.id === selected.id} onClick={() => setSelectedId(task.id)}><span><small>{stateLabel(task.state)}{task.assigneeName ? ` · ${task.assigneeName}` : ''}</small><strong>{task.title}</strong></span></button>)}</div>
         <article className="persistent-task-detail">
           <div className="section-kicker"><span>TAREFA SELECIONADA</span><span>{stateLabel(selected.state)}</span></div>
           <h2>{selected.title}</h2>

@@ -134,13 +134,8 @@
 .tree-session.lead .tree-label strong { color: var(--accent-text); }
 .tree-state { color: var(--muted); font-size: 9px; }
 .tree-session[data-state="oculta"] .tree-state { color: var(--warning); }
-.tree-decisions { margin: 3px 5px 6px 0; padding: 3px 5px; border-radius: 7px; background: color-mix(in srgb, var(--warning) 5%, transparent); }
 .tree-section-label { min-height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px; color: var(--muted); font-size: 10px; font-weight: 600; }
 .tree-section-label b { font: 10px var(--mono); }
-.tree-decision { width: 100%; min-height: 30px; display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 5px; padding: 4px; color: var(--text); text-align: left; font-size: 11px; }
-.tree-decision:hover { border-radius: 5px; background: var(--surface-hover); }
-.tree-decision-mark { color: var(--warning); font-weight: 700; }
-.tree-decision.review .tree-decision-mark { color: var(--success); }
 .tree-empty { margin: 10px 8px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 
 .workspace-body > .cockpit { position: relative; grid-template-rows: var(--workspace-bar-height) auto auto minmax(0, 1fr); }
@@ -293,3 +288,56 @@
 .tree-session .session-glyph { --glyph-ring: var(--surface); }
 .tree-session:hover .session-glyph, .tree-session.active .session-glyph { --glyph-ring: var(--surface-hover); }
 .tree-session .session-glyph-badge { width: 6px; height: 6px; }
+
+/* Fila "Precisam de mim" (src/AttentionQueue.jsx): acima de Projetos, fora da rolagem da árvore,
+   rolando por dentro quando cresce. Superfície em vez de filetes; urgência com ícone e texto. */
+.workspace-tree.with-attention { grid-template-rows: auto 34px minmax(0, 1fr); }
+.attention-queue { min-width: 0; display: flex; flex-direction: column; gap: 2px; margin: 4px 4px 2px; padding: 0 0 6px; border-radius: 8px; background: color-mix(in srgb, var(--surface-raised) 55%, transparent); }
+.attention-heading { min-height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+.attention-heading h2 { margin: 0; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.attention-heading b { min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--warning); color: var(--surface); font: 600 10px/17px var(--mono); text-align: center; }
+.attention-summary, .attention-empty { margin: 0; padding: 0 8px 4px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.attention-empty { padding-bottom: 2px; }
+.attention-error { display: flex; align-items: flex-start; gap: 6px; margin: 0 6px 4px; padding: 6px 8px; border-radius: 6px; background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--text); font-size: 11px; line-height: 1.35; }
+.attention-error > svg { flex: none; margin-top: 2px; color: var(--danger); }
+.attention-error > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.attention-error-close { flex: none; padding: 0 4px; border-radius: 4px; color: var(--muted); font-size: 11px; text-decoration: underline; }
+.attention-error-close:hover { color: var(--text); }
+.attention-items { max-height: min(38vh, 300px); min-height: 0; overflow: auto; margin: 0; padding: 0 4px; list-style: none; overscroll-behavior: contain; }
+.attention-item { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; border-radius: 6px; }
+.attention-item:hover { background: var(--surface-hover); }
+.attention-item.high { background: color-mix(in srgb, var(--warning) 8%, transparent); }
+.attention-item.high:hover { background: color-mix(in srgb, var(--warning) 14%, var(--surface-hover)); }
+.attention-open { min-width: 0; display: grid; gap: 1px; padding: 6px 4px 6px 8px; border-radius: 6px; color: var(--text); text-align: left; }
+.attention-meta { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.attention-project { min-width: 0; overflow: hidden; color: var(--muted); font: 10px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.attention-urgency { flex: none; display: inline-flex; align-items: center; gap: 3px; color: var(--warning); font-size: 10px; font-weight: 600; }
+.attention-open strong { overflow: hidden; font-size: 12px; font-weight: 600; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.attention-reason { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.attention-more { width: 26px; height: 26px; margin: 4px 2px 0 0; }
+.attention-open:focus-visible, .attention-more:focus-visible, .attention-error-close:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
+.attention-flyout { max-height: min(70vh, 560px); }
+.attention-flyout .attention-queue { margin: 4px; background: transparent; }
+.attention-flyout .attention-items { max-height: none; }
+.tree-attention { flex: none; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--warning); color: var(--surface); font: 600 10px/16px var(--mono); text-align: center; }
+.rail-queue.has-items { color: var(--text); }
+
+.attention-menu { position: fixed; z-index: 90; display: flex; flex-direction: column; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text); box-shadow: 0 10px 28px rgba(0, 0, 0, .35); animation: attention-menu-in 160ms ease-out; }
+.attention-menu [role="menuitem"] { min-height: 30px; padding: 0 10px; border-radius: 5px; color: var(--text); font-size: 12px; text-align: left; }
+.attention-menu [role="menuitem"]:hover { background: var(--surface-hover); }
+.attention-menu [role="menuitem"]:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; background: var(--surface-hover); }
+.attention-menu-separator { height: 1px; margin: 4px 6px; background: var(--border); }
+@keyframes attention-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .attention-menu { animation: attention-menu-fade 1ms; }
+  @keyframes attention-menu-fade { from { opacity: 0; } to { opacity: 1; } }
+}
+@media (prefers-contrast: more) {
+  .attention-menu { border-color: var(--text); box-shadow: none; }
+}
+@media (forced-colors: active) {
+  .attention-heading b, .tree-attention { border: 1px solid CanvasText; background: Canvas; color: CanvasText; }
+  .attention-item.high { outline: 1px solid CanvasText; }
+  .attention-urgency, .attention-error > svg { color: CanvasText; }
+  .attention-menu { border-color: CanvasText; }
+}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, GitBranch, RefreshCw } from 'lucide-react';
 import { buildWorkspaceTree, sameWorkspacePath } from './workspace-layout.js';
 import SessionGlyph from './SessionGlyph.jsx';
+import AttentionQueue from './AttentionQueue.jsx';
 
 export function changeSummary(worktree) {
   const status = worktree.status;
@@ -40,7 +41,7 @@ export function projectDescription(project, attention = 0) {
     project.name,
     project.path,
     `${project.sessionCount} ${project.sessionCount === 1 ? 'sessão' : 'sessões'}`,
-    attention ? `${attention} ${attention === 1 ? 'decisão espera' : 'decisões esperam'} você` : '',
+    attention ? `${attention} ${attention === 1 ? 'item precisa' : 'itens precisam'} de você` : '',
   ].filter(Boolean).join(' · ');
 }
 
@@ -70,8 +71,8 @@ function TreeSession({ session, selected, hidden, worktree, onSelect, onFocus })
 
 export default function WorkspaceTree({
   projects, sessions, activeProjectId, workingDirectory, selectedSessionId,
-  hiddenSessionIds, decisions, onSelectProject, onSelectWorktree,
-  onSelectSession, onFocusSession, onDecision, onAddProject, onRefresh, loading, expandAll = false,
+  hiddenSessionIds, attentionCounts = {}, attention = null, onSelectProject, onSelectWorktree,
+  onSelectSession, onFocusSession, onAddProject, onRefresh, loading, expandAll = false,
 }) {
   const [collapsed, setCollapsed] = useState({});
   const tree = buildWorkspaceTree(projects, sessions);
@@ -110,7 +111,8 @@ export default function WorkspaceTree({
   }
 
   return (
-    <nav className="workspace-tree" aria-label="Projetos, worktrees e sessões">
+    <nav className={`workspace-tree ${attention ? 'with-attention' : ''}`} aria-label="Projetos, worktrees e sessões">
+      {attention && <AttentionQueue {...attention} />}
       <div className="workspace-tree-heading">
         <strong>Projetos</strong>
         <div>
@@ -123,7 +125,7 @@ export default function WorkspaceTree({
           {tree.map((project) => {
             const projectCollapsed = collapsed[project.id] ?? (!expandAll && project.id !== activeProjectId);
             const active = project.id === activeProjectId;
-            const attention = active ? decisions.length : 0;
+            const pending = attentionCounts[project.id] || 0;
             return (
               <li className={`tree-project ${active ? 'active' : ''}`} key={project.id}>
                 <div className="tree-project-row">
@@ -134,20 +136,11 @@ export default function WorkspaceTree({
                     aria-expanded={!projectCollapsed}
                     onClick={() => setCollapsed((current) => ({ ...current, [project.id]: !projectCollapsed }))}
                   >{projectCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</button>
-                  <button type="button" className="tree-project-name" aria-current={active ? 'page' : undefined} onClick={() => chooseProject(project)} title={projectDescription(project, attention)}>
-                    {active && !projectCollapsed ? <FolderOpen size={14} /> : <Folder size={14} />}<span>{project.name}</span><small title={`${project.sessionCount} sessões`}>{project.sessionCount}</small>
+                  <button type="button" className="tree-project-name" aria-current={active ? 'page' : undefined} onClick={() => chooseProject(project)} title={projectDescription(project, pending)}>
+                    {active && !projectCollapsed ? <FolderOpen size={14} /> : <Folder size={14} />}<span>{project.name}</span>{pending > 0 && <span className="tree-attention" title={`${pending} ${pending === 1 ? 'item precisa' : 'itens precisam'} de você`}><span aria-hidden="true">{pending}</span><span className="visually-hidden">, {pending} {pending === 1 ? 'item precisa' : 'itens precisam'} de você</span></span>}<small title={`${project.sessionCount} sessões`}>{project.sessionCount}</small>
                   </button>
                 </div>
                 {!projectCollapsed && <div className="tree-project-content">
-                  {attention > 0 && <section className="tree-decisions has-attention" aria-label="Espera você">
-                    <div className="tree-section-label"><span>Espera você</span><b>{attention}</b></div>
-                    <ul>{decisions.map((decision) => <li key={decision.id}>
-                      <button type="button" className={`tree-decision ${decision.kind}`} onClick={() => onDecision(decision)} title={[decision.title, decision.detail].filter(Boolean).join(' · ')}>
-                        <span className="tree-decision-mark" aria-hidden="true">{decision.kind === 'review' ? '✓' : '!'}</span>
-                        <span>{decision.title}</span>
-                      </button>
-                    </li>)}</ul>
-                  </section>}
                   {project.repositories.map((repository) => {
                     const containsDirectory = repository.worktrees.some((worktree) => sameWorkspacePath(worktree.path, workingDirectory));
                     const repositoryCollapsed = collapsed[repository.id] ?? !(expandAll || active || containsDirectory);

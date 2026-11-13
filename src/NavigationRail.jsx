@@ -1,9 +1,13 @@
 import { createPortal } from 'react-dom';
-import { ChevronsLeftRight, Folder, FolderOpen, FolderPlus, RefreshCw } from 'lucide-react';
+import { BellDot, ChevronsLeftRight, Folder, FolderOpen, FolderPlus, Inbox, RefreshCw } from 'lucide-react';
 import { buildWorkspaceTree } from './workspace-layout.js';
 import SessionGlyph from './SessionGlyph.jsx';
 import WorkspaceTree, { projectDescription, sessionDescription } from './WorkspaceTree.jsx';
 import useFlyout, { flyoutPosition } from './useFlyout.js';
+import AttentionQueue from './AttentionQueue.jsx';
+import { countAnnouncement } from './attention-queue.js';
+
+const ATTENTION_FLYOUT = 'attention';
 
 const FLYOUT_WIDTH = 320;
 
@@ -28,16 +32,20 @@ function RailButton({ icon: Icon, label, className = '', children, ...props }) {
 }
 
 // Navegação só com ícones: cada projeto vira um ícone com o número de sessões, as sessões do
-// projeto ativo aparecem pelo ícone do CLI e "Espera você" vira selo. Nada se perde: o nome
-// acessível e o title trazem tudo, e clicar no projeto abre a árvore completa ao lado.
+// projeto ativo aparecem pelo ícone do CLI e os itens da fila "Precisam de mim" viram selo. Nada
+// se perde: o nome acessível e o title trazem tudo, clicar no projeto abre a árvore completa ao
+// lado e o botão da fila abre a fila inteira no mesmo flyout.
 export default function NavigationRail({
   projects, sessions, activeProjectId, workingDirectory, selectedSessionId,
-  hiddenSessionIds, decisions, onSelectProject, onSelectWorktree,
-  onSelectSession, onFocusSession, onDecision, onAddProject, onRefresh, onExpand, loading,
+  hiddenSessionIds, attentionCounts = {}, attention = null, onSelectProject, onSelectWorktree,
+  onSelectSession, onFocusSession, onAddProject, onRefresh, onExpand, loading,
 }) {
   const tree = buildWorkspaceTree(projects, sessions);
   const hidden = hiddenSessionIds instanceof Set ? hiddenSessionIds : new Set(hiddenSessionIds);
-  const flyout = useFlyout({ initialFocus: '.tree-project-name' });
+  const flyout = useFlyout({ initialFocus: '.tree-project-name, .attention-open' });
+  const attentionOpen = flyout.open?.id === ATTENTION_FLYOUT;
+  const attentionCount = attention?.items?.length || 0;
+  const attentionLabel = `Precisam de mim: ${attention?.loaded ? countAnnouncement(attentionCount) : 'carregando'}`;
   const openProject = tree.find((project) => project.id === flyout.open?.id);
 
   const closeAfter = (handler) => (...args) => {
@@ -51,12 +59,21 @@ export default function NavigationRail({
         <RailButton icon={ChevronsLeftRight} label="Expandir navegação" onClick={onExpand} />
         <RailButton icon={RefreshCw} label="Atualizar estado Git" onClick={onRefresh} disabled={loading} />
         <RailButton icon={FolderPlus} label="Autorizar pasta de projeto" onClick={onAddProject} />
+        {attention && <RailButton
+          icon={attentionCount ? BellDot : Inbox}
+          label={attentionLabel}
+          className={`rail-queue ${attentionCount ? 'has-items' : ''}`}
+          aria-haspopup="dialog"
+          aria-expanded={attentionOpen}
+          aria-controls={attentionOpen ? 'attention-flyout' : undefined}
+          onClick={(event) => flyout.toggle(ATTENTION_FLYOUT, event.currentTarget)}
+        >{attentionCount > 0 && <span className="rail-attention" aria-hidden="true">{attentionCount}</span>}</RailButton>}
       </div>
       <ul className="rail-projects">
         {tree.map((project) => {
           const active = project.id === activeProjectId;
-          const attention = active ? decisions.length : 0;
-          const description = projectDescription(project, attention);
+          const pending = attentionCounts[project.id] || 0;
+          const description = projectDescription(project, pending);
           const open = flyout.open?.id === project.id;
           return (
             <li key={project.id} className={`rail-project-item ${active ? 'active' : ''}`}>
@@ -71,7 +88,7 @@ export default function NavigationRail({
                 onClick={(event) => flyout.toggle(project.id, event.currentTarget)}
               >
                 <span className="rail-badge" aria-hidden="true">{project.sessionCount}</span>
-                {attention > 0 && <span className="rail-attention" aria-hidden="true">{attention}</span>}
+                {pending > 0 && <span className="rail-attention" aria-hidden="true">{pending}</span>}
               </RailButton>
               {active && <ul className="rail-sessions" aria-label={`Sessões de ${project.name}`}>
                 {projectSessions(project).map(({ session, worktree }) => {
@@ -97,6 +114,20 @@ export default function NavigationRail({
         })}
       </ul>
       {loading && <p className="visually-hidden" role="status">Lendo projetos e Git…</p>}
+      {attentionOpen && attention && createPortal(
+        <div
+          id="attention-flyout"
+          ref={flyout.flyoutRef}
+          className="rail-flyout navigation-flyout attention-flyout"
+          role="dialog"
+          aria-label="Precisam de mim"
+          data-opens={flyoutPosition(flyout.open.rail, FLYOUT_WIDTH).right !== undefined ? 'left' : 'right'}
+          style={flyoutPosition(flyout.open.rail, FLYOUT_WIDTH)}
+        >
+          <AttentionQueue {...attention} onOpen={closeAfter(attention.onOpen)} />
+        </div>,
+        document.body,
+      )}
       {openProject && createPortal(
         <div
           id="navigation-flyout"
@@ -114,12 +145,11 @@ export default function NavigationRail({
             workingDirectory={workingDirectory}
             selectedSessionId={selectedSessionId}
             hiddenSessionIds={hiddenSessionIds}
-            decisions={decisions}
+            attentionCounts={attentionCounts}
             onSelectProject={onSelectProject}
             onSelectWorktree={closeAfter(onSelectWorktree)}
             onSelectSession={closeAfter(onSelectSession)}
             onFocusSession={closeAfter(onFocusSession)}
-            onDecision={closeAfter(onDecision)}
             onAddProject={closeAfter(onAddProject)}
             onRefresh={onRefresh}
             loading={loading}
