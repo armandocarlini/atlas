@@ -48,7 +48,9 @@ import { appearanceTokens, contrastInk, isPreviousDefaultTheme, visibleAccent } 
 import useModalFocus from './useModalFocus.js';
 import CommandPalette from './CommandPalette.jsx';
 import useAttentionQueue from './useAttentionQueue.js';
-import { attentionDestination, attentionTargetStatus, countByProject, summaryLine, withPrincipalItem } from './attention-queue.js';
+import useBriefingView from './useBriefingView.js';
+import Briefing from './Briefing.jsx';
+import { attentionDestination, attentionTargetStatus, countByProject, withPrincipalItem } from './attention-queue.js';
 import { nextVisibleSessionId, normalizeTerminalLayout, sessionsInLayout, visibleWorkspaceSessions, workspaceSessions } from './workspace-layout.js';
 import { agentSession, mergeAgentSessions, orchestratorStatusFor, restoreSummary, sessionExit, terminalSession, usesGemini, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
@@ -889,8 +891,17 @@ export default function App() {
   // Fila "Precisam de mim": itens de todos os projetos vindos do processo principal; só a
   // principal parada do projeto ativo entra pelo renderer (src/attention-queue.js).
   const attentionQueue = useAttentionQueue(desktop, Boolean(desktop?.isDesktop && !isSecondaryWindow));
+  const briefing = useBriefingView({
+    enabled: attentionQueue.enabled && Boolean(desktop?.getBriefing),
+    ready: attentionQueue.loaded,
+    hasProjects: Boolean(attentionQueue.view?.briefing?.length),
+    blocked: Boolean(modal || paletteOpen || appearanceOpen || functionsOpen || modelSwitch || orchestratorChoice || columnDrag),
+  });
+  const reloadAttention = attentionQueue.reload;
+  useEffect(() => { reloadAttention(); }, [reloadAttention, sessions, agentFunctions]);
   const needsPrincipal = Boolean(desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice);
-  const attentionItems = useMemo(() => withPrincipalItem(attentionQueue.items, { needsPrincipal, project: currentProject }), [attentionQueue.items, needsPrincipal, currentProject]);
+  const projectHasNews = attentionQueue.view?.briefing?.some((card) => card.projectId === currentProject?.id && !card.semNovidades);
+  const attentionItems = useMemo(() => withPrincipalItem(attentionQueue.items, { needsPrincipal: needsPrincipal && projectHasNews, project: currentProject }), [attentionQueue.items, needsPrincipal, projectHasNews, currentProject]);
   const attentionCounts = useMemo(() => countByProject(attentionItems), [attentionItems]);
   const [attentionTarget, setAttentionTarget] = useState(null);
   const [requestToOpen, setRequestToOpen] = useState(null);
@@ -1108,9 +1119,10 @@ export default function App() {
 
   // Nova execução da principal: o usuário escolhe o CLI e o modelo de novo, e
   // pode trocar os dois; a identidade, as tarefas e as mensagens continuam.
-  function openOrchestratorChoice(session) {
-    const cwd = session?.worktree || currentProject?.path || workingDirectory;
-    setOrchestratorChoice({ projectId: session?.projectId || currentProject?.id, cwd, previousCli: session?.cli || orchestratorStatus.previousCli || null, session: session || null, busy: false, error: '', mode: null });
+  function openOrchestratorChoice(session, project = currentProject) {
+    const cwd = session?.worktree || project?.path || workingDirectory;
+    const previousCli = session?.cli || (project?.id === currentProject?.id ? orchestratorStatus.previousCli : null);
+    setOrchestratorChoice({ projectId: session?.projectId || project?.id, cwd, previousCli: previousCli || null, session: session || null, busy: false, error: '', mode: null });
     // Modo salvo no projeto; sem ele o diálogo não inicia, para não trocar o modo em silêncio.
     desktop.getOrchestratorMode({ cwd })
       .then(({ mode }) => setOrchestratorChoice((current) => current && current.cwd === cwd ? { ...current, mode } : current))
@@ -1727,6 +1739,7 @@ export default function App() {
   }
 
   function selectWorktree(project, _repository, worktree) {
+    if (briefing.open) briefing.close(false);
     projectSelectionRef.current = true;
     setActiveProject(project.name);
     setSelectedWorktree(worktree.path);
@@ -1796,6 +1809,7 @@ export default function App() {
   }
 
   function selectProject(project) {
+    if (briefing.open) briefing.close(false);
     projectSelectionRef.current = true;
     setActiveProject(project.name);
     if (project.path) setWorkingDirectory(project.path);
@@ -1807,6 +1821,7 @@ export default function App() {
   }
 
   function selectSessionTerminal(id) {
+    if (briefing.open) briefing.close(false);
     const session = sessions.find((item) => item.id === id);
     const project = navigationProjects.find((item) => item.id === session?.projectId);
     if (project && project.id !== currentProject?.id) selectProject(project);
@@ -1878,6 +1893,7 @@ export default function App() {
       attentionQueue.fail('O projeto deste item não está mais autorizado.');
       return attentionQueue.reload();
     }
+    if (briefing.open) briefing.close(false);
     if (project.id !== currentProject?.id) selectProject(project);
     setAttentionTarget(item);
   }
@@ -1889,7 +1905,9 @@ export default function App() {
     const item = attentionTarget;
     setAttentionTarget(null);
     if (status === 'missing') {
-      attentionQueue.fail(`"${item.title}" já foi resolvido ou não existe mais.`);
+      const message = `"${item.title}" já foi resolvido ou não existe mais.`;
+      attentionQueue.fail(message);
+      notify(message);
       attentionQueue.reload();
       return;
     }
@@ -1920,6 +1938,7 @@ export default function App() {
       { id: 'new-session', group: 'Sessões', label: 'Nova sessão de agente', keywords: 'agente cli modelo', run: () => openSessionModal() },
       { id: 'new-terminal', group: 'Sessões', label: 'Novo terminal', keywords: 'powershell shell', run: () => setModal('terminal') },
     ];
+    if (desktop?.getBriefing && !isSecondaryWindow) commands.push({ id: 'briefing', group: 'Projetos', label: 'Briefing', shortcut: 'Ctrl Shift B', keywords: 'atenção atividade projetos', run: briefing.show });
     if (desktop?.isDesktop && !isSecondaryWindow) commands.push({ id: 'new-task', group: 'Sessões', label: 'Nova tarefa', keywords: 'backlog', run: () => setTaskModalOpen(true) });
     commands.push(
       { id: 'layout-grid', group: 'Layout', label: 'Layout: grade', keywords: 'grid automatico panes', run: () => changeTerminalLayout('grid') },
@@ -1988,6 +2007,7 @@ export default function App() {
   }
 
   function focusSession(id) {
+    if (briefing.open) briefing.close(false);
     const target = sessions.find((session) => session.id === id) || projectSessions[0];
     const project = navigationProjects.find((item) => item.id === target?.projectId);
     if (project && project.id !== currentProject?.id) selectProject(project);
@@ -2180,14 +2200,10 @@ export default function App() {
                     hiddenSessionIds,
                     attentionCounts,
                     attention: attentionQueue.enabled ? {
-                      items: attentionItems,
-                      summary: summaryLine(attentionQueue.view),
+                      count: attentionItems.length,
                       loaded: attentionQueue.loaded,
-                      error: attentionQueue.error,
-                      onOpen: openAttentionItem,
-                      onSnooze: attentionQueue.snooze,
-                      onDismiss: attentionQueue.dismiss,
-                      onClearError: attentionQueue.clearError,
+                      open: briefing.open,
+                      onShow: briefing.show,
                     } : null,
                     onSelectProject: selectProject,
                     onSelectWorktree: selectWorktree,
@@ -2212,6 +2228,27 @@ export default function App() {
               style={getColumnStyle('center')}
               data-column-id="center"
             >
+              {desktop?.getBriefing && !isSecondaryWindow && <Briefing
+                open={briefing.open}
+                heading={briefing.heading}
+                onClose={briefing.close}
+                view={attentionQueue.view}
+                items={attentionItems}
+                queue={{ ...attentionQueue, onOpen: openAttentionItem }}
+                onOpenProject={(id) => {
+                  const project = projects.find((entry) => entry.id === id);
+                  if (project) selectProject(project);
+                  briefing.close();
+                }}
+                onStartPrincipal={(id) => {
+                  const project = projects.find((entry) => entry.id === id);
+                  if (project) openOrchestratorChoice(sessions.find((entry) => entry.projectId === id && entry.roleKind === 'orchestrator'), project);
+                }}
+                desktop={desktop}
+                theme={{ ...theme, color: visibleAccent(theme.color, theme.background), ink: getAccentInk(theme.background) }}
+                detachedTerminals={detachedTerminals}
+              />}
+              {!briefing.open && <>
               <div className="cockpit-toolbar" data-mode={columnLayout.modes.center}>
                 <div className="terminal-project-title" onPointerDown={(event) => beginColumnDrag(event, 'center')} title={`${desktop?.isDesktop ? currentProject?.name || activeProject : activeMission} · ${workingDirectory}. Arraste para mover a coluna de terminais.`}><span>{desktop?.isDesktop ? currentProject?.name || activeProject : activeMission}</span><small>{workingDirectory}</small></div>
                 {columnLayout.modes.center === 'compact' ? <div className="toolbar-actions">
@@ -2329,6 +2366,7 @@ export default function App() {
                 />)}
                 <TrackResizers layout={terminalLayout} count={visibleSessions.length} terminalTracks={terminalTracks} />
               </div>
+              </>}
             </main>
             ),
             right: (

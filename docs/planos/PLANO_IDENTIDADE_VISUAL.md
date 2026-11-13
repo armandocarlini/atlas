@@ -77,7 +77,7 @@ Só interface, com os dados que já existem. O painel fica no topo da coluna de 
 
 Uma tela alternativa para quem não programa: um chat comum e, ao lado, a equipe ilustrada, com o que cada um faz em linguagem simples. Antes de implementar, o mantenedor decide:
 
-1. **Como a mensagem do chat chega à principal.** Mensagens nunca são digitadas no terminal. O caminho natural é um canal novo da ponte MCP que a principal lê, o que muda o perfil dela e precisa de plano.
+1. **Como a mensagem chega à sessão [decidido em 13/11/2026].** No Briefing, o ATLAS cola o texto escrito pelo usuário e envia Enter no terminal da sessão de agente do projeto que ele escolheu, principal ou outra. Só uma ação explícita dele na janela principal pode fazer esse envio. A ponte MCP não oferece essa ação. Ver `PLANO_GESTAO_DE_ATENCAO.md`.
 2. **De onde vem o "o que está fazendo agora".** Os agentes informariam progresso em linguagem simples pela ponte, ou o ATLAS deriva de tarefas e estados.
 3. **Qual modo abre primeiro**, e se a escolha fica por usuário ou por projeto.
 

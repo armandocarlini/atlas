@@ -102,6 +102,8 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   onAgentFunctionsChanged: (callback) => subscribe('agent-function:changed', callback),
   // Fila "Precisam de mim": todos os projetos autorizados; só o usuário adia ou dispensa.
   listAttention: () => ipcRenderer.invoke('attention:list'),
+  getBriefing: () => ipcRenderer.invoke('briefing:get'),
+  sendBriefing: (request) => ipcRenderer.invoke('briefing:send', request),
   snoozeAttention: (request) => ipcRenderer.invoke('attention:snooze', request),
   dismissAttention: (request) => ipcRenderer.invoke('attention:dismiss', request),
   onAttentionChanged: (callback) => subscribe('attention:changed', callback),

@@ -72,7 +72,7 @@ function ItemMenu({ item, anchor, onSnooze, onDismiss, onClose }) {
   );
 }
 
-function AttentionItem({ item, onOpen, onSnooze, onDismiss }) {
+export function AttentionItem({ item, onOpen, onSnooze, onDismiss }) {
   const [menuAnchor, setMenuAnchor] = useState(null);
   const triggerRef = useRef(null);
   const high = item.urgency === 'alta';
@@ -112,25 +112,10 @@ function AttentionItem({ item, onOpen, onSnooze, onDismiss }) {
 
 // Seção global da navegação: o que exige decisão, de todos os projetos. Não rola com a
 // árvore; rola por dentro quando passa da altura dela.
-export default function AttentionQueue({ items = [], summary = '', loaded = false, error = '', onOpen, onSnooze, onDismiss, onClearError }) {
-  const count = items.length;
+export default function AttentionQueue({ count, loaded, open, onShow }) {
   return (
-    <section className={`attention-queue ${count ? 'has-items' : ''}`} aria-labelledby="attention-queue-title">
-      <div className="attention-heading">
-        <h2 id="attention-queue-title">Precisam de mim</h2>
-        {count > 0 && <b aria-hidden="true">{count}</b>}
-        <span className="visually-hidden" role="status" aria-atomic="true">{loaded ? countAnnouncement(count) : ''}</span>
-      </div>
-      {error && <p className="attention-error" role="alert">
-        <AlertTriangle size={12} aria-hidden="true" /><span>{error}</span>
-        {onClearError && <button type="button" className="attention-error-close" onClick={onClearError}>Fechar aviso</button>}
-      </p>}
-      {summary && <p className="attention-summary">{summary}</p>}
-      {count > 0
-        ? <ul className="attention-items" aria-label="Itens que precisam de você">
-          {items.map((item) => <AttentionItem key={item.id} item={item} onOpen={onOpen} onSnooze={onSnooze} onDismiss={onDismiss} />)}
-        </ul>
-        : loaded && <p className="attention-empty">Nada precisa de você agora.</p>}
-    </section>
+    <button type="button" className="briefing-counter" aria-label={`Precisam de mim: ${loaded ? countAnnouncement(count) : 'carregando'}. Abrir Briefing`} aria-pressed={open} onClick={onShow}>
+      <span>Precisam de mim</span><b aria-hidden="true">{loaded ? count : '…'}</b>
+    </button>
   );
 }

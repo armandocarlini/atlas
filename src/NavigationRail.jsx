@@ -4,10 +4,7 @@ import { buildWorkspaceTree } from './workspace-layout.js';
 import SessionGlyph from './SessionGlyph.jsx';
 import WorkspaceTree, { projectDescription, sessionDescription } from './WorkspaceTree.jsx';
 import useFlyout, { flyoutPosition } from './useFlyout.js';
-import AttentionQueue from './AttentionQueue.jsx';
 import { countAnnouncement } from './attention-queue.js';
-
-const ATTENTION_FLYOUT = 'attention';
 
 const FLYOUT_WIDTH = 320;
 
@@ -42,9 +39,8 @@ export default function NavigationRail({
 }) {
   const tree = buildWorkspaceTree(projects, sessions);
   const hidden = hiddenSessionIds instanceof Set ? hiddenSessionIds : new Set(hiddenSessionIds);
-  const flyout = useFlyout({ initialFocus: '.tree-project-name, .attention-open' });
-  const attentionOpen = flyout.open?.id === ATTENTION_FLYOUT;
-  const attentionCount = attention?.items?.length || 0;
+  const flyout = useFlyout({ initialFocus: '.tree-project-name' });
+  const attentionCount = attention?.count ?? 0;
   const attentionLabel = `Precisam de mim: ${attention?.loaded ? countAnnouncement(attentionCount) : 'carregando'}`;
   const openProject = tree.find((project) => project.id === flyout.open?.id);
 
@@ -63,10 +59,8 @@ export default function NavigationRail({
           icon={attentionCount ? BellDot : Inbox}
           label={attentionLabel}
           className={`rail-queue ${attentionCount ? 'has-items' : ''}`}
-          aria-haspopup="dialog"
-          aria-expanded={attentionOpen}
-          aria-controls={attentionOpen ? 'attention-flyout' : undefined}
-          onClick={(event) => flyout.toggle(ATTENTION_FLYOUT, event.currentTarget)}
+          aria-pressed={attention.open}
+          onClick={closeAfter(attention.onShow)}
         >{attentionCount > 0 && <span className="rail-attention" aria-hidden="true">{attentionCount}</span>}</RailButton>}
       </div>
       <ul className="rail-projects">
@@ -114,20 +108,6 @@ export default function NavigationRail({
         })}
       </ul>
       {loading && <p className="visually-hidden" role="status">Lendo projetos e Git…</p>}
-      {attentionOpen && attention && createPortal(
-        <div
-          id="attention-flyout"
-          ref={flyout.flyoutRef}
-          className="rail-flyout navigation-flyout attention-flyout"
-          role="dialog"
-          aria-label="Precisam de mim"
-          data-opens={flyoutPosition(flyout.open.rail, FLYOUT_WIDTH).right !== undefined ? 'left' : 'right'}
-          style={flyoutPosition(flyout.open.rail, FLYOUT_WIDTH)}
-        >
-          <AttentionQueue {...attention} onOpen={closeAfter(attention.onOpen)} />
-        </div>,
-        document.body,
-      )}
       {openProject && createPortal(
         <div
           id="navigation-flyout"

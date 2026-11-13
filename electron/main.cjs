@@ -20,6 +20,7 @@ const { createRegressionSuiteHost } = require('./regression-suite-host.cjs');
 const { windowChrome, registerWindowChrome } = require('./window-chrome.cjs');
 const { registerClipboardChannels } = require('./terminal-clipboard.cjs');
 const { createAttentionHost } = require('./attention-host.cjs');
+const { createBriefingHost } = require('./briefing-host.cjs');
 
 // Avisos ao renderer que também mudam a fila "Precisam de mim".
 const ATTENTION_SOURCES = new Set(['task:changed', 'agent-request:changed']);
@@ -382,6 +383,10 @@ app.whenReady().then(async () => {
     ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender,
     autoNoteFor: (requestId, projectId) => agentRequests?.autoNoteFor(requestId, projectId),
     onChange: () => sendToMain('attention:changed', {}),
+  });
+  createBriefingHost({
+    ipcMain, projectHost, store: operationalStore, agentHost, terminalHost,
+    transport: ptyTransport, readAttention: attentionHost.refresh,
   });
   try {
     attentionHost.refresh();

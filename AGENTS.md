@@ -57,7 +57,7 @@ Não quebre estas regras sem plano e decisão explícita do mantenedor.
   - worktrees nascem só da aprovação de um pedido com `taskId` + `worktree: true`;
   - o ATLAS nunca remove worktrees nem branches.
 - **Sessão externa:** um CLI aberto fora do ATLAS entra na equipe só quando o usuário a anexa (paleta, "Anexar sessão externa"). O ATLAS não abre processo nem vê o terminal dela; o usuário cola num PowerShell o comando com endpoint e token da run, que o card mostra com o token oculto. Desanexar revoga o token e encerra a run, que libera o claim. A sessão externa nunca é reaberta sozinha.
-- **Mensagens:** são registros persistidos com entrega e leitura. Nunca são digitadas no terminal do destinatário.
+- **Mensagens:** são registros persistidos com entrega e leitura. A única exceção de envio ao terminal é o Briefing: só o texto escrito pelo usuário, por ação explícita dele na janela principal, para uma sessão de agente do projeto que ele escolheu. É proibido digitar no terminal texto vindo de agentes ou usar um destino escolhido pelo ATLAS ou por um agente. O texto do Briefing não é persistido.
 - **Git do usuário:** a descoberta é somente leitura. Não inicialize nem altere repositórios do usuário como parte dela.
 - **Integração MCP:**
   - **Kimi:** a entrada `atlas` só vai para o `mcp.json` com consentimento explícito na interface e sai pelo mesmo diálogo. No modo de permissões nativas, a principal recebe a orientação pela ponte autenticada.

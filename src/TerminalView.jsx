@@ -109,7 +109,7 @@ function MenuList({ menuRef, label, items, className, style, onClose, autoFocus 
   </div>;
 }
 
-export default function TerminalView({ terminalId, desktop, theme, onExit, pasteTargets = [], cli = 'shell' }) {
+export default function TerminalView({ terminalId, desktop, theme, onExit, pasteTargets = [], cli = 'shell', readOnly = false, tabNavigates = false }) {
   const shellRef = useRef(null);
   const containerRef = useRef(null);
   const terminalRef = useRef(null);
@@ -123,6 +123,8 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
   const targets = pasteTargets.filter((target) => target.ptyId !== terminalId);
   const onExitRef = useLatest(onExit);
   const cliRef = useLatest(cli);
+  const readOnlyRef = useLatest(readOnly);
+  const tabNavigatesRef = useLatest(tabNavigates);
   const [barRef, barStyle] = useFloating(shellRef, bar, selectionBarPosition);
   const [menuRef, menuStyle] = useFloating(shellRef, menu, menuPosition);
   const sendAnchor = sendOpen && bar && targets.length ? barStyle : null;
@@ -220,6 +222,7 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
       }
     };
     const pasteHere = async (text) => {
+      if (readOnlyRef.current) return false;
       if (!(await pasteInto(terminalId, text, 'este terminal')) || disposed) return false;
       terminal.clearSelection();
       terminal.scrollToBottom();
@@ -227,9 +230,9 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
     };
     // Ctrl+V e menu Colar: arquivos viram caminhos entre aspas. Para imagem, o CLI lê o clipboard.
     const pasteClipboard = () => {
-      if (!attached) return;
+      if (!attached || readOnlyRef.current) return;
       desktop.readClipboardForPaste().then((content) => {
-        if (disposed) return;
+        if (disposed || readOnlyRef.current) return;
         const plan = pasteFromClipboard(content, { platform: desktop.platform, cli: cliRef.current });
         if (plan.kind === 'text') return pasteHere(plan.text);
         if (plan.kind === 'forward') desktop.writeTerminal(terminalId, plan.data);
@@ -275,6 +278,7 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
     };
 
     terminal.attachCustomKeyEventHandler((event) => {
+      if (tabNavigatesRef.current && event.key === 'Tab') return false;
       const action = clipboardKeyAction(event, terminal.hasSelection());
       if (!action) return true;
       if (event.type === 'keydown') {
@@ -304,7 +308,7 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
     // Replaying history can contain old terminal queries (for example device
     // attributes). Their automatic xterm replies must not become new shell input.
     const inputDisposable = terminal.onData((data) => {
-      if (attached) desktop.writeTerminal(terminalId, data);
+      if (attached && !readOnlyRef.current) desktop.writeTerminal(terminalId, data);
       // Digitar some com a barra; o aviso de foco (modo 1004, que PowerShell e CLIs ligam) não é
       // digitação: ele sai justamente quando o foco vai para a barra ou para a lista.
       if (!isFocusReport(data)) hideBar();
@@ -314,7 +318,9 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
     });
     // Durante o arraste de uma divisória, o xterm acompanha cada quadro e o PTY recebe o tamanho
     // com throttle; ao soltar, o fit final envia o tamanho definitivo na hora.
-    const ptyResizer = createPtyResizer({ send: (cols, rows) => desktop.resizeTerminal(terminalId, cols, rows) });
+    const ptyResizer = createPtyResizer({ send: (cols, rows) => {
+      if (!readOnlyRef.current) desktop.resizeTerminal(terminalId, cols, rows);
+    } });
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       if (cols >= 20 && rows >= 5) ptyResizer.request(cols, rows, { throttle: isLayoutResizing() });
     });
@@ -493,9 +499,9 @@ export default function TerminalView({ terminalId, desktop, theme, onExit, paste
   }));
   const menuItems = menu ? [
     { key: 'copy', label: 'Copiar', shortcut: 'Ctrl+C', disabled: !menu.hasSelection, run: () => run('copy') },
-    { key: 'paste', label: 'Colar', shortcut: 'Ctrl+V', run: () => run('paste') },
+    { key: 'paste', label: 'Colar', shortcut: 'Ctrl+V', disabled: readOnly, run: () => run('paste') },
     { key: 'select-all', label: 'Selecionar tudo', run: () => run('selectAll') },
-    ...(menu.hasSelection ? [
+    ...(menu.hasSelection && !readOnly ? [
       { key: 'separator', separator: true },
       { key: 'reply', label: 'Responder', run: () => run('reply') },
       { key: 'rewrite', label: 'Reescrever', run: () => run('rewrite') },

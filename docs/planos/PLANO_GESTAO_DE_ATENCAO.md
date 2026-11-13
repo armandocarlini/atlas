@@ -56,3 +56,9 @@ Para cada projeto autorizado: tarefas concluídas desde a última visita, em and
 - Resumo por projeto na abertura ("desde a sua última visita").
 - Substituir ou alimentar "Espera você" a partir de `attention:list`; o caso "iniciar a principal" continua no renderer.
 - Passa por `ui-ux-pro-max`, `apple-design` e `design-system/atlas/MASTER.md`, com `test:desktop`.
+
+## Etapa 3. Briefing
+
+Em 13/11/2026 o mantenedor decidiu que o usuário pode enviar o texto que escreveu no Briefing ao terminal de uma sessão de agente do projeto escolhida por ele, incluindo a principal. O ATLAS cola o texto e envia Enter por ação explícita do usuário na janela principal. Mensagens de agentes continuam fora dos terminais e a ponte MCP não oferece envio. O banco registra projeto, sessão, run e tamanho, sem o texto.
+
+O Briefing usa a fila de atenção e mostra até seis fatos por projeto desde o último fechamento normal, com a contagem dos restantes. Os fatos vêm de conclusão de tarefa, pedido de revisão, término de run e resultado da suíte de regressão. O estado atual combina a run registrada, o PTY vivo e o claim da tarefa. Sessões anexadas aparecem sem opção de envio. Sem colagem protegida, o envio aceita uma única linha.

@@ -11,7 +11,7 @@ export default function useAttentionQueue(desktop, enabled) {
   const reload = useCallback(() => {
     if (!enabled || !desktop?.listAttention) return Promise.resolve();
     const current = ++sequence.current;
-    return desktop.listAttention().then((view) => {
+    return (desktop.getBriefing ? desktop.getBriefing() : desktop.listAttention()).then((view) => {
       if (current === sequence.current) setState((previous) => ({ ...previous, view, loaded: true }));
     }).catch((error) => {
       if (current === sequence.current) setState((previous) => ({ ...previous, loaded: true, error: `Não foi possível ler a fila: ${cleanError(error)}` }));
