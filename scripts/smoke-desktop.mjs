@@ -16,6 +16,7 @@ const repository = path.join(fixture, 'Repositório Validação');
 const worktree = path.join(fixture, 'Worktree Revisão');
 const profile = path.join(fixture, 'profile');
 const extraProject = path.join(fixture, 'Projeto adicional');
+const quietProject = path.join(fixture, 'Projeto sem novidades');
 // A integração MCP grava no mcp.json do Kimi: o smoke nunca usa a home real.
 const kimiHome = path.join(fixture, 'kimi-home');
 const kimiMcp = path.join(kimiHome, 'mcp.json');
@@ -26,6 +27,7 @@ fs.mkdirSync(profile);
 fs.mkdirSync(kimiHome);
 fs.writeFileSync(kimiMcp, JSON.stringify({ mcpServers: { github: { command: 'gh-mcp', args: ['--fixture'] } } }, null, 2));
 fs.mkdirSync(extraProject);
+fs.mkdirSync(quietProject);
 fs.writeFileSync(path.join(resultsDir, 'result.json'), JSON.stringify({ passed: false, status: 'running', fixture }));
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 git(fixture, 'init', '--bare', 'origin.git');
@@ -95,7 +97,7 @@ const controlToken = randomUUID();
 // Chave de fixture no registro do usuário para a entrada do Explorador; removida ao final.
 const explorerRoot = `HKCU\\Software\\ATLAS-Smoke-${randomUUID()}`;
 const openFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-smoke-open-'));
-const env = { ...process.env, ATLAS_EXPLORER_ROOT: explorerRoot, ATLAS_SMOKE_PROFILE: profile, ATLAS_SMOKE_PROJECT: extraProject, ATLAS_SMOKE_CONTROL_PORT: String(controlPort), ATLAS_SMOKE_TOKEN: controlToken, ATLAS_SMOKE_NO_CLI: '1', KIMI_CODE_HOME: kimiHome, GEMINI_CLI_HOME: geminiHome };
+const env = { ...process.env, ATLAS_EXPLORER_ROOT: explorerRoot, ATLAS_SMOKE_PROFILE: profile, ATLAS_SMOKE_PROJECT: extraProject, ATLAS_SMOKE_QUIET_PROJECT: quietProject, ATLAS_SMOKE_NODE: process.execPath, ATLAS_SMOKE_CONTROL_PORT: String(controlPort), ATLAS_SMOKE_TOKEN: controlToken, ATLAS_SMOKE_NO_CLI: '1', KIMI_CODE_HOME: kimiHome, GEMINI_CLI_HOME: geminiHome };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.VITE_DEV_SERVER_URL;
 // Codex can inject its bundled PowerShell modules; exercise Windows' own modules.
@@ -237,6 +239,27 @@ async function screenshot(cdp, name) {
 try {
   const main = await connect(await until(async () => (await pages()).find((item) => !item.url.includes('window=')), 'main window'));
   await until(() => main.evaluate(`Boolean(document.querySelector('.app-shell'))`), 'React ready');
+  const briefingCounter = '.briefing-counter';
+  const briefingVisible = "Boolean(document.querySelector('.briefing:not([hidden])'))";
+  const escape = () => key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  const openBriefing = async () => {
+    await main.evaluate(`document.querySelector('${briefingCounter}').click()`);
+    await until(() => main.evaluate(briefingVisible), 'contador abre o Briefing');
+  };
+  const closeBriefing = async () => {
+    await native('focus');
+    await until(() => main.evaluate('document.hasFocus()'), 'janela principal recebe o foco');
+    await escape();
+    await until(() => main.evaluate(`!${briefingVisible}`), 'Escape volta aos terminais');
+  };
+  const captureBriefing = async (name) => {
+    await until(() => main.evaluate(`!document.querySelector('.toast')`), 'aviso temporário fechado antes da captura');
+    await screenshot(main, name);
+  };
+  await until(() => main.evaluate(`Boolean(document.querySelector('[data-project-id="${projectId}"].briefing-card'))`), 'Briefing abre com cartão do projeto autorizado');
+  await closeBriefing();
+  await openBriefing();
+  await closeBriefing();
   const newSession = '.toolbar-actions [aria-label="Nova sessão de agente"]';
   const newTerminal = '.toolbar-actions [aria-label="Abrir terminal PowerShell"]';
   const appearance = '.title-actions [aria-label="Aparência e configurações"]';
@@ -276,7 +299,7 @@ try {
   assert.equal(await main.evaluate(`getComputedStyle(document.querySelector('.terminal-layout-select')).appearance`), 'base-select', 'select usa base-select');
   await native('focus');
   const layoutBefore = await main.evaluate(`document.querySelector('.terminal-layout-select').value`);
-  await main.evaluate(`document.querySelector('.terminal-layout-select').focus()`);
+  assert(await main.evaluate(`(() => { const select = document.querySelector('.terminal-layout-select'); select.focus(); return document.activeElement === select; })()`), 'layout recebe foco depois de sair do Briefing');
   await key(main, ' ', { code: 'Space', windowsVirtualKeyCode: 32, text: ' ' });
   await until(() => main.evaluate(`document.querySelector('.terminal-layout-select').matches(':open')`), 'lista do layout aberta pelo teclado');
   await delay(250);
@@ -335,20 +358,19 @@ try {
   // Fila "Precisam de mim": acima de Projetos, fora da rolagem da árvore, com os itens vindos do
   // processo principal. Na abertura só o projeto da fixture está autorizado: a run dele da queda
   // simulada entra como run_failed, e as do Projeto adicional (ainda não autorizado) não entram.
-  // A principal parada do projeto ativo é o único item calculado no renderer.
-  await until(() => main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=principal_start]')].some(item => item.innerText.includes('Iniciar a sessão principal'))`), 'fila mostra a principal parada');
+  // Iniciar a principal aparece como ação do cartão, fora das pendências.
+  await openBriefing();
   await until(() => main.evaluate(`document.querySelectorAll('.attention-item[data-kind=run_failed]').length === 1`), 'run da queda simulada na fila');
   const attentionMoreFor = (text) => `[...document.querySelectorAll('.attention-item')].find(item => item.innerText.includes(${JSON.stringify(text)}))?.querySelector('.attention-more')`;
   const attentionSnapshot = () => main.evaluate(`(() => {
-    const section = document.querySelector('.attention-queue');
+    const section = document.querySelector('.briefing-counter');
     const heading = document.querySelector('.workspace-tree > .workspace-tree-heading');
     return {
-      title: section.querySelector('h2').textContent,
-      labelled: section.getAttribute('aria-labelledby'),
+      title: section.querySelector('span').textContent,
+      label: section.getAttribute('aria-label'),
       above: section.getBoundingClientRect().bottom <= heading.getBoundingClientRect().top + 1,
       outsideScroll: !section.closest('.workspace-tree-scroll'),
-      status: section.querySelector('[role=status]').textContent,
-      items: [...section.querySelectorAll('.attention-item')].map(item => ({ kind: item.dataset.kind, project: item.querySelector('.attention-project').textContent, title: item.querySelector('strong').textContent, name: item.querySelector('.attention-open').getAttribute('aria-label'), menu: Boolean(item.querySelector('.attention-more')) })),
+      items: [...document.querySelectorAll('.briefing .attention-item')].map(item => ({ kind: item.dataset.kind, project: item.querySelector('.attention-project').textContent, title: item.querySelector('strong').textContent, name: item.querySelector('.attention-open').getAttribute('aria-label'), menu: Boolean(item.querySelector('.attention-more')) })),
       counters: Object.fromEntries([...document.querySelectorAll('.workspace-tree .tree-project-name')].map(item => [item.querySelector('span').textContent, item.querySelector('.tree-attention [aria-hidden]')?.textContent || '0'])),
       oldSection: Boolean(document.querySelector('.tree-decisions')),
     };
@@ -357,19 +379,17 @@ try {
     const fixtureName = path.basename(fixture);
     const queue = await attentionSnapshot();
     assert.equal(queue.title, 'Precisam de mim');
-    assert.equal(queue.labelled, 'attention-queue-title', 'seção com rótulo');
+    assert.match(queue.label, /1 item precisa de você/, 'contagem anunciada com contexto');
     assert(queue.above, 'fila acima do cabeçalho Projetos');
     assert(queue.outsideScroll, 'fila fora da rolagem da árvore');
     assert.equal(queue.oldSection, false, '"Espera você" saiu de dentro do projeto');
-    assert.equal(queue.status, '2 itens precisam de você', 'contagem anunciada com contexto');
-    assert.deepEqual(queue.items.map((item) => [item.kind, item.project]), [['principal_start', fixtureName], ['run_failed', fixtureName]]);
+    assert.deepEqual(queue.items.map((item) => [item.kind, item.project]), [['run_failed', fixtureName]]);
     assert(!queue.items.some((item) => item.project === 'Projeto adicional'), 'projeto fora das pastas autorizadas não entra na fila');
-    assert.equal(queue.items[0].menu, false, 'principal não se adia nem se dispensa');
     assert(queue.items.every((item) => item.name.startsWith(`${item.project} · ${item.title}`)), `nome acessível completo: ${JSON.stringify(queue.items)}`);
-    assert.equal(queue.counters[fixtureName], '2', 'contador do projeto vem da fila global');
+    assert.equal(queue.counters[fixtureName], '1', 'contador do projeto vem da fila global');
     const queueAudit = await main.evaluate(`(${auditInterface.toString()})()`);
     assert.equal(queueAudit.filter((item) => item.ratio < 4.5).length, 0, `Low contrast in attention queue: ${JSON.stringify(queueAudit.filter((item) => item.ratio < 4.5))}`);
-    await screenshot(main, 'attention-queue');
+    await captureBriefing('briefing-pendencias');
     // Menu por teclado: o foco entra no primeiro item; End vai a Dispensar; Escape devolve o foco.
     await main.evaluate(`(() => { const button = ${attentionMoreFor('histórico-fixture')}; button.focus(); button.click(); })()`);
     await until(() => main.evaluate(`document.activeElement?.getAttribute('role') === 'menuitem' && document.activeElement.textContent === 'Adiar 1 hora'`), 'menu abre com foco no primeiro item');
@@ -380,16 +400,23 @@ try {
     assert.equal(await main.evaluate(`document.activeElement.textContent`), 'Adiar 1 hora', 'setas circulam');
     await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
     await until(() => main.evaluate(`!document.querySelector('.attention-menu') && document.activeElement === ${attentionMoreFor('histórico-fixture')}`), 'Escape fecha o menu e devolve o foco');
+    assert(await main.evaluate(briefingVisible), 'Escape no menu mantém o Briefing aberto');
+    await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+    await until(() => main.evaluate(`Boolean(document.activeElement?.closest('.command-palette'))`), 'paleta aberta com foco');
+    await escape();
+    await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'Escape fecha a paleta');
+    assert(await main.evaluate(briefingVisible), 'Escape no diálogo mantém o Briefing aberto');
     // Dispensar pelo teclado: grava no host e o item sai; o contador do projeto acompanha.
     await main.evaluate(`${attentionMoreFor('histórico-fixture')}.click()`);
     await until(() => main.evaluate(`Boolean(document.querySelector('.attention-menu'))`), 'menu reaberto');
     await key(main, 'End', { code: 'End', windowsVirtualKeyCode: 35 });
     await main.evaluate(`document.activeElement.click()`);
     await until(() => main.evaluate(`![...document.querySelectorAll('.attention-item')].some(item => item.innerText.includes('histórico-fixture'))`), 'item dispensado sai da fila');
-    await until(async () => (await attentionSnapshot()).counters[fixtureName] === '1', 'contador do projeto acompanha a fila');
+    await until(async () => (await attentionSnapshot()).counters[fixtureName] === '0', 'contador do projeto acompanha a fila');
     assert.deepEqual((await native('invoke', { channel: 'attention:list' })).hidden, { snoozed: 0, dismissed: 1 }, 'dispensar gravado no host');
     console.log('PASS fila Precisam de mim: acima de Projetos, só projetos autorizados, contador, menu por teclado e dispensar');
   }
+  await closeBriefing();
   // Regressão: sem sessão Kimi no projeto, nada de aviso do Kimi (só o indicador discreto).
   assert.equal(await main.evaluate(`document.querySelectorAll('.integration-notice').length`), 0, 'Kimi notice only with a Kimi session');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 1, 'Unauthorized project history must remain hidden');
@@ -423,10 +450,11 @@ try {
   // ao lado dos itens do outro projeto; adiar tira o item e fica registrado no host.
   {
     const fixtureName = path.basename(fixture);
+    await openBriefing();
     await until(async () => (await attentionSnapshot()).items.filter((item) => item.kind === 'run_failed' && item.project === 'Projeto adicional').length === 2, 'runs do projeto recém-autorizado na fila');
     const queue = await attentionSnapshot();
-    assert.equal(queue.items.find((item) => item.kind === 'principal_start')?.project, 'Projeto adicional', 'principal parada é a do projeto ativo');
-    assert.equal(queue.counters['Projeto adicional'], '3', 'contador do projeto ativo');
+    assert.equal(queue.items.some((item) => item.kind === 'principal_start'), false, 'iniciar a principal fica fora da fila');
+    assert.equal(queue.counters['Projeto adicional'], '2', 'contador do projeto ativo');
     assert.equal(queue.counters[fixtureName], '0', 'contador do outro projeto vem da mesma fila');
     await main.evaluate(`${attentionMoreFor('histórico-extra')}.click()`);
     await until(() => main.evaluate(`document.activeElement?.textContent === 'Adiar 1 hora'`), 'menu de adiar');
@@ -435,7 +463,174 @@ try {
     assert.deepEqual((await native('invoke', { channel: 'attention:list' })).hidden, { snoozed: 1, dismissed: 1 }, 'adiar gravado no host');
     console.log('PASS fila com os dois projetos depois de autorizar, contadores por projeto e adiar');
   }
+  await closeBriefing();
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-card').length`), 0, 'histórico do projeto adicional não abre sozinho');
+  {
+    await native('choose-quiet-project');
+    await click(main, '[aria-label="Autorizar pasta de projeto"]');
+    await openBriefing();
+    await until(() => main.evaluate(`document.querySelector('.briefing-quiet')?.innerText.includes('Projeto sem novidades')`), 'projeto sem novidades em uma linha');
+    await captureBriefing('briefing-sem-novidades');
+    const worker = await native('invoke', { channel: 'agent:create', args: [{ cwd: fixture, adapterId: 'gemini', name: 'Revisor da fixture', functionSlug: 'revisar' }] });
+    const waitForPty = (terminalId) => until(async () => {
+      const { scrollback } = await native('invoke', { channel: 'terminal:attach', args: [terminalId] });
+      return scrollback.includes('Briefing fixture pronta');
+    }, 'processo de teste habilitou colagem protegida');
+    await waitForPty(worker.ptyId);
+    await native('send', { channel: 'attention:changed', payload: { projectId } });
+    const card = `document.querySelector('.briefing-card[data-project-id="${projectId}"]')`;
+    const receiver = `${card}.querySelector('select')`;
+    const composer = `${card}.querySelector('textarea')`;
+    await until(() => main.evaluate(`Boolean(${receiver})`), 'compositor para agente sem principal');
+    assert.equal(await main.evaluate(`${receiver}.value`), '');
+    const typeText = (text) => main.evaluate(`(() => {
+      const input = ${composer};
+      input.focus();
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(text)});
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await typeText('Validação do Briefing');
+    const enter = () => key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
+    await enter();
+    assert.equal(await main.evaluate(`${composer}.value`), 'Validação do Briefing');
+    assert(await main.evaluate(`${card}.querySelector('button[type=submit]').disabled`));
+    assert(!await main.evaluate(`${card}.querySelector('.briefing-terminal')`));
+    await captureBriefing('briefing-sem-principal');
+    const principal = await native('invoke', { channel: 'agent:open-orchestrator', args: [{ cwd: fixture, adapterId: 'gemini', startNewRun: true }] });
+    await waitForPty(principal.ptyId);
+    await native('send', { channel: 'attention:changed', payload: { projectId } });
+    await until(() => main.evaluate(`[...${receiver}.options].some(option => option.value === ${JSON.stringify(principal.id)})`), 'principal disponível');
+    assert.equal(await main.evaluate(`${receiver}.value`), '', 'principal nova não altera o destino de um rascunho');
+    await closeBriefing();
+    await openBriefing();
+    assert.equal(await main.evaluate(`${composer}.value`), 'Validação do Briefing', 'rascunho preservado ao voltar');
+    await main.call('Page.reload');
+    await until(() => main.evaluate(briefingVisible), 'Briefing com principal após recarregar');
+    await until(() => main.evaluate(`[...document.querySelectorAll('.tree-project-name')].some(item => item.textContent.startsWith('Projeto adicional'))`), 'árvore hidratada após recarregar');
+    await until(() => main.evaluate(`${receiver}.value === ${JSON.stringify(principal.id)}`), 'principal é destino inicial');
+    await native('focus');
+    await until(() => main.evaluate('document.hasFocus()'), 'janela principal recebe foco após recarregar');
+    await main.evaluate(`${card}.focus()`);
+    await until(() => main.evaluate(`${card}.querySelector('.briefing-terminal')?.dataset.terminalId === ${JSON.stringify(principal.ptyId)}`), 'cartão focado mostra o PTY da principal');
+    const chooseReceiver = (id) => main.evaluate(`(() => {
+      const select = ${receiver};
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(id)});
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    await chooseReceiver(worker.id);
+    await until(() => main.evaluate(`${card}.querySelector('.briefing-terminal')?.dataset.terminalId === ${JSON.stringify(worker.ptyId)}`), 'trocar destino troca o PTY');
+    await typeText('Validação do Briefing');
+    await main.evaluate(`${composer}.focus()`);
+    await enter();
+    await until(async () => {
+      const { scrollback } = await native('invoke', { channel: 'terminal:attach', args: [worker.ptyId] });
+      return scrollback.includes('Recebido pela fixture: Validação do Briefing');
+    }, 'Enter depois da colagem chegou ao PTY de destino');
+    await until(() => main.evaluate(`${composer}.value === '' && ${card}.querySelector('.briefing-receipt').textContent.includes('Enviado a Revisor da fixture')`), 'compositor limpo e envio anunciado');
+    assert(!(await native('invoke', { channel: 'terminal:attach', args: [principal.ptyId] })).scrollback.includes('Validação do Briefing'));
+    await native('resize', { width: 940, height: 700 });
+    await until(() => main.evaluate(`getComputedStyle(${card}.querySelector('.briefing-card-body')).flexDirection === 'column'`), 'terminal passa para baixo em janela estreita');
+    await main.evaluate(`${card}.scrollIntoView({ block: 'start' })`);
+    await captureBriefing('briefing-janela-estreita');
+    await native('resize', { width: 1440, height: 900 });
+    const terminalInput = `${card}.querySelector('.briefing-terminal .xterm-helper-textarea')`;
+    const focusBriefingTerminal = async () => {
+      await native('focus');
+      await until(() => main.evaluate(`(() => {
+        if (!${terminalInput}) ${card}.focus();
+        const input = ${terminalInput};
+        input?.focus();
+        return input && document.hasFocus() && document.activeElement === input;
+      })()`), 'foco no terminal do Briefing');
+    };
+    await focusBriefingTerminal();
+    await escape();
+    assert(await main.evaluate(briefingVisible), 'Escape no terminal mantém o Briefing aberto');
+    await until(async () => {
+      const { scrollback } = await native('invoke', { channel: 'terminal:attach', args: [worker.ptyId] });
+      return scrollback.includes('Esc recebido pela fixture');
+    }, 'Escape recebido pelo processo no PTY selecionado');
+    await key(main, 'Tab', { code: 'Tab', windowsVirtualKeyCode: 9 });
+    await until(() => main.evaluate(`document.activeElement !== ${terminalInput}`), 'Tab sai do terminal');
+    assert(await main.evaluate(briefingVisible), 'Tab mantém o Briefing aberto');
+    await focusBriefingTerminal();
+    await key(main, 'B', { code: 'KeyB', windowsVirtualKeyCode: 66, modifiers: 10 });
+    await until(() => main.evaluate(`!${briefingVisible}`), 'Ctrl+Shift+B fecha com foco no terminal');
+    await openBriefing();
+    await main.evaluate(`${composer}.focus()`);
+    assert(await main.evaluate(`document.activeElement === ${composer}`), 'foco na caixa de texto');
+    await closeBriefing();
+    await openBriefing();
+    const receiptText = `${card}.querySelector('.briefing-receipt')?.textContent || ''`;
+    assert.match(await main.evaluate(receiptText), /Enviado a Revisor da fixture/);
+    await chooseReceiver(principal.id);
+    assert.equal(await main.evaluate(receiptText), '', 'trocar destinatário limpa a confirmação');
+    await chooseReceiver(worker.id);
+    assert.equal(await main.evaluate(receiptText), '', 'voltar ao destinatário anterior não restaura a confirmação');
+    await typeText('Segunda mensagem da fixture');
+    await enter();
+    await until(() => main.evaluate(`(${receiptText}).includes('Enviado a Revisor da fixture')`), 'segunda confirmação exibida');
+    const orphanStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
+    let orphanTask;
+    try {
+      orphanTask = orphanStore.createTask({ projectId, title: 'Tarefa interrompida da fixture', acceptance: 'Exibir a perda do claim', idempotencyKey: 'briefing-orphan-task' });
+      const handoff = orphanStore.offerHandoff({ projectId, taskId: orphanTask.id, fromSessionId: principal.id, toSessionId: worker.id, objective: 'Validar a perda do claim.', idempotencyKey: 'briefing-orphan-offer' });
+      orphanStore.acceptHandoff({ projectId, handoffId: handoff.id, sessionId: worker.id, runId: worker.runId });
+    } finally {
+      orphanStore.close();
+    }
+    const stopFixtureAgent = async (session) => {
+      await native('invoke', { channel: 'terminal:stop', args: [session.ptyId] });
+      await until(async () => {
+        const view = await native('invoke', { channel: 'briefing:get' });
+        return !view.briefing.find((entry) => entry.projectId === projectId).agora.sessoes.some(({ id }) => id === session.id);
+      }, 'sessão encerrada saiu do Briefing');
+    };
+    await stopFixtureAgent(worker);
+    await until(() => main.evaluate(`![...${receiver}.options].some(option => option.value === ${JSON.stringify(worker.id)})`), 'destinatário encerrado saiu do seletor');
+    assert.equal(await main.evaluate(receiptText), '', 'encerrar destinatário limpa a confirmação');
+    const orphan = `${card}.querySelector('[data-kind=task_orphaned]')`;
+    await until(() => main.evaluate(`${orphan}?.innerText.includes('Tarefa sem responsável: Tarefa interrompida da fixture')`), 'cartão mantém a tarefa sem responsável');
+    assert.match(await main.evaluate(`${orphan}.innerText`), /Revisor da fixture \(Revisar, Gemini\) foi encerrada por você.*continua em andamento, sem responsável/);
+    await main.evaluate(`[...${orphan}.querySelectorAll('button')].find(button => button.textContent === 'Retomar sessão').click()`);
+    await until(() => main.evaluate(`document.querySelector('#new-session-title')?.textContent === 'Retomar sessão'`), 'retomada pede confirmação');
+    await until(() => main.evaluate(`document.querySelector('.modal select[name=cli] option:checked')?.value === 'gemini' && !document.querySelector('.modal button[type=submit]').disabled`), 'CLI original detectado e confirmação pronta');
+    await escape();
+    await until(() => main.evaluate(`!document.querySelector('.modal-backdrop') && ${briefingVisible}`), 'cancelar retomada preserva o Briefing');
+    await main.evaluate(`[...${orphan}.querySelectorAll('button')].find(button => button.textContent === 'Já resolvi').click()`);
+    await until(() => main.evaluate(`!${orphan}`), 'Já resolvi dispensa o item');
+    assert.equal((await native('invoke', { channel: 'task:list', args: [{ cwd: fixture }] })).items.find((task) => task.id === orphanTask.id).state, 'in_progress', 'dispensar preserva a tarefa');
+    await stopFixtureAgent(principal);
+    const otherItems = (await native('invoke', { channel: 'attention:list' })).items;
+    assert(otherItems.every((item) => item.projectId !== projectId), 'encerramento pelo usuário fica fora da fila do host');
+    for (const { id } of otherItems) {
+      await native('invoke', { channel: 'attention:snooze', args: [{ itemId: id, until: new Date(Date.now() + 15000).toISOString() }] });
+    }
+    await until(() => main.evaluate(`(() => {
+      const currentProject = document.querySelector('.tree-project-name[aria-current=page]');
+      return currentProject?.textContent.includes(${JSON.stringify(path.basename(fixture))})
+        && ${card}.innerText.includes('Principal encerrada')
+        && document.querySelector('.briefing-counter b').textContent === '0';
+    })()`), 'principal encerrada pelo usuário e contador global zero');
+    assert.equal(await main.evaluate(`${card}.querySelector('.briefing-state').dataset.needsUser`), 'false');
+    assert.equal(await main.evaluate(`Boolean(${card}.querySelector('.attention-items'))`), false);
+    assert(await main.evaluate(`[...${card}.querySelectorAll('button')].some(button => button.textContent === 'Iniciar a principal')`));
+    assert.equal((await attentionSnapshot()).counters[path.basename(fixture)], '0', 'projeto sem pendência na árvore');
+    await closeBriefing();
+    for (const session of [worker, principal]) {
+      await native('invoke', { channel: 'agent:remove', args: [session.id] });
+    }
+    // Os handlers foram chamados pela fixture, fora do fluxo de remoção do renderer.
+    // Recarregue para que as sessões descartadas não interfiram nos testes dos terminais.
+    await main.call('Page.reload');
+    await until(() => main.evaluate(briefingVisible), 'Briefing depois de remover os PTYs da fixture');
+    await closeBriefing();
+    await until(() => main.evaluate(`[...document.querySelectorAll('.tree-project-name')].some(item => item.textContent.startsWith('Projeto adicional'))`), 'projetos carregados sem os PTYs descartados');
+    assert(!(await native('invoke', { channel: 'agent:list' })).some((session) => session.id === worker.id || session.id === principal.id));
+    console.log('PASS Briefing: abertura, Escape, contador, principal encerrada, limpeza da confirmação, PTY real com fixture e janela estreita');
+  }
+  await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
+  await until(() => main.evaluate(`Boolean(document.getElementById('tree-session-reauthorized-fixture'))`), 'árvore do projeto adicional expandida');
   await main.evaluate(`document.getElementById('tree-session-reauthorized-fixture').click()`);
   await until(() => main.evaluate(`Boolean(document.querySelector('[data-session-id=reauthorized-fixture]'))`), 'histórico do projeto adicional aberto pela árvore');
   // Histórico de um CLI com marca publicada: a árvore mostra o ícone oficial, com selo de encerrada.
@@ -531,7 +726,7 @@ try {
   const worktreeTitle = await main.evaluate(`document.querySelector(${JSON.stringify(target)})?.title`);
   assert(worktreeTitle.includes('feature/revisao') && worktreeTitle.includes('3 alterações') && worktreeTitle.includes(worktree), `title completo da worktree: ${worktreeTitle}`);
   await click(main, target);
-  await until(() => main.evaluate(`document.querySelector('.persistent-tasks').innerText.includes('Nenhuma tarefa criada')`), 'task scope changed');
+  await until(() => main.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa interrompida da fixture')`), 'task scope follows the worktree project');
   assert(!(await main.evaluate(`document.querySelector('.persistent-tasks').innerText`)).includes('Tarefa real · smoke'));
   await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Mensagens')).click()`);
   await until(() => main.evaluate(`document.querySelector('.messages-panel')?.innerText.includes('Nenhuma mensagem')`), 'message scope changed');
@@ -1070,12 +1265,9 @@ process.stdin.on('data', (data) => {
     assert.equal(queueButton.label.match(/\d+/)[0], queueButton.badge, 'selo e nome acessível com a mesma contagem');
     assert(await main.evaluate(`[...document.querySelectorAll('.rail-project')].some(item => item.getAttribute('aria-label').includes('de você'))`), 'projeto no trilho anuncia os itens da fila');
     await main.evaluate(`document.querySelector('.navigation-rail .rail-queue').focus(); document.querySelector('.navigation-rail .rail-queue').click()`);
-    await until(() => main.evaluate(`document.querySelectorAll('#attention-flyout .attention-item').length > 0 && document.querySelector('#attention-flyout').contains(document.activeElement)`), 'flyout da fila com foco dentro');
-    await until(() => main.evaluate(`document.querySelector('#attention-flyout').getAnimations().every(item => item.playState === 'finished')`), 'entrada do flyout da fila concluída');
-    assert(await main.evaluate(`[...document.querySelectorAll('#attention-flyout .attention-open')].every(item => item.getAttribute('aria-label').includes(' · '))`), 'nomes completos no flyout');
-    await screenshot(main, 'attention-queue-compact');
-    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
-    await until(() => main.evaluate(`!document.querySelector('#attention-flyout') && document.activeElement?.classList.contains('rail-queue')`), 'Esc fecha a fila e devolve o foco');
+    await until(() => main.evaluate(`document.querySelectorAll('.briefing .attention-item').length > 0 && document.activeElement?.id === 'briefing-title'`), 'trilho abre o Briefing com foco no título');
+    await closeBriefing();
+    await until(() => main.evaluate(`document.activeElement?.classList.contains('rail-queue')`), 'Esc devolve o foco ao contador');
   }
   const activateFocusedButton = (selector) => main.evaluate(`(() => {
     const button = document.querySelector(${JSON.stringify(selector)});
@@ -1133,7 +1325,11 @@ process.stdin.on('data', (data) => {
   await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão selecionado na paleta');
   await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
   await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'paleta fechada');
-  assert.deepEqual(await main.evaluate(`JSON.parse(localStorage.getItem('atlas-docks')).widths`), { left: null, right: null }, 'Restaurar layout zera as larguras');
+  // A paleta fecha antes de executar o comando e o efeito grava as larguras depois.
+  await until(() => main.evaluate(`(() => {
+    const { left, right } = JSON.parse(localStorage.getItem('atlas-docks')).widths;
+    return left === null && right === null;
+  })()`), 'Restaurar layout zera as larguras persistidas');
   assert.equal(await columnWidth('left'), navStart);
   await ensurePanels(main);
   await focus('smoke-dois');
@@ -1612,7 +1808,7 @@ process.stdin.on('data', (data) => {
   await until(() => panel.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa real · smoke')`), 'task snapshot synced to popup');
   assert.equal(await panel.evaluate(`document.querySelectorAll('.persistent-tasks button').length`), 1, 'Popup lists task selection but cannot create tasks');
   await click(main, target);
-  await until(() => panel.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Nenhuma tarefa criada')`), 'popup task scope follows main');
+  await until(() => panel.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa interrompida da fixture')`), 'popup task scope follows main');
   assert((await native('windows')).find((item) => item.url.includes('window=panels')).alwaysOnTop);
   assert.equal(await panel.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#18222b');
   await native('resize', { kind: 'panels', width: 420, height: 700 });
@@ -1653,6 +1849,8 @@ process.stdin.on('data', (data) => {
   await assert.rejects(main.evaluate(`window.atlasDesktop.attachTerminal(${JSON.stringify(first.id)})`), /Terminal não encontrado/);
   console.log('PASS encerrar PowerShell, cancelar por teclado e excluir terminal encerrado');
   await main.call('Page.reload');
+  await until(() => main.evaluate(briefingVisible), 'Briefing após recarregar');
+  await closeBriefing();
   // Depois de recarregar, nenhum histórico volta aberto e cada sessão aparece uma vez na árvore.
   await until(() => main.evaluate(`Boolean(document.querySelector('.app-shell')) && document.querySelectorAll('.session-history').length === 0 && document.querySelectorAll('#tree-session-history-fixture').length <= 1 && window.atlasDesktop.listAgents().then(items => new Set(items.map(item => item.id)).size === items.length)`), 'project history restored once after reload');
   await until(() => main.evaluate(`document.querySelector('.app-shell') && document.querySelectorAll('[data-column-id]').length === 1 && getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#18222b'`), 'layout and custom background persisted after reload');
@@ -1890,6 +2088,7 @@ process.stdin.on('data', (data) => {
   assert(requestCards.every((text) => text.includes('sem flags de autonomia')), 'Request states how the agent starts');
   // Fila "Precisam de mim": cada pedido pendente espera o usuário e leva ao próprio cartão,
   // mesmo a partir de outro projeto: troca de projeto, espera a carga dele e só então abre.
+  await openBriefing();
   await until(() => main.evaluate(`document.querySelectorAll('.attention-item[data-kind=request_pending]').length === 2`), 'pedidos pendentes na fila');
   const panelRequests = await main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_pending] strong')].map(item => item.textContent)`);
   assert(panelRequests.includes('Novo agente: revisor-recusado') && panelRequests.length === 2, `Queue lists pending requests: ${panelRequests}`);
@@ -1900,11 +2099,13 @@ process.stdin.on('data', (data) => {
   await until(() => main.evaluate(`!document.querySelector('.attention-menu')`), 'menu do pedido fechado');
   await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => !item.textContent.startsWith('Projeto adicional')).click()`);
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0 && !document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional')`), 'outro projeto ativo, sem os cartões do adicional');
+  await openBriefing();
   {
-    // Itens dos dois projetos na mesma lista: a principal parada do projeto ativo e os pedidos do adicional.
+    // Os pedidos do adicional continuam visíveis com outro projeto ativo.
     const fixtureName = path.basename(fixture);
-    const queue = await until(async () => { const snapshot = await attentionSnapshot(); return snapshot.items.some((item) => item.kind === 'principal_start' && item.project === fixtureName) ? snapshot : null; }, 'principal do projeto ativo na fila');
-    assert.deepEqual([...new Set(queue.items.map((item) => item.project))].sort(), [fixtureName, 'Projeto adicional'].sort(), `itens dos dois projetos na mesma lista: ${JSON.stringify(queue.items)}`);
+    const queue = await attentionSnapshot();
+    assert.equal(queue.counters[fixtureName], '0', 'projeto ativo sem principal não ganha pendência');
+    assert(queue.items.every((item) => item.project === 'Projeto adicional'), `pendências pertencem ao projeto adicional: ${JSON.stringify(queue.items)}`);
     assert.equal(queue.items.filter((item) => item.kind === 'request_pending' && item.project === 'Projeto adicional').length, 2, 'pedidos do outro projeto continuam na fila');
   }
   await main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_pending]')].find(item => item.innerText.includes('revisor-recusado')).querySelector('.attention-open').click()`);
@@ -1942,16 +2143,19 @@ process.stdin.on('data', (data) => {
   assert.equal(await main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'revisor-sem-cli')`), false);
   await click(main, '.agent-request button', 'Dispensar');
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'failed request dismissed');
+  await openBriefing();
   assert.equal(await main.evaluate(`document.querySelectorAll('.attention-item[data-kind=request_pending]').length`), 0, 'Decided requests leave the queue');
   // O pedido que falhou continua na fila (vem do banco); abrir mostra de novo o cartão com o motivo.
   await until(() => main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_failed]')].some(item => item.innerText.includes('revisor-sem-cli') && item.innerText.includes('Não foi possível iniciar o OpenCode'))`), 'pedido que falhou na fila com o motivo');
   await main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_failed]')].find(item => item.innerText.includes('revisor-sem-cli')).querySelector('.attention-open').click()`);
   await until(() => main.evaluate(`document.activeElement?.closest('.agent-request')?.innerText.includes('revisor-sem-cli') && document.querySelector('.agent-request [role=alert]')?.innerText.includes('Não foi possível iniciar o OpenCode')`), 'fila reabre o cartão do pedido que falhou');
   await click(main, '.agent-request button', 'Dispensar');
+  await openBriefing();
   await main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_failed]')].find(item => item.innerText.includes('revisor-sem-cli')).querySelector('.attention-more').click()`);
   await until(() => main.evaluate(`[...document.querySelectorAll('.attention-menu [role=menuitem]')].at(-1)?.textContent === 'Dispensar'`), 'pedido que falhou pode ser dispensado');
   await main.evaluate(`[...document.querySelectorAll('.attention-menu [role=menuitem]')].at(-1).click()`);
   await until(() => main.evaluate(`document.querySelectorAll('.attention-item[data-kind=request_failed]').length === 0`), 'pedido que falhou dispensado da fila');
+  await closeBriefing();
   console.log('PASS pedidos de agente da principal: conteúdo, validade, política, recusa, falha honesta sem CLI e Painel do Atlas');
   // Delegação semeada como a principal e um agente da fixture fariam pela ponte MCP:
   // uma oferta aberta e uma tarefa aceita e bloqueada. O usuário cancela e devolve.
@@ -1977,11 +2181,14 @@ process.stdin.on('data', (data) => {
   // seleciona a tarefa certa no painel; o resumo soma a bloqueada.
   {
     const blockedItem = `[...document.querySelectorAll('.attention-item[data-kind=task_blocked]')].find(item => item.innerText.includes('Delegada bloqueada'))`;
+    await openBriefing();
     await until(() => main.evaluate(`Boolean(${blockedItem}) && ${blockedItem}.innerText.includes('Falta o fixture de terminal.')`), 'tarefa bloqueada na fila com o motivo');
-    assert.match(await main.evaluate(`document.querySelector('.attention-summary')?.textContent || ''`), /^Desde a última visita: .*1 bloqueada/, 'resumo soma a bloqueada');
+    assert.equal((await native('invoke', { channel: 'attention:list' })).projects.find((project) => project.projectId === extraProjectId).blocked.count, 1, 'resumo soma a bloqueada');
+    await closeBriefing();
     await main.evaluate(`${queueItem('Delegada aberta')}.click()`);
     await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => !item.textContent.startsWith('Projeto adicional')).click()`);
     await until(() => main.evaluate(`!document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional') && !${queueItem('Delegada bloqueada')}`), 'outro projeto ativo, sem as tarefas do adicional');
+    await openBriefing();
     await main.evaluate(`${blockedItem}.querySelector('.attention-open').click()`);
     await until(() => main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional') && document.activeElement === ${queueItem('Delegada bloqueada')} && document.querySelector('.task-assignment')?.innerText.includes('Falta o fixture de terminal.')`), 'fila troca de projeto e seleciona a tarefa bloqueada');
     console.log('PASS fila abre pedido e tarefa de outro projeto só depois da carga dele');
@@ -2389,7 +2596,7 @@ try {
   assert(persisted.prepare('SELECT read_at FROM message_deliveries').get().read_at, 'Message read state must persist in SQLite');
   const delegated = persisted.prepare('SELECT id, state, assigned_session_id, claim_epoch FROM tasks WHERE id IN (?, ?) ORDER BY title').all(offeredTaskId, blockedTaskId);
   assert.deepEqual(delegated.map((item) => [item.state, item.assigned_session_id, item.claim_epoch]), [['done', 'smoke-agente', 1], ['ready', null, 2]]);
-  assert.deepEqual(persisted.prepare('SELECT state, resolved_by FROM handoffs ORDER BY created_at, rowid').all().map((item) => [item.state, item.resolved_by]), [['canceled', 'user'], ['accepted', 'agent:smoke-agente'], ['accepted', 'agent:smoke-agente']]);
+  assert.deepEqual(persisted.prepare('SELECT state, resolved_by FROM handoffs WHERE project_id = ? ORDER BY created_at, rowid').all(extraProjectId).map((item) => [item.state, item.resolved_by]), [['canceled', 'user'], ['accepted', 'agent:smoke-agente'], ['accepted', 'agent:smoke-agente']]);
   assert.deepEqual(persisted.prepare('SELECT state FROM reviews ORDER BY created_at, rowid').all().map((item) => item.state), ['changes_requested', 'accepted']);
   assert.deepEqual(persisted.prepare("SELECT kind, count(*) AS total FROM evidence WHERE source = 'system' GROUP BY kind ORDER BY kind").all().map((item) => [item.kind, item.total]), [['git_snapshot', 2], ['regression_run', 2]]);
   assert.deepEqual(persisted.prepare('SELECT state, exit_code AS exitCode FROM regression_runs ORDER BY created_at, rowid').all().map((item) => [item.state, item.exitCode]), [['cancelled', null], ['failed', 1]]);
@@ -2406,6 +2613,8 @@ reopened.stderr.resume();
 try {
   const page = await until(async () => (await pages()).find((item) => item.type === 'page' && !item.url.includes('window=')), 'janela principal reaberta');
   const main = await connect(page);
+  await until(() => main.evaluate(`Boolean(document.querySelector('.briefing:not([hidden])'))`), 'Briefing após reabrir');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'PowerShell a retomar')`), 'card do PowerShell reaberto');
   const { terminals, failed } = await main.evaluate('window.atlasDesktop.listTerminals()');
   assert.deepEqual(failed, []);

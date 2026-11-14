@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  summaryLine, countByProject, withPrincipalItem, snoozeOptions, canDismiss, canSnooze,
-  itemDescription, countAnnouncement, attentionDestination, attentionTargetStatus, PRINCIPAL_KIND,
+  summaryLine, countByProject, snoozeOptions, canDismiss, canSnooze,
+  itemDescription, countAnnouncement, attentionDestination, attentionTargetStatus,
 } from '../src/attention-queue.js';
 
 const bucket = (...taskIds) => ({ count: taskIds.length, taskIds });
@@ -36,16 +36,11 @@ test('contagem por projeto vem dos itens de cada projectId, de todos os projetos
   assert.deepEqual(countByProject(), {});
 });
 
-test('item da principal só entra no projeto ativo, à frente, sem adiar nem dispensar', () => {
+test('apenas pendências do host contam, inclusive uma queda real da principal', () => {
   const items = [{ id: 'request_pending:r1', kind: 'request_pending', projectId: 'b' }];
-  assert.equal(withPrincipalItem(items, { needsPrincipal: false, project: { id: 'a', name: 'A' } }), items);
-  assert.equal(withPrincipalItem(items, { needsPrincipal: true, project: null }), items);
-  const merged = withPrincipalItem(items, { needsPrincipal: true, project: { id: 'a', name: 'Primeiro' } });
-  assert.equal(merged.length, 2);
-  assert.deepEqual([merged[0].kind, merged[0].projectId, merged[0].projectName, merged[0].local], [PRINCIPAL_KIND, 'a', 'Primeiro', true]);
-  assert.equal(canSnooze(merged[0]), false);
-  assert.equal(canDismiss(merged[0]), false);
-  assert.deepEqual(countByProject(merged), { a: 1, b: 1 });
+  assert.deepEqual(countByProject(items), { b: 1 });
+  assert.deepEqual(countByProject([...items, { kind: 'run_failed', projectId: 'a' }]), { a: 1, b: 1 });
+  assert.equal(attentionDestination({ kind: 'principal_start' }), null);
 });
 
 test('dispensar só em request_failed e run_failed; adiar em todos os itens do host', () => {
@@ -89,7 +84,9 @@ test('destino de cada kind', () => {
   assert.deepEqual(attentionDestination({ kind: 'review_pending', taskId: 't1', evidence: { type: 'regression_run', id: 'g1' } }), { kind: 'task', id: 't1' });
   assert.deepEqual(attentionDestination({ kind: 'task_blocked', taskId: 't2' }), { kind: 'task', id: 't2' });
   assert.deepEqual(attentionDestination({ kind: 'run_failed', sessionId: 's1' }), { kind: 'session', id: 's1' });
-  assert.deepEqual(attentionDestination({ kind: PRINCIPAL_KIND }), { kind: 'principal' });
+  assert.deepEqual(attentionDestination({ kind: 'task_orphaned', taskId: 't3' }), { kind: 'task', id: 't3' });
+  assert.deepEqual(attentionDestination({ kind: 'handoff_stranded', taskId: 't4' }), { kind: 'task', id: 't4' });
+  assert.deepEqual(attentionDestination({ kind: 'messages_stranded' }), { kind: 'messages' });
   assert.equal(attentionDestination({ kind: 'outro' }), null);
 });
 

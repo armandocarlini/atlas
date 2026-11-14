@@ -77,6 +77,7 @@ function createTerminalHost({ ipcMain, getMainWindow, projectHost, transport, ge
 
   return {
     isMainSender,
+    hasSession: (id) => terminals.has(id),
     snapshotForQuit() {
       shuttingDown = true;
       const snapshot = [];

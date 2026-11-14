@@ -1,6 +1,6 @@
 const { waitForCwd } = require('./project-host.cjs');
 
-function createMessageHost({ ipcMain, projectHost, store, isMainSender }) {
+function createMessageHost({ ipcMain, projectHost, store, isMainSender, onChange = () => {} }) {
   async function projectForRequest(event, request) {
     if (!isMainSender(event)) throw new Error('Janela não autorizada a acessar mensagens.');
     if (!request || typeof request !== 'object' || typeof request.cwd !== 'string') throw new Error('Informe uma pasta autorizada.');
@@ -13,7 +13,7 @@ function createMessageHost({ ipcMain, projectHost, store, isMainSender }) {
 
   ipcMain.handle('message:send', async (event, request) => {
     const project = await projectForRequest(event, request);
-    return store.sendMessage({
+    const message = store.sendMessage({
       projectId: project.id,
       fromSessionId: request.fromSessionId,
       toSessionId: request.toSessionId,
@@ -22,6 +22,8 @@ function createMessageHost({ ipcMain, projectHost, store, isMainSender }) {
       body: request.body,
       idempotencyKey: request.idempotencyKey,
     });
+    onChange(project.id);
+    return message;
   });
   ipcMain.handle('message:list', async (event, request) => {
     const project = await projectForRequest(event, request);
@@ -29,7 +31,9 @@ function createMessageHost({ ipcMain, projectHost, store, isMainSender }) {
   });
   ipcMain.handle('message:mark-read', async (event, request) => {
     const project = await projectForRequest(event, request);
-    return store.markMessageRead({ projectId: project.id, messageId: request.messageId, sessionId: request.sessionId });
+    const changed = store.markMessageRead({ projectId: project.id, messageId: request.messageId, sessionId: request.sessionId });
+    if (changed) onChange(project.id);
+    return changed;
   });
 }
 

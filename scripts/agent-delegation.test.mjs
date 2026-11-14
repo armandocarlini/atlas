@@ -180,7 +180,7 @@ test('reinício reconcilia a run perdida e preserva tarefa, handoff e responsáv
   assert.equal(task.state, 'in_progress');
   assert.equal(task.assignedSessionId, 'agente');
   assert.equal(task.claimRunId, null);
-  assert.deepEqual(store.listHandoffs('project-a').map((item) => [item.id, item.state]), [[handoff.id, 'accepted'], [pending.id, 'canceled']], 'oferta da run perdida não prende a tarefa');
+  assert.deepEqual(store.listHandoffs('project-a').map((item) => [item.id, item.state]), [[handoff.id, 'accepted'], [pending.id, 'offered']], 'oferta da run perdida aguarda decisão');
   store.reconcileRuns();
   assert.equal(store.listEvents('project-a').filter((item) => item.type === 'task.claim_lost').length, 1);
 });
@@ -207,28 +207,31 @@ test('migration 5→6 preserva tarefas anteriores sem responsável', (t) => {
   } finally { store.close(); }
 });
 
-test('regressão: oferta aberta é cancelada quando a run do destino termina e a tarefa pode ser delegada de novo', (t) => {
+test('oferta sobrevive ao fim da run e pode ser cancelada pelo usuário para delegar novamente', (t) => {
   const { store, task, offer, runs } = harness(t);
   const created = task();
   const stale = offer({ taskId: created.id });
   store.finishRun({ runId: runs.agente.id, expectedVersion: 1, exitCode: 0 });
+  assert.equal(store.getHandoff('project-a', stale.id).state, 'offered');
+  assert.throws(() => store.acceptHandoff({ projectId: 'project-a', handoffId: stale.id, sessionId: 'agente', runId: runs.agente.id }), /run desta sessão não está ativa/);
+  assert.throws(() => offer({ taskId: created.id, toSessionId: 'outro' }), /oferta aberta/);
+  store.cancelHandoff({ projectId: 'project-a', handoffId: stale.id, actor: 'user' });
   const canceled = store.getHandoff('project-a', stale.id);
   assert.equal(canceled.state, 'canceled');
-  assert.equal(canceled.resolvedBy, 'system');
-  assert.match(canceled.reason, /encerrou antes de responder/);
+  assert.equal(canceled.resolvedBy, 'user');
   assert.equal(store.getTask('project-a', created.id).state, 'ready');
   assert.equal(offer({ taskId: created.id, toSessionId: 'outro' }).state, 'offered');
   const event = store.listEvents('project-a').find((item) => item.type === 'handoff.canceled');
-  assert.equal(event.payload.actor, 'system');
+  assert.equal(event.payload.actor, 'user');
 });
 
-test('regressão: reinício cancela ofertas abertas de runs perdidas', (t) => {
+test('reinício preserva ofertas abertas de runs perdidas', (t) => {
   const context = harness(t);
   const created = context.task();
   const stale = context.offer({ taskId: created.id });
   const store = context.reopen();
   store.reconcileRuns();
-  assert.equal(store.getHandoff('project-a', stale.id).state, 'canceled');
+  assert.equal(store.getHandoff('project-a', stale.id).state, 'offered');
 });
 
 test('regressão: textos com quebra de linha CRLF são aceitos e normalizados', (t) => {

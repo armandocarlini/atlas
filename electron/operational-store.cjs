@@ -7,6 +7,7 @@ const { createTaskReview } = require('./task-review.cjs');
 const { createAgentFunctions, SLUG_PATTERN } = require('./agent-functions.cjs');
 const { createRegressionSuites } = require('./regression-suite.cjs');
 const { createAttentionStore, LAST_CLOSE_KEY } = require('./attention-store.cjs');
+const { createBriefingStore } = require('./briefing-store.cjs');
 
 const MIGRATIONS = [{
   version: 1,
@@ -303,6 +304,13 @@ const MIGRATIONS = [{
   // sem PTY do ATLAS. Não é reaberta ao abrir o app.
   version: 18,
   sql: "ALTER TABLE sessions ADD COLUMN attachment TEXT CHECK(attachment IS NULL OR attachment = 'external');",
+}, {
+  version: 19,
+  sql: `
+    CREATE INDEX audit_claim_losses ON audit_events(project_id, correlation_id, sequence) WHERE type = 'task.claim_lost';
+    CREATE INDEX audit_run_starts ON audit_events(project_id, run_id, sequence) WHERE type = 'run.started';
+    CREATE INDEX messages_by_recipient ON messages(project_id, to_session_id, created_at);
+  `,
 }];
 
 const AGENT_POLICY_MODES = ['assisted', 'autonomous'];
@@ -443,10 +451,10 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   const { recordEvidence, ...reviewApi } = review;
   const regression = createRegressionSuites({ db, now, event, transaction, recordEvidence });
   const attention = createAttentionStore({ db, now, event, transaction });
+  const briefing = createBriefingStore({ db, now, event });
 
-  function reconcileActive(reason) {
+  function reconcileActive(reason, at = now()) {
     const active = db.prepare(`SELECT r.id, r.session_id, r.reason, s.project_id FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE r.state = 'running'`).all();
-    const at = now();
     for (const run of active) {
       const runReason = run.reason ?? reason;
       db.prepare(`UPDATE agent_runs SET state = 'lost', version = version + 1, ended_at = ?, reason = ? WHERE id = ?`).run(at, runReason, run.id);
@@ -536,6 +544,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     ...reviewApi,
     ...regression,
     ...attention,
+    ...briefing,
 
     getOrchestratorMode(projectId) {
       return db.prepare('SELECT mode FROM orchestrator_settings WHERE project_id = ?').get(projectId)?.mode || 'coordinate';
@@ -794,6 +803,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     // antes de os processos morrerem, para a saída forçada não virar "falhou".
     markAppClosed(terminals = []) {
       return transaction(db, () => {
+        const at = now();
         const active = db.prepare("SELECT id FROM agent_runs WHERE state = 'running'").all();
         db.prepare(`INSERT INTO app_state (key, value) VALUES ('last_closed_runs', ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify(active.map(({ id }) => id)));
@@ -801,8 +811,8 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
           ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify(terminals));
         // "Última visita" da fila Precisam de mim: o fechamento normal, mesmo sem runs ativas.
         db.prepare(`INSERT INTO app_state (key, value) VALUES (?, ?)
-          ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(LAST_CLOSE_KEY, JSON.stringify(now()));
-        return reconcileActive('application_closed');
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(LAST_CLOSE_KEY, JSON.stringify(at));
+        return reconcileActive('application_closed', at);
       });
     },
     takeRestorableTerminals() {

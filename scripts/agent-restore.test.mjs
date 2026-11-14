@@ -83,6 +83,28 @@ function closeApp(app, store) {
 }
 
 const nothing = { restored: [], fresh: [], failed: [] };
+
+test('retomada manual autoriza somente a janela e preserva identidade, CLI e conversa', async (t) => {
+  const { store } = fixture(t);
+  const app = harness({ store, adapters: [CLAUDE, OPENCODE] });
+  const agent = await app.create({ adapterId: CLAUDE.id, model: 'opus', name: 'Revisor', functionSlug: 'revisar' });
+  const saved = store.getSession(agent.id);
+  const restart = app.handlers.get('agent:restart');
+  const request = { sessionId: agent.id, adapterId: CLAUDE.id, model: 'sonnet', cwd: 'C:\\fora' };
+  await assert.rejects(restart({ sender: 'popup' }, request), /não autorizada/);
+  await assert.rejects(restart(app.mainEvent, request), /em execução/);
+  app.records[0].emitExit(0);
+  await assert.rejects(restart(app.mainEvent, { ...request, adapterId: OPENCODE.id }), /CLI original/);
+  const resumed = await restart(app.mainEvent, request);
+  assert.equal(resumed.id, agent.id);
+  assert.equal(resumed.runAttempt, 2);
+  assert.equal(resumed.functionSlug, 'revisar');
+  assert.equal(app.spawns[1].cwd, saved.cwd);
+  assert.deepEqual(app.spawns[1].args.slice(-4), ['--model', 'sonnet', '--resume', saved.conversation_id]);
+  app.records[0].emitExit(0);
+  store.removeSession(agent.id);
+  await assert.rejects(restart(app.mainEvent, request), /não pode ser retomada/);
+});
 const names = (items) => items.map((item) => item.name).sort();
 const opencodeModels = async (adapter) => (adapter.id === 'opencode' ? ['nvidia/deep'] : []);
 

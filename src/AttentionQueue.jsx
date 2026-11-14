@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, MoreHorizontal } from 'lucide-react';
-import { canDismiss, canSnooze, countAnnouncement, itemDescription, snoozeOptions } from './attention-queue.js';
+import { canDismiss, canSnooze, countAnnouncement, isUnfinishedSessionItem, itemDescription, snoozeOptions } from './attention-queue.js';
 
 const MENU_WIDTH = 188;
 
@@ -72,7 +72,7 @@ function ItemMenu({ item, anchor, onSnooze, onDismiss, onClose }) {
   );
 }
 
-function AttentionItem({ item, onOpen, onSnooze, onDismiss }) {
+export function AttentionItem({ item, onOpen, onSnooze, onDismiss, onResume, sessions = [] }) {
   const [menuAnchor, setMenuAnchor] = useState(null);
   const triggerRef = useRef(null);
   const high = item.urgency === 'alta';
@@ -82,6 +82,22 @@ function AttentionItem({ item, onOpen, onSnooze, onDismiss }) {
   function closeMenu(returnFocus) {
     setMenuAnchor(null);
     if (returnFocus) triggerRef.current?.focus();
+  }
+
+  if (isUnfinishedSessionItem(item)) {
+    const resumable = (item.resumeSessionIds || []).map((id) => sessions.find((session) => session.id === id && session.exited && !session.external));
+    return <li className="attention-item attention-unfinished" data-kind={item.kind} data-item-id={item.id}>
+      <div className="attention-open"><strong>{item.title}</strong><p className="attention-reason">{item.reason}</p></div>
+      <div className="attention-actions" role="group" aria-label={`Ações para ${item.title}`}>
+        {item.taskId && <button type="button" className="button secondary compact" onClick={() => onOpen(item)}>Abrir tarefa</button>}
+        {item.kind === 'messages_stranded' && <button type="button" className="button secondary compact" onClick={() => onOpen(item)}>Abrir mensagens</button>}
+        {resumable.filter(Boolean).map((session) => <button key={session.id} type="button" className="button secondary compact" aria-label={`Retomar sessão ${session.name}`} onClick={() => onResume(session)}>{resumable.length > 1 ? `Retomar ${session.name}` : 'Retomar sessão'}</button>)}
+        <button type="button" className="button subtle compact" onClick={(event) => {
+          event.currentTarget.closest('.briefing-card')?.focus();
+          onDismiss(item);
+        }}>Já resolvi</button>
+      </div>
+    </li>;
   }
 
   return (
@@ -112,25 +128,10 @@ function AttentionItem({ item, onOpen, onSnooze, onDismiss }) {
 
 // Seção global da navegação: o que exige decisão, de todos os projetos. Não rola com a
 // árvore; rola por dentro quando passa da altura dela.
-export default function AttentionQueue({ items = [], summary = '', loaded = false, error = '', onOpen, onSnooze, onDismiss, onClearError }) {
-  const count = items.length;
+export default function AttentionQueue({ count, loaded, open, onShow }) {
   return (
-    <section className={`attention-queue ${count ? 'has-items' : ''}`} aria-labelledby="attention-queue-title">
-      <div className="attention-heading">
-        <h2 id="attention-queue-title">Precisam de mim</h2>
-        {count > 0 && <b aria-hidden="true">{count}</b>}
-        <span className="visually-hidden" role="status" aria-atomic="true">{loaded ? countAnnouncement(count) : ''}</span>
-      </div>
-      {error && <p className="attention-error" role="alert">
-        <AlertTriangle size={12} aria-hidden="true" /><span>{error}</span>
-        {onClearError && <button type="button" className="attention-error-close" onClick={onClearError}>Fechar aviso</button>}
-      </p>}
-      {summary && <p className="attention-summary">{summary}</p>}
-      {count > 0
-        ? <ul className="attention-items" aria-label="Itens que precisam de você">
-          {items.map((item) => <AttentionItem key={item.id} item={item} onOpen={onOpen} onSnooze={onSnooze} onDismiss={onDismiss} />)}
-        </ul>
-        : loaded && <p className="attention-empty">Nada precisa de você agora.</p>}
-    </section>
+    <button type="button" className="briefing-counter" aria-label={`Precisam de mim: ${loaded ? countAnnouncement(count) : 'carregando'}. Abrir Briefing`} aria-pressed={open} onClick={onShow}>
+      <span>Precisam de mim</span><b aria-hidden="true">{loaded ? count : '…'}</b>
+    </button>
   );
 }

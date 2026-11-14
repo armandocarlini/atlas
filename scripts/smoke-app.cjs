@@ -9,7 +9,8 @@ app.setPath('userData', process.env.ATLAS_SMOKE_PROFILE);
 // do Windows o Chromium para de produzir quadros nela e Page.captureScreenshot fica
 // esperando (o CDP timeout intermitente visto duas vezes logo após esse passo). Só no smoke.
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
-dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [process.env.ATLAS_SMOKE_PROJECT] });
+let projectToAuthorize = process.env.ATLAS_SMOKE_PROJECT;
+dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [projectToAuthorize] });
 const terminals = [];
 let defaultsResolved = false;
 let clipboardSnapshot = null;
@@ -62,6 +63,7 @@ const server = http.createServer(async (request, response) => {
     if (command.action === 'terminals') result = terminals;
     if (command.action === 'defaults-resolved') result = defaultsResolved;
     if (command.action === 'resize-counts') result = { ...resizeCounts };
+    if (command.action === 'choose-quiet-project') projectToAuthorize = process.env.ATLAS_SMOKE_QUIET_PROJECT;
     if (command.action === 'save-clipboard') {
       const items = await clipboard.read();
       clipboardSnapshot = await Promise.all(items.map(async (item) => {
@@ -104,7 +106,13 @@ if (process.env.ATLAS_SMOKE_NO_CLI === '1') {
   // CLIs "detectados" com executáveis inexistentes: a escolha de CLI e modelo é
   // exercitada de verdade e o início falha de forma honesta, sem modelo real. A
   // lista do OpenCode demora para reproduzir respostas fora de ordem.
-  adapters.discoverAdapters = async () => adapters.ADAPTERS.map((adapter) => ({ ...adapter, status: 'available', executable: path.join(process.env.ATLAS_SMOKE_PROFILE, 'cli-ausente', `${adapter.command}.exe`), version: '0.0.0-fixture', error: null }));
+  adapters.discoverAdapters = async () => adapters.ADAPTERS.map((adapter) => ({
+    ...adapter, status: 'available', executable: path.join(process.env.ATLAS_SMOKE_PROFILE, 'cli-ausente', `${adapter.command}.exe`), version: '0.0.0-fixture', error: null,
+    ...(adapter.id === 'gemini' && {
+      executable: process.env.ATLAS_SMOKE_NODE,
+      spawnArgs: [path.join(__dirname, 'smoke-briefing-pty.cjs')],
+    }),
+  }));
   adapters.listModels = async (adapter) => {
     if (adapter.id !== 'opencode') return [];
     await new Promise((resolve) => setTimeout(resolve, 1200));

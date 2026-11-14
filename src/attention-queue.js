@@ -1,10 +1,8 @@
 // Fila "Precisam de mim" na navegação (docs/planos/PLANO_GESTAO_DE_ATENCAO.md, etapa 2).
-// Os itens vêm prontos do processo principal (attention:list); aqui só se monta a
-// apresentação. A única exceção é "Iniciar a sessão principal" do projeto ativo, que é
-// estado do renderer e entra como item local, sem adiar nem dispensar.
+// Os itens vêm prontos do processo principal; aqui só se monta a apresentação.
 
+export const isUnfinishedSessionItem = (item) => ['task_orphaned', 'handoff_stranded', 'messages_stranded'].includes(item?.kind);
 const DISMISSIBLE = new Set(['request_failed', 'run_failed']);
-export const PRINCIPAL_KIND = 'principal_start';
 
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
 
@@ -30,25 +28,8 @@ export function countByProject(items = []) {
   return counts;
 }
 
-// O item local da principal entra só no projeto ativo, à frente dos itens do host.
-export function withPrincipalItem(items = [], { needsPrincipal = false, project = null } = {}) {
-  if (!needsPrincipal || !project?.id) return items;
-  return [{
-    id: `local:principal:${project.id}`,
-    kind: PRINCIPAL_KIND,
-    local: true,
-    projectId: project.id,
-    projectName: project.name,
-    taskId: null,
-    sessionId: null,
-    title: 'Iniciar a sessão principal',
-    reason: 'Escolha o CLI e o modelo que vão planejar e delegar.',
-    urgency: 'normal',
-  }, ...items];
-}
-
-export const canDismiss = (item) => Boolean(item && !item.local && DISMISSIBLE.has(item.kind));
-export const canSnooze = (item) => Boolean(item && !item.local);
+export const canDismiss = (item) => DISMISSIBLE.has(item?.kind) || isUnfinishedSessionItem(item);
+export const canSnooze = (item) => Boolean(item && !isUnfinishedSessionItem(item));
 
 // Datas de adiar no horário local: 1 h, 4 h e amanhã às 9h (o dia seguinte ao de agora).
 export function snoozeOptions(now = new Date()) {
@@ -75,9 +56,9 @@ export function countAnnouncement(count) {
 // Onde a decisão de cada item acontece.
 export function attentionDestination(item) {
   if (!item) return null;
-  if (item.kind === PRINCIPAL_KIND) return { kind: 'principal' };
   if (item.kind === 'request_pending' || item.kind === 'request_failed') return { kind: 'request', id: item.evidence?.id };
-  if (item.kind === 'review_pending' || item.kind === 'task_blocked') return { kind: 'task', id: item.taskId };
+  if (['review_pending', 'task_blocked', 'task_orphaned', 'handoff_stranded'].includes(item.kind)) return { kind: 'task', id: item.taskId };
+  if (item.kind === 'messages_stranded') return { kind: 'messages' };
   if (item.kind === 'run_failed') return { kind: 'session', id: item.sessionId };
   return null;
 }
@@ -88,8 +69,11 @@ export function attentionTargetStatus({ item, taskState, agentRequestState, sess
   const destination = attentionDestination(item);
   if (!destination) return 'missing';
   if (destination.kind === 'session') return sessions.some((session) => session.id === destination.id) ? 'ready' : 'missing';
-  if (destination.kind === 'principal') return 'ready';
   const tasksLoaded = taskState?.projectId === item.projectId && !taskState.loading;
+  if (isUnfinishedSessionItem(item)) {
+    if (!tasksLoaded) return 'wait';
+    return (taskState.items || []).some((task) => task.id === destination.id) ? 'ready' : 'missing';
+  }
   const requestsLoaded = agentRequestState?.projectId === item.projectId && Boolean(agentRequestState.policy || agentRequestState.error);
   if (!tasksLoaded || !requestsLoaded) return 'wait';
   if (destination.kind === 'request') {

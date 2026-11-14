@@ -5,6 +5,7 @@ const { buildAttention, parseItemId, snoozeUntil, DISMISSIBLE } = require('./att
 const SNOOZED_KEY = 'attention.snoozed';
 const DISMISSED_KEY = 'attention.dismissed';
 const LAST_CLOSE_KEY = 'last_normal_close_at';
+const SINCE_KEY = 'attention.since';
 
 function createAttentionStore({ db, now, event, transaction }) {
   const readState = (key) => db.prepare('SELECT value FROM app_state WHERE key = ?').get(key)?.value ?? null;
@@ -35,10 +36,37 @@ function createAttentionStore({ db, now, event, transaction }) {
         FROM reviews r LEFT JOIN sessions s ON s.id = r.requested_by WHERE r.state = 'pending' AND ${inProjects('r.project_id')}`).all(ids),
       regressionRuns: db.prepare(`SELECT g.id, g.review_id, g.state FROM regression_runs g JOIN reviews r ON r.id = g.review_id
         WHERE r.state = 'pending' AND ${inProjects('g.project_id')}`).all(ids),
-      tasks: db.prepare(`SELECT id, project_id, title, state, updated_at, blocked_reason, assigned_session_id FROM tasks WHERE ${inProjects('project_id')}`).all(ids),
+      tasks: db.prepare(`SELECT t.id, t.project_id, t.title, t.state, t.updated_at, t.blocked_reason, t.assigned_session_id, t.claim_run_id, t.claim_epoch,
+          lost.run_id AS lost_run_id, lost.created_at AS lost_at
+        FROM tasks t LEFT JOIN audit_events lost ON lost.sequence = (
+          SELECT e.sequence FROM audit_events e
+          WHERE t.state = 'in_progress' AND t.claim_run_id IS NULL AND e.project_id = t.project_id
+            AND e.correlation_id = t.id AND e.type = 'task.claim_lost' AND e.session_id = t.assigned_session_id
+            AND json_extract(e.payload, '$.epoch') = t.claim_epoch
+          ORDER BY e.sequence DESC LIMIT 1
+        ) WHERE ${inProjects('t.project_id')}`).all(ids),
       runs: db.prepare(`SELECT r.id, r.session_id, r.state, r.reason, r.exit_code, r.signal, r.ended_at, r.attempt,
-          s.project_id, s.name AS session_name, s.role AS session_role, s.removed_at AS session_removed_at
-        FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE ${inProjects('s.project_id')}`).all(ids),
+          s.project_id, s.name AS session_name, s.role AS session_role, s.removed_at AS session_removed_at,
+          s.attachment, coalesce(f.name, r.function_slug, CASE WHEN s.role = 'orchestrator' THEN 'Orquestrador' END) AS function_name,
+          coalesce(json_extract(e.payload, '$.cli'), CASE WHEN r.adapter_id = s.adapter_id THEN s.cli END) AS session_cli
+        FROM agent_runs r JOIN sessions s ON s.id = r.session_id
+        LEFT JOIN agent_functions f ON f.slug = r.function_slug AND f.project_id IS NULL
+        LEFT JOIN audit_events e ON e.sequence = (
+          SELECT a.sequence FROM audit_events a WHERE a.project_id = s.project_id AND a.run_id = r.id AND a.type = 'run.started'
+          ORDER BY a.sequence LIMIT 1
+        ) WHERE ${inProjects('s.project_id')}`).all(ids),
+      handoffs: db.prepare(`SELECT h.id, h.project_id, h.state, h.task_id, h.created_at, h.from_session_id, h.to_session_id,
+          t.title AS task_title, sender.name AS from_name, recipient.name AS to_name
+        FROM handoffs h JOIN tasks t ON t.id = h.task_id
+        JOIN sessions sender ON sender.id = h.from_session_id JOIN sessions recipient ON recipient.id = h.to_session_id
+        WHERE h.state = 'offered' AND t.state = 'ready' AND ${inProjects('h.project_id')}`).all(ids),
+      unreadMessages: db.prepare(`SELECT m.id, m.project_id, m.subject, m.created_at, s.id AS session_id, s.name AS session_name,
+          (SELECT other.id FROM messages other WHERE other.project_id = m.project_id AND other.to_session_id = s.id
+            ORDER BY other.created_at DESC, other.rowid DESC LIMIT 1) AS latest_message_id
+        FROM message_deliveries d JOIN messages m ON m.id = d.message_id JOIN sessions s ON s.id = d.session_id
+        WHERE d.read_at IS NULL AND ${inProjects('m.project_id')}
+          AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.session_id = s.id AND r.state = 'running')
+        ORDER BY m.created_at DESC, m.rowid DESC`).all(ids),
     };
   }
 
@@ -53,8 +81,16 @@ function createAttentionStore({ db, now, event, transaction }) {
         if (typeof note === 'string' && note) autoNotes[request.id] = note;
       }
     }
+    const at = now();
+    const saved = readState(SINCE_KEY);
+    let since = null;
+    try { since = JSON.parse(saved); } catch { /* redefine marco inválido */ }
+    if (typeof since !== 'string' || !Number.isFinite(Date.parse(since))) {
+      since = at;
+      if (rows.projects.length) writeState(SINCE_KEY, since);
+    }
     const result = buildAttention({
-      now: now(), ...rows, autoNotes,
+      now: at, ...rows, autoNotes, since,
       snoozedRaw: readState(SNOOZED_KEY), dismissedRaw: readState(DISMISSED_KEY), lastVisitAt: lastVisitAt(),
     });
     if (result.prefsChanged.snoozed) writeState(SNOOZED_KEY, result.prefs.snoozed);
@@ -93,7 +129,7 @@ function createAttentionStore({ db, now, event, transaction }) {
       });
     },
 
-    // Só pedido que falhou e run que parou: o resto sai quando a entidade muda de estado.
+    // Dispensa a ocorrência e audita, sem alterar a entidade que gerou o item.
     dismissAttention({ itemId, projectIds = [], autoNoteFor }) {
       const parsed = parseItemId(itemId);
       if (!parsed) throw new Error('Item da fila inválido.');

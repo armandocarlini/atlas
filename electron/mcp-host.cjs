@@ -190,7 +190,7 @@ function agentIdempotencyKey(sessionId, key) {
   return `s${createHash('sha256').update(sessionId).digest('hex').slice(0, 12)}-${key}`;
 }
 
-function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange = () => {}, onAgentRequest = () => {}, onTaskChange = () => {}, onReviewRequested = () => null, helloTimeoutMs = HELLO_TIMEOUT_MS, collectGitEvidence = gitEvidence.collectGitEvidence }) {
+function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange = () => {}, onAgentRequest = () => {}, onTaskChange = () => {}, onMessageChange = () => {}, onReviewRequested = () => null, helloTimeoutMs = HELLO_TIMEOUT_MS, collectGitEvidence = gitEvidence.collectGitEvidence }) {
   const grants = new Map();
   const sockets = new Set();
   let server = null;
@@ -400,6 +400,7 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
     },
     messages_mark_read(grant, args) {
       const changed = store.markMessageRead({ projectId: grant.projectId, messageId: text(args.messageId), sessionId: grant.sessionId });
+      if (changed) onMessageChange(grant.projectId);
       return { messageId: args.messageId, alreadyRead: !changed };
     },
     messages_send(grant, args) {
@@ -413,6 +414,7 @@ function createMcpHost({ store, endpoint = defaultEndpoint(), onConnectionChange
         idempotencyKey: agentIdempotencyKey(grant.sessionId, args.idempotencyKey),
         actor: `agent:${grant.sessionId}`,
       });
+      onMessageChange(grant.projectId);
       return { id: message.id, toSessionId: message.toSessionId, createdAt: message.createdAt };
     },
   };

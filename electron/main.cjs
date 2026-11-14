@@ -20,6 +20,7 @@ const { createRegressionSuiteHost } = require('./regression-suite-host.cjs');
 const { windowChrome, registerWindowChrome } = require('./window-chrome.cjs');
 const { registerClipboardChannels } = require('./terminal-clipboard.cjs');
 const { createAttentionHost } = require('./attention-host.cjs');
+const { createBriefingHost } = require('./briefing-host.cjs');
 
 // Avisos ao renderer que também mudam a fila "Precisam de mim".
 const ATTENTION_SOURCES = new Set(['task:changed', 'agent-request:changed']);
@@ -333,6 +334,7 @@ app.whenReady().then(async () => {
       agentRequests?.evaluate(projectId);
     },
     onTaskChange: (projectId) => sendToMain('task:changed', { projectId }),
+    onMessageChange: (projectId) => sendToMain('attention:changed', { projectId }),
     onReviewRequested: (request) => {
       const run = operationalStore.enqueueRegressionRun(request);
       if (run?.state === 'queued') regressionRunner?.notify();
@@ -376,18 +378,17 @@ app.whenReady().then(async () => {
   // A janela não espera a varredura Git: os projetos chegam conforme terminam.
   await projectHost.rootsReady;
   createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
-  createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
+  createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: (projectId) => sendToMain('attention:changed', { projectId }) });
   createAgentFunctionHost({ ipcMain, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: () => sendToMain('agent-function:changed', {}) });
   const attentionHost = createAttentionHost({
     ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender,
     autoNoteFor: (requestId, projectId) => agentRequests?.autoNoteFor(requestId, projectId),
     onChange: () => sendToMain('attention:changed', {}),
   });
-  try {
-    attentionHost.refresh();
-  } catch (error) {
-    console.error('Não foi possível calcular a fila de atenção:', error);
-  }
+  createBriefingHost({
+    ipcMain, projectHost, store: operationalStore, agentHost, terminalHost,
+    transport: ptyTransport, readAttention: attentionHost.refresh,
+  });
   // Logs da suíte fora do banco e do Git; só o usuário configura e para.
   const regressionLogs = path.join(app.getPath('userData'), 'regression-logs');
   regressionRunner = createRegressionRunner({ store: operationalStore, logsDir: regressionLogs, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
