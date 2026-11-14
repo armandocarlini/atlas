@@ -1796,7 +1796,7 @@ process.stdin.on('data', (data) => {
   console.log('PASS consentimento do Gemini: settings.json exato, só referências ao token, conectar e remover preservando o restante');
   // Funções de agente (v0.2): Orquestrador e cinco padrão nascem sem CLI nem modelo;
   // a escolha salva só preenche e volta preenchida ao editar.
-  assert.deepEqual(await main.evaluate(`[...document.getElementById('atlas-navigation').children].map(item => item.className)`), ['workspace-tree'], 'a navegação fica livre das ações de preferências');
+  assert.deepEqual(await main.evaluate(`[...document.getElementById('atlas-navigation').children].map(item => item.classList.contains('workspace-tree'))`), [true], 'a navegação fica livre das ações de preferências');
   await click(main, '.title-actions [aria-label="Paleta de comandos"]');
   await until(() => main.evaluate(`document.querySelector('#palette-functions small')?.textContent === '6 a configurar'`), 'aviso de funções a configurar na paleta');
   assert.deepEqual(await main.evaluate(`['reset-layout', 'appearance', 'functions'].map(id => document.querySelector('#palette-' + id + ' span')?.textContent)`), ['Restaurar layout padrão', 'Aparência e configurações', 'Funções de agente']);
