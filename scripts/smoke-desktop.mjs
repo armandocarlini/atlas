@@ -1271,7 +1271,11 @@ process.stdin.on('data', (data) => {
   await until(() => main.evaluate(`document.querySelector('.command-palette [role=option][aria-selected=true]')?.textContent === 'Restaurar layout padrão'`), 'Restaurar layout padrão selecionado na paleta');
   await key(main, 'Enter', { code: 'Enter', windowsVirtualKeyCode: 13 });
   await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'paleta fechada');
-  assert.deepEqual(await main.evaluate(`JSON.parse(localStorage.getItem('atlas-docks')).widths`), { left: null, right: null }, 'Restaurar layout zera as larguras');
+  // A paleta fecha antes de executar o comando e o efeito grava as larguras depois.
+  await until(() => main.evaluate(`(() => {
+    const { left, right } = JSON.parse(localStorage.getItem('atlas-docks')).widths;
+    return left === null && right === null;
+  })()`), 'Restaurar layout zera as larguras persistidas');
   assert.equal(await columnWidth('left'), navStart);
   await ensurePanels(main);
   await focus('smoke-dois');
