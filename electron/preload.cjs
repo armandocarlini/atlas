@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   onProjectChanged: (callback) => subscribe('project:changed', callback),
   listAgentModels: (request) => ipcRenderer.invoke('agent:list-models', request),
   createAgent: (request) => ipcRenderer.invoke('agent:create', request),
+  restartAgent: (request) => ipcRenderer.invoke('agent:restart', request),
   setAgentFunction: (request) => ipcRenderer.invoke('agent:set-function', request),
   declareAgentModel: (request) => ipcRenderer.invoke('agent:declare-model', request),
   getRegressionSuite: (request) => ipcRenderer.invoke('regression-suite:get', request),

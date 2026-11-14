@@ -44,12 +44,15 @@ function BriefingCard({ card, focused, focus, onOpenProject, onStartPrincipal, q
   const [selection, setSelection] = useState(undefined);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState('');
+  const [receipt, setReceipt] = useState(null);
   const [error, setError] = useState('');
   const pending = useRef(null);
   const inFlight = useRef(false);
   const sessions = card.agora.sessoes;
   const target = briefingDestination(sessions, selection);
+  const showStartPrincipal = ['never_started', 'ended'].includes(card.agora.principal);
+  if (receipt && receipt.terminalId !== target?.terminalId) setReceipt(null);
+  const status = receipt && receipt.terminalId === target?.terminalId ? receipt.message : '';
   const readOnlyTerminal = Boolean(target && detachedTerminals.includes(target.id));
   const canSend = !busy && briefingCanSend(target, text);
   const receivers = sessions.filter((session) => session.terminalId && !session.external);
@@ -65,14 +68,14 @@ function BriefingCard({ card, focused, focus, onOpenProject, onStartPrincipal, q
     inFlight.current = true;
     setBusy(true);
     setError('');
-    setStatus('');
+    setReceipt(null);
     const last = pending.current;
     const key = last?.sessionId === target.id && last.text === text ? last.key : crypto.randomUUID();
     pending.current = { sessionId: target.id, text, key };
     try {
       const receipt = await desktop.sendBriefing({ projectId: card.projectId, sessionId: target.id, text, idempotencyKey: key });
       const time = new Date(receipt.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      setStatus(`Enviado a ${receiverName(target)} às ${time}`);
+      setReceipt({ terminalId: target.terminalId, message: `Enviado a ${receiverName(target)} às ${time}` });
       setText('');
       pending.current = null;
     } catch (failure) {
@@ -112,12 +115,15 @@ function BriefingCard({ card, focused, focus, onOpenProject, onStartPrincipal, q
           </section>
           {card.precisa.length > 0 && <section className="briefing-row">
             <h3>Precisa de você</h3>
-            <ul className="attention-items">{card.precisa.map((item) => <AttentionItem key={item.id} item={item} onOpen={queue.onOpen} onSnooze={queue.snooze} onDismiss={queue.dismiss} />)}</ul>
+            <ul className="attention-items">{card.precisa.map((item) => <AttentionItem key={item.id} item={item} onOpen={queue.onOpen} onSnooze={queue.snooze} onDismiss={queue.dismiss} onResume={queue.onResume} sessions={queue.sessions} />)}</ul>
           </section>}
           {(receivers.length > 0 || text) && <form className="briefing-composer" onSubmit={send}>
             <div className="briefing-recipient">
               <label htmlFor={selectId}>Para:</label>
-              <select id={selectId} value={target?.id || ''} onChange={(event) => setSelection(event.target.value)} disabled={busy || !receivers.length}>
+              <select id={selectId} value={target?.id || ''} onChange={(event) => {
+                if (event.target.value !== (target?.id || '')) setReceipt(null);
+                setSelection(event.target.value);
+              }} disabled={busy || !receivers.length}>
                 <option value="">{receivers.length ? 'Escolher sessão' : 'Nenhum terminal disponível'}</option>
                 {receivers.map((session) => <option key={session.id} value={session.id}>{sessionLabel({ ...session, name: receiverName(session) })}</option>)}
               </select>
@@ -137,7 +143,7 @@ function BriefingCard({ card, focused, focus, onOpenProject, onStartPrincipal, q
           </form>}
           <div role="status" aria-atomic="true" className="briefing-receipt">{status}</div>
           {error && <p className="briefing-error" role="alert">{error}</p>}
-          {!card.semNovidades && !sessions.length && !card.precisa.some((item) => item.local) && <button type="button" className="button secondary compact" onClick={() => onStartPrincipal(card.projectId)}>Iniciar a principal</button>}
+          {!card.semNovidades && showStartPrincipal && <button type="button" className="button secondary compact" onClick={() => onStartPrincipal(card.projectId)}>Iniciar a principal</button>}
         </div>
         {focused && target && <section className="briefing-terminal" aria-label={`Terminal de ${receiverName(target)}`} data-terminal-id={target.terminalId} data-read-only={readOnlyTerminal}>
           <h3><SquareTerminal size={15} aria-hidden="true" />{receiverName(target)}</h3>
@@ -149,13 +155,9 @@ function BriefingCard({ card, focused, focus, onOpenProject, onStartPrincipal, q
   );
 }
 
-export default function Briefing({ open, heading, onClose, view, items, queue, onOpenProject, onStartPrincipal, desktop, theme, detachedTerminals }) {
+export default function Briefing({ open, heading, onClose, view, queue, onOpenProject, onStartPrincipal, desktop, theme, detachedTerminals }) {
   const [focusedProject, setFocusedProject] = useState(null);
-  const local = items.find((item) => item.local);
-  const cards = (view?.briefing ?? []).map((card) => {
-    if (card.projectId !== local?.projectId || card.semNovidades) return card;
-    return { ...card, precisa: [local, ...card.precisa] };
-  }).sort((a, b) => Number(Boolean(b.precisa.length)) - Number(Boolean(a.precisa.length)));
+  const cards = view?.briefing ?? [];
   const focused = focusedProject ?? cards.find((card) => !card.semNovidades)?.projectId;
   return (
     <section className="briefing" aria-labelledby="briefing-title" hidden={!open}>

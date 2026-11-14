@@ -23,6 +23,7 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
   // Token da ponte de cada sessão externa anexada; nunca sai pela listagem.
   const externalTokens = new Map();
   const pendingOrchestrators = new Map();
+  const pendingRestarts = new Set();
   const modelCache = new Map();
   let discoveryPromise = null;
   // Fechamento do app: as saídas forçadas dos processos não viram "falhou"; o banco já
@@ -164,6 +165,10 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
     if (!projectHost.isAllowedCwd(cwd)) throw new Error('Selecione uma pasta autorizada ou uma worktree descoberta.');
     const project = projectHost.getProjectForCwd?.(cwd);
     if (store && !project) throw new Error('Projeto não encontrado para a pasta autorizada. Atualize os projetos.');
+    if (shuttingDown) throw new Error('O ATLAS está fechando.');
+    if (existing && store?.listRuns(project.id).some((run) => run.session_id === existing.id && run.state === 'running')) {
+      throw new Error('Esta sessão já está em execução.');
+    }
 
     const cols = Number.isInteger(request.cols) ? Math.min(500, Math.max(20, request.cols)) : 100;
     const rows = Number.isInteger(request.rows) ? Math.min(200, Math.max(5, request.rows)) : 30;
@@ -264,6 +269,35 @@ function createAgentHost({ ipcMain, projectHost, transport, isMainSender, discov
   ipcMain.handle('agent:create', async (event, request = {}) => {
     if (!isMainSender(event)) throw new Error('Janela não autorizada a criar sessões de agente.');
     return createAgent({ ...request, ...functionAudit(request?.functionSlug, request?.adapterId, request?.model) });
+  });
+
+  ipcMain.handle('agent:restart', async (event, request = {}) => {
+    if (!isMainSender(event)) throw new Error('Janela não autorizada a retomar sessões.');
+    const { sessionId, adapterId, model } = request ?? {};
+    if (typeof sessionId !== 'string' || pendingRestarts.has(sessionId)) throw new Error('Sessão inválida ou já em retomada.');
+    const existing = store?.getSession(sessionId);
+    if (!existing || existing.removed_at || existing.attachment || existing.role !== 'agent') throw new Error('Esta sessão não pode ser retomada pelo ATLAS.');
+    if (adapterId !== existing.adapter_id) throw new Error('Confirme o CLI original para retomar esta sessão.');
+    if (store.listRuns(existing.project_id).some((run) => run.session_id === sessionId && run.state === 'running')) throw new Error('Esta sessão já está em execução.');
+    pendingRestarts.add(sessionId);
+    try {
+      const launch = await resolveLaunch(adapterId, model);
+      await waitForCwd(projectHost, existing.cwd);
+      if (shuttingDown || !projectHost.isAllowedCwd(existing.cwd) || projectHost.getProjectForCwd(existing.cwd)?.id !== existing.project_id) {
+        throw new Error('A pasta desta sessão não está autorizada no projeto original.');
+      }
+      const last = store.listRuns(existing.project_id).findLast((run) => run.session_id === sessionId);
+      const functionSlug = last?.function_slug && store.getFunctionBySlug(last.function_slug) ? last.function_slug : null;
+      const previousPtyId = agents.get(sessionId)?.ptyId;
+      const resume = existing.conversation_id && conversationSupport(adapterId, 'agent', null) === 'exact' ? 'resume' : 'fresh';
+      const agent = await createAgent({
+        adapterId, model, name: existing.name, cwd: existing.cwd, ...functionAudit(functionSlug, adapterId, model),
+      }, { existing, origin: existing.origin, launch, resume });
+      if (previousPtyId) transport.forget(previousPtyId);
+      return agent;
+    } finally {
+      pendingRestarts.delete(sessionId);
+    }
   });
 
   // Sessão externa (docs/planos/PLANO_V0_2_PARALELISMO_POLITICAS.md, fase 2): um CLI

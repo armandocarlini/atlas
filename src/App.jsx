@@ -50,7 +50,7 @@ import CommandPalette from './CommandPalette.jsx';
 import useAttentionQueue from './useAttentionQueue.js';
 import useBriefingView from './useBriefingView.js';
 import Briefing from './Briefing.jsx';
-import { attentionDestination, attentionTargetStatus, countByProject, withPrincipalItem } from './attention-queue.js';
+import { attentionDestination, attentionTargetStatus, countByProject } from './attention-queue.js';
 import { nextVisibleSessionId, normalizeTerminalLayout, sessionsInLayout, visibleWorkspaceSessions, workspaceSessions } from './workspace-layout.js';
 import { agentSession, mergeAgentSessions, orchestratorStatusFor, restoreSummary, sessionExit, terminalSession, usesGemini, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
@@ -534,7 +534,7 @@ function SessionActionDialog({ target, onClose, onConfirm }) {
   );
 }
 
-function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees, onDirectoryChange, busy, adapters = null, loadingAdapters = false, functions = null, initialFunction = '' }) {
+function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees, onDirectoryChange, busy, adapters = null, loadingAdapters = false, functions = null, initialFunction = '', restart = null }) {
   const dialogRef = useModalFocus();
   const [error, setError] = useState('');
   const isTerminal = kind === 'terminal';
@@ -543,7 +543,7 @@ function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees,
   // tela inicial, já chega escolhida; o usuário ainda confirma ou troca tudo.
   const agentFunctions = (functions?.items || []).filter((item) => item.kind !== 'orchestrator');
   const startFunction = !isTerminal && agentFunctions.some((item) => item.slug === initialFunction) ? initialFunction : '';
-  const [choice, setChoice] = useState(() => choiceFromFunction(agentFunctions.find((item) => item.slug === startFunction) || null));
+  const [choice, setChoice] = useState(() => choiceFromFunction(restart ? { adapterId: restart.adapterId, model: restart.currentModel || restart.model } : agentFunctions.find((item) => item.slug === startFunction) || null));
   const [functionSlug, setFunctionSlug] = useState(startFunction);
   function selectFunction(slug) {
     setFunctionSlug(slug);
@@ -555,7 +555,7 @@ function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees,
         <header>
           <div>
             <span className="eyebrow">NOVA INSTÂNCIA LOCAL</span>
-            <h2 id="new-session-title">{isTerminal ? 'Abrir terminal' : 'Criar sessão de agente'}</h2>
+            <h2 id="new-session-title">{restart ? 'Retomar sessão' : isTerminal ? 'Abrir terminal' : 'Criar sessão de agente'}</h2>
           </div>
           <button className="icon-button" onClick={onClose} title="Fechar"><X size={18} /></button>
         </header>
@@ -567,22 +567,22 @@ function NewSessionModal({ kind, onClose, onCreate, workingDirectory, worktrees,
           const failure = await onCreate({ kind, name: data.get('name'), cli: realAdapters ? choice.adapterId : data.get('cli'), model: realAdapters ? choice.model || null : null, functionSlug: realAdapters ? functionSlug || null : null, cwd: data.get('cwd') || workingDirectory });
           if (failure) setError(failure);
         }}>
-          <label>Nome da {isTerminal ? 'janela' : 'sessão'}<input name="name" defaultValue={isTerminal ? 'powershell-local' : 'nova-investigacao'} autoFocus /></label>
-          {!isTerminal && realAdapters && agentFunctions.length > 0 && <label>Usar função
+          <label>Nome da {isTerminal ? 'janela' : 'sessão'}<input name="name" defaultValue={restart?.name ?? (isTerminal ? 'powershell-local' : 'nova-investigacao')} readOnly={Boolean(restart)} autoFocus /></label>
+          {!restart && !isTerminal && realAdapters && agentFunctions.length > 0 && <label>Usar função
             <select name="function" value={functionSlug} onChange={(event) => selectFunction(event.target.value)} disabled={busy}>
               <option value="">Sem função</option>
               {agentFunctions.map((item) => <option key={item.slug} value={item.slug}>{item.name}{item.adapterId ? '' : ' (não configurada)'}</option>)}
             </select>
           </label>}
           {!isTerminal && (realAdapters || loadingAdapters)
-            ? <AgentChoice key={functionSlug || 'none'} adapters={loadingAdapters ? null : adapters} value={choice} onChange={setChoice} disabled={busy} recommendation={functionSlug ? pickRecommendation(functions?.recommendations, functionSlug, adapters) : null} />
+            ? <AgentChoice key={functionSlug || 'none'} adapters={loadingAdapters ? null : restart ? adapters.filter((adapter) => adapter.id === restart.adapterId) : adapters} value={choice} onChange={setChoice} disabled={busy} recommendation={functionSlug ? pickRecommendation(functions?.recommendations, functionSlug, adapters) : null} />
             : !isTerminal && <label>CLI / harness<select name="cli" defaultValue="Claude Code"><option>Claude Code</option><option>Kimi Code</option><option>Codex</option><option>CLI personalizado</option></select></label>}
-          <label>Worktree ou diretório<select name="cwd" value={workingDirectory} onChange={(event) => onDirectoryChange(event.target.value)}>{worktrees.map((item) => <option value={item.path} key={item.path}>{item.label} — {item.branch || 'diretório autorizado'}</option>)}</select></label>
+          {!restart && <label>Worktree ou diretório<select name="cwd" value={workingDirectory} onChange={(event) => onDirectoryChange(event.target.value)}>{worktrees.map((item) => <option value={item.path} key={item.path}>{item.label} — {item.branch || 'diretório autorizado'}</option>)}</select></label>}
           <div className="path-input"><FolderGit2 size={15} /><span>{workingDirectory}</span><CheckCircle2 size={15} /></div>
           {!isTerminal && !realAdapters && !loadingAdapters && <div className="form-grid"><label>Modelo<select defaultValue="Automático"><option>Automático</option><option>Modelo forte</option><option>Modelo econômico</option></select></label><label>Vínculo<select defaultValue="Missão atual"><option>Missão atual</option><option>Somente projeto</option><option>Independente</option></select></label></div>}
-          <div className="scope-note"><ShieldCheck size={16} /><span>{isTerminal ? 'PowerShell real no diretório selecionado, sem identidade de agente.' : realAdapters ? 'O CLI escolhido inicia interativo neste diretório, com o modelo escolhido; as permissões continuam no harness.' : 'A sessão nascerá registrada e poderá trocar mensagens com outras sessões autorizadas.'}</span></div>
+          <div className="scope-note"><ShieldCheck size={16} /><span>{restart ? 'A sessão mantém a identidade. Sem um identificador de conversa compatível, o CLI inicia uma conversa nova.' : isTerminal ? 'PowerShell real no diretório selecionado, sem identidade de agente.' : realAdapters ? 'O CLI escolhido inicia interativo neste diretório, com o modelo escolhido; as permissões continuam no harness.' : 'A sessão nascerá registrada e poderá trocar mensagens com outras sessões autorizadas.'}</span></div>
           {error && <div className="scope-note error-note" role="alert"><ShieldCheck size={16} /><span>{error}</span></div>}
-          <footer><button type="button" className="button secondary" onClick={onClose}>Cancelar</button><button type="submit" className="button primary" disabled={busy || loadingAdapters || (realAdapters && !choice.ready)}><Plus size={15} />{busy ? 'Abrindo…' : isTerminal ? 'Abrir terminal' : 'Criar sessão'}</button></footer>
+          <footer><button type="button" className="button secondary" onClick={onClose}>Cancelar</button><button type="submit" className="button primary" disabled={busy || loadingAdapters || (realAdapters && !choice.ready)}><Plus size={15} />{busy ? 'Abrindo…' : restart ? 'Retomar sessão' : isTerminal ? 'Abrir terminal' : 'Criar sessão'}</button></footer>
         </form>
       </section>
     </div>
@@ -846,6 +846,7 @@ export default function App() {
   const popupDragRef = useRef(null);
   const [modal, setModal] = useState(null);
   const [modalFunction, setModalFunction] = useState('');
+  const [restartSession, setRestartSession] = useState(null);
   const [restoreTick, setRestoreTick] = useState(0);
   const [terminalRestoreError, setTerminalRestoreError] = useState('');
   const [sessionAction, setSessionAction] = useState(null);
@@ -888,8 +889,7 @@ export default function App() {
   // projeto. O pop-up de terminal não recebe destinos: o canal dele só escreve no próprio PTY.
   const pasteTargets = useMemo(() => sessionPasteTargets(projectSessions, agentFunctions), [projectSessions, agentFunctions]);
   const navigationSessions = useMemo(() => desktop?.isDesktop ? sessions : sessions.map((session) => ({ ...session, projectId: 'ATLAS' })), [sessions, desktop?.isDesktop]);
-  // Fila "Precisam de mim": itens de todos os projetos vindos do processo principal; só a
-  // principal parada do projeto ativo entra pelo renderer (src/attention-queue.js).
+  // Contadores e cartões usam somente as pendências do processo principal.
   const attentionQueue = useAttentionQueue(desktop, Boolean(desktop?.isDesktop && !isSecondaryWindow));
   const briefing = useBriefingView({
     enabled: attentionQueue.enabled && Boolean(desktop?.getBriefing),
@@ -899,9 +899,7 @@ export default function App() {
   });
   const reloadAttention = attentionQueue.reload;
   useEffect(() => { reloadAttention(); }, [reloadAttention, sessions, agentFunctions]);
-  const needsPrincipal = Boolean(desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice);
-  const projectHasNews = attentionQueue.view?.briefing?.some((card) => card.projectId === currentProject?.id && !card.semNovidades);
-  const attentionItems = useMemo(() => withPrincipalItem(attentionQueue.items, { needsPrincipal: needsPrincipal && projectHasNews, project: currentProject }), [attentionQueue.items, needsPrincipal, projectHasNews, currentProject]);
+  const attentionItems = attentionQueue.items;
   const attentionCounts = useMemo(() => countByProject(attentionItems), [attentionItems]);
   const [attentionTarget, setAttentionTarget] = useState(null);
   const [requestToOpen, setRequestToOpen] = useState(null);
@@ -1503,8 +1501,8 @@ export default function App() {
     return () => { active = false; unsubscribe?.(); };
   }, []);
 
-  const needsAdapters = modal === 'session' || externalModalOpen || functionsOpen || Boolean(orchestratorChoice) || agentRequestState.items.some((request) => request.state === 'pending');
-  const sessionModalOpen = modal === 'session';
+  const sessionModalOpen = modal === 'session' || modal === 'restart';
+  const needsAdapters = sessionModalOpen || externalModalOpen || functionsOpen || Boolean(orchestratorChoice) || agentRequestState.items.some((request) => request.state === 'pending');
   useEffect(() => {
     if (!needsAdapters || !desktop?.isDesktop) return undefined;
     let active = true;
@@ -1820,6 +1818,12 @@ export default function App() {
     setModal('session');
   }
 
+  function resumeAttentionSession(session) {
+    if (session.roleKind === 'orchestrator') return openOrchestratorChoice(session);
+    setRestartSession(session);
+    setModal('restart');
+  }
+
   function selectSessionTerminal(id) {
     if (briefing.open) briefing.close(false);
     const session = sessions.find((item) => item.id === id);
@@ -1882,7 +1886,6 @@ export default function App() {
   // e só abre quando as tarefas e os pedidos dele carregam (efeito abaixo, sem timer).
   function openAttentionItem(item) {
     const destination = attentionDestination(item);
-    if (destination?.kind === 'principal') return openOrchestratorChoice();
     if (destination?.kind === 'session') {
       if (sessions.some((session) => session.id === destination.id)) return selectSessionTerminal(destination.id);
       attentionQueue.fail('A sessão deste item não está mais no ATLAS.');
@@ -1895,6 +1898,11 @@ export default function App() {
     }
     if (briefing.open) briefing.close(false);
     if (project.id !== currentProject?.id) selectProject(project);
+    if (destination.kind === 'messages') {
+      setHiddenColumns((current) => current.right ? { ...current, right: false } : current);
+      setInspectorTab('messages');
+      return;
+    }
     setAttentionTarget(item);
   }
 
@@ -2040,6 +2048,7 @@ export default function App() {
       setCreatingTerminal(true);
       try {
         if (isTerminal) pty = await desktop.createTerminal({ cwd, name });
+        else if (kind === 'restart') agent = await desktop.restartAgent({ sessionId: restartSession.id, adapterId: cli, model });
         else agent = await desktop.createAgent({ adapterId: cli, model, name, cwd, functionSlug });
       } catch (error) {
         setCreatingTerminal(false);
@@ -2233,8 +2242,7 @@ export default function App() {
                 heading={briefing.heading}
                 onClose={briefing.close}
                 view={attentionQueue.view}
-                items={attentionItems}
-                queue={{ ...attentionQueue, onOpen: openAttentionItem }}
+                queue={{ ...attentionQueue, onOpen: openAttentionItem, onResume: resumeAttentionSession, sessions }}
                 onOpenProject={(id) => {
                   const project = projects.find((entry) => entry.id === id);
                   if (project) selectProject(project);
@@ -2451,7 +2459,7 @@ export default function App() {
       })}
 
       {orchestratorChoice && <OrchestratorChoiceModal adapters={adapters} functions={agentFunctions} previousCli={orchestratorChoice.previousCli} busy={orchestratorChoice.busy} error={orchestratorChoice.error} mode={orchestratorChoice.mode} onClose={() => { if (!orchestratorChoice.busy) setOrchestratorChoice(null); }} onStart={startOrchestrator} />}
-      {modal && <NewSessionModal key={`${modal}:${modalFunction}`} kind={modal} initialFunction={modal === 'session' ? modalFunction : ''} onClose={() => { setModal(null); setModalFunction(''); }} onCreate={createSession} workingDirectory={workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} functions={desktop?.isDesktop ? agentFunctions : null} loadingAdapters={Boolean(desktop?.isDesktop && modal === 'session' && adapters === null)} />}
+      {modal && <NewSessionModal key={`${modal}:${modalFunction}`} kind={modal} restart={modal === 'restart' ? restartSession : null} initialFunction={modal === 'session' ? modalFunction : ''} onClose={() => { setModal(null); setModalFunction(''); }} onCreate={createSession} workingDirectory={modal === 'restart' ? restartSession.worktree : workingDirectory} worktrees={worktreeOptions.length ? worktreeOptions : [{ path: workingDirectory, label: 'Diretório atual', branch: 'autorizado' }]} onDirectoryChange={(cwd) => { setWorkingDirectory(cwd); setSelectedWorktree(cwd); }} busy={creatingTerminal} adapters={desktop?.isDesktop ? adapters : undefined} functions={desktop?.isDesktop ? agentFunctions : null} loadingAdapters={Boolean(desktop?.isDesktop && modal !== 'terminal' && adapters === null)} />}
       {modelSwitch && <ModelSwitchModal session={modelSwitch} desktop={desktop} onClose={() => setModelSwitch(null)}
         onGoToTerminal={() => {
           const id = modelSwitch.id;

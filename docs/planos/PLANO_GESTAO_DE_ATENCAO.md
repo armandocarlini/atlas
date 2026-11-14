@@ -62,3 +62,17 @@ Para cada projeto autorizado: tarefas concluídas desde a última visita, em and
 Em 13/11/2026 o mantenedor decidiu que o usuário pode enviar o texto que escreveu no Briefing ao terminal de uma sessão de agente do projeto escolhida por ele, incluindo a principal. O ATLAS cola o texto e envia Enter por ação explícita do usuário na janela principal. Mensagens de agentes continuam fora dos terminais e a ponte MCP não oferece envio. O banco registra projeto, sessão, run e tamanho, sem o texto.
 
 O Briefing usa a fila de atenção e mostra até seis fatos por projeto desde o último fechamento normal, com a contagem dos restantes. Os fatos vêm de conclusão de tarefa, pedido de revisão, término de run e resultado da suíte de regressão. O estado atual combina a run registrada, o PTY vivo e o claim da tarefa. Sessões anexadas aparecem sem opção de envio. Sem colagem protegida, o envio aceita uma única linha.
+
+### Pendências depois que uma sessão termina
+
+O Briefing e os contadores usam os itens do processo principal. Iniciar a principal é uma ação no cartão. Uma queda continua entrando como `run_failed`. A confirmação de envio fica vinculada ao PTY selecionado e some quando o destino muda ou o PTY deixa de estar vivo.
+
+| Sinal | Registro e resolução |
+|---|---|
+| `task_orphaned` | Tarefa em andamento sem claim. O evento `task.claim_lost` do mesmo `claim_epoch` identifica a antiga run. O item sai quando a tarefa ganha claim ou deixa de estar em andamento. Sem evento correspondente, o cartão omite o responsável anterior. |
+| `handoff_stranded` | Oferta aberta com remetente ou destinatário sem run ativa. O fim de uma run preserva a oferta. Aceitar, recusar ou cancelar resolve a oferta. Ofertas já canceladas em versões anteriores permanecem no histórico. |
+| `messages_stranded` | Um item por sessão parada com entregas não lidas. Exibe até três assuntos higienizados e a contagem restante. Ler todas as entregas ou retomar a sessão tira o item da fila. |
+
+`attention.since` é gravado na primeira leitura com projeto autorizado. Os novos sinais usam o instante da perda do claim ou o momento em que a oferta ou entrega ficou sem run ativa. “Já resolvi” só dispensa a ocorrência e registra `attention.dismissed`. Os IDs incluem a run ou o epoch pertinente, de modo que uma nova ocorrência volte à fila.
+
+“Abrir tarefa” e “Abrir mensagens” levam aos painéis existentes. “Retomar sessão” abre a confirmação de CLI e modelo. Agentes internos preservam identidade, pasta e CLI da sessão. A conversa anterior é retomada quando há identificador exato e o adaptador o suporta. Nos demais casos começa uma conversa nova, para evitar abrir a conversa de outra sessão na mesma pasta. A ação não é oferecida para sessões excluídas ou externas, nem recupera claims automaticamente. O painel do Atlas conserva seu tratamento da principal.

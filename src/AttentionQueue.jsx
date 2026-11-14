@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, MoreHorizontal } from 'lucide-react';
-import { canDismiss, canSnooze, countAnnouncement, itemDescription, snoozeOptions } from './attention-queue.js';
+import { canDismiss, canSnooze, countAnnouncement, isUnfinishedSessionItem, itemDescription, snoozeOptions } from './attention-queue.js';
 
 const MENU_WIDTH = 188;
 
@@ -72,7 +72,7 @@ function ItemMenu({ item, anchor, onSnooze, onDismiss, onClose }) {
   );
 }
 
-export function AttentionItem({ item, onOpen, onSnooze, onDismiss }) {
+export function AttentionItem({ item, onOpen, onSnooze, onDismiss, onResume, sessions = [] }) {
   const [menuAnchor, setMenuAnchor] = useState(null);
   const triggerRef = useRef(null);
   const high = item.urgency === 'alta';
@@ -82,6 +82,22 @@ export function AttentionItem({ item, onOpen, onSnooze, onDismiss }) {
   function closeMenu(returnFocus) {
     setMenuAnchor(null);
     if (returnFocus) triggerRef.current?.focus();
+  }
+
+  if (isUnfinishedSessionItem(item)) {
+    const resumable = (item.resumeSessionIds || []).map((id) => sessions.find((session) => session.id === id && session.exited && !session.external));
+    return <li className="attention-item attention-unfinished" data-kind={item.kind} data-item-id={item.id}>
+      <div className="attention-open"><strong>{item.title}</strong><p className="attention-reason">{item.reason}</p></div>
+      <div className="attention-actions" role="group" aria-label={`Ações para ${item.title}`}>
+        {item.taskId && <button type="button" className="button secondary compact" onClick={() => onOpen(item)}>Abrir tarefa</button>}
+        {item.kind === 'messages_stranded' && <button type="button" className="button secondary compact" onClick={() => onOpen(item)}>Abrir mensagens</button>}
+        {resumable.filter(Boolean).map((session) => <button key={session.id} type="button" className="button secondary compact" aria-label={`Retomar sessão ${session.name}`} onClick={() => onResume(session)}>{resumable.length > 1 ? `Retomar ${session.name}` : 'Retomar sessão'}</button>)}
+        <button type="button" className="button subtle compact" onClick={(event) => {
+          event.currentTarget.closest('.briefing-card')?.focus();
+          onDismiss(item);
+        }}>Já resolvi</button>
+      </div>
+    </li>;
   }
 
   return (

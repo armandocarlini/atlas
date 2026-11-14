@@ -85,9 +85,13 @@ test('run_failed: última run em failed ou lost por queda entra', () => {
   assert.match(crashed.view.items[0].reason, /interrompido/);
   const principal = build({ runs: [run({ session_role: 'orchestrator', session_name: 'Principal' })] });
   assert.match(principal.view.items[0].title, /^Sessão principal parou: Principal/);
+  const principalCrashed = build({ runs: [run({ session_role: 'orchestrator', session_name: 'Principal', state: 'lost', reason: 'application_restarted', exit_code: null })] });
+  assert.deepEqual(kinds(principalCrashed), ['run_failed:run-1']);
+  assert.match(principalCrashed.view.items[0].title, /^Sessão principal parou: Principal/);
 });
 
 test('run_failed: encerramento pelo usuário, fechamento normal, sucesso, run mais nova e sessão excluída não entram', () => {
+  assert.deepEqual(kinds(build({ runs: [run({ session_role: 'orchestrator', reason: 'user_closed' })] })), [], 'principal encerrada pelo usuário');
   assert.deepEqual(kinds(build({ runs: [run({ reason: 'user_closed' })] })), [], 'Encerrar processo');
   assert.deepEqual(kinds(build({ runs: [run({ state: 'lost', reason: 'user_closed' })] })), [], 'Encerrar processo seguido de queda');
   assert.deepEqual(kinds(build({ runs: [run({ state: 'lost', reason: 'application_closed' })] })), [], 'fechamento normal');
@@ -95,6 +99,50 @@ test('run_failed: encerramento pelo usuário, fechamento normal, sucesso, run ma
   assert.deepEqual(kinds(build({ runs: [run(), run({ id: 'run-2', state: 'running', attempt: 2, ended_at: null })] })), [], 'run mais nova');
   assert.deepEqual(kinds(build({ runs: [run({ id: 'run-2', attempt: 2 }), run({ state: 'succeeded' })] })), ['run_failed:run-2'], 'só a mais nova conta');
   assert.deepEqual(kinds(build({ runs: [run({ session_removed_at: later(-1) })] })), [], 'sessão excluída');
+});
+
+test('tarefas órfãs usam a run do claim perdido, ainda que a sessão tenha outra run viva', () => {
+  const since = later(-10);
+  const ended = run({ id: 'old', reason: 'user_closed', session_cli: 'Claude Code', function_name: 'Implementar' });
+  const orphan = task({ claim_run_id: null, lost_run_id: 'old', lost_at: later(-1) });
+  const input = { since, tasks: [orphan], runs: [ended, run({ id: 'live', attempt: 2, state: 'running' })] };
+  const [item] = build(input).view.items;
+  assert.equal(item.kind, 'task_orphaned');
+  assert.match(item.title, /^Tarefa sem responsável:/);
+  assert.match(item.reason, /Implementador \(Implementar, Claude Code\).*encerrada por você/);
+  assert.equal(item.evidence.runId, 'old');
+  assert.equal(item.resumeSessionIds.length, 0);
+  assert.match(build({ ...input, runs: [{ ...ended, session_removed_at: later(0) }] }).view.items[0].reason, /encerrada por você .* enquanto trabalhava nesta tarefa\. A sessão foi excluída\./);
+  assert.match(build({ ...input, runs: [{ ...ended, state: 'lost', reason: 'application_closed' }] }).view.items[0].reason, /ATLAS foi fechado/);
+  assert.deepEqual(kinds(build({ ...input, tasks: [{ ...orphan, claim_run_id: 'live' }] })), []);
+  assert.deepEqual(kinds(build({ ...input, since: later(0) })), []);
+  assert.deepEqual(kinds(build({ ...input, tasks: [{ ...orphan, state: 'ready' }] })), []);
+  assert.equal(build({ ...input, tasks: [{ ...orphan, lost_at: later(-20), updated_at: later(-2) }] }).view.items[0].kind, 'task_orphaned', 'revisão devolvida ao andamento após o marco');
+});
+
+test('handoff aberto com ponta parada e mensagens não lidas aparecem por projeto', () => {
+  const stopped = run({ id: 'ended', session_id: 'a', reason: 'user_closed', session_name: 'Ana' });
+  const active = run({ id: 'running', session_id: 'b', state: 'running' });
+  const removed = run({ id: 'removed', project_id: 'project-b', session_id: 'x', session_name: 'Revisão', reason: 'user_closed', session_removed_at: later(0) });
+  const handoff = { id: 'offer', project_id: 'project-a', state: 'offered', from_session_id: 'a', from_name: 'Ana', to_session_id: 'b', to_name: 'Bia', task_id: 'task', task_title: 'Revisar', created_at: later(-8) };
+  const message = { id: 'm1', project_id: 'project-b', session_id: 'x', session_name: 'Revisão', subject: '<b>texto</b>\u200b', created_at: later(-5), latest_message_id: 'm2' };
+  const input = { since: later(-7), runs: [stopped, active, removed], handoffs: [handoff], unreadMessages: [message, { ...message, id: 'm2', subject: 'Outro' }] };
+  const [offered, unread] = build(input).view.items;
+  assert.equal(offered.kind, 'handoff_stranded');
+  assert.match(offered.reason, /remetente Ana/);
+  assert.deepEqual(offered.resumeSessionIds, ['a']);
+  assert.equal(unread.kind, 'messages_stranded');
+  assert.match(unread.title, /^2 mensagens não lidas para Revisão/);
+  assert.match(unread.reason, /<b>texto<\/b>/);
+  assert(!unread.reason.includes('\u200b'));
+  assert.equal(unread.projectId, 'project-b');
+  assert.deepEqual(unread.resumeSessionIds, []);
+  assert.deepEqual(kinds(build({ ...input, runs: [{ ...stopped, state: 'running' }, active, { ...removed, state: 'running', session_removed_at: null }] })), []);
+  assert.deepEqual(kinds(build({ ...input, handoffs: [{ ...handoff, state: 'canceled' }], unreadMessages: [] })), []);
+  assert.deepEqual(kinds(build({ ...input, since: later(0) })), []);
+  const dismissedRaw = JSON.stringify({ [offered.id]: NOW, [unread.id]: NOW });
+  assert.deepEqual(kinds(build({ ...input, dismissedRaw })), []);
+  assert.equal(build({ ...input, dismissedRaw, runs: [{ ...stopped, id: 'next', attempt: 2 }, active, { ...removed, id: 'next-other', attempt: 2 }] }).view.items.length, 2);
 });
 
 test('dois projetos: itens dos dois na mesma lista com projectId correto; projeto fora da lista não entra', () => {

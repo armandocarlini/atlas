@@ -88,6 +88,76 @@ function harness(t) {
 
 const ids = (view) => view.items.map((item) => item.id);
 
+test('marco da primeira leitura e perda de claim persistem; outra run cria uma nova pendência', (t) => {
+  const h = harness(t);
+  const projectId = 'project-a';
+  const owner = 'agente-a';
+  h.session('principal-a', projectId, { role: 'orchestrator' });
+  let run = h.session(owner, projectId);
+  const assign = (id, key) => {
+    const offer = h.store.offerHandoff({ projectId, taskId: id, fromSessionId: 'principal-a', toSessionId: owner, objective: 'Executar', idempotencyKey: key });
+    h.store.acceptHandoff({ projectId, handoffId: offer.id, sessionId: owner, runId: run.id });
+  };
+  const stop = () => {
+    h.store.markRunStopRequested(run.id);
+    h.store.finishRun({ runId: run.id, expectedVersion: 1, exitCode: 1 });
+  };
+  assign(h.task(projectId, 'old-task', 'backlog'), 'old-offer');
+  stop();
+  h.advance(1);
+  assert.deepEqual(ids(h.list()), []);
+  assert.equal(JSON.parse(h.appState('attention.since')), '2026-11-13T12:01:00.000Z');
+  const taskId = h.task(projectId, 'new-task', 'backlog');
+  run = h.session(owner, projectId);
+  assign(taskId, 'new-offer');
+  h.advance(1);
+  stop();
+  const [item] = h.list().items;
+  assert.equal(item.evidence.runId, run.id);
+  assert.match(item.reason, /agente-a \(opencode\) foi encerrada por você/);
+  assert(h.call('attention:dismiss', { itemId: item.id }).changed);
+  assert.deepEqual(h.events('attention.dismissed').map((event) => event.payload.itemId), [item.id]);
+  h.reopen();
+  assert.deepEqual(ids(h.list()), []);
+  h.store.releaseTask({ projectId, taskId, actor: 'user' });
+  run = h.session(owner, projectId);
+  assign(taskId, 'new-offer-2');
+  assert.deepEqual(ids(h.list()), []);
+  h.advance(1);
+  stop();
+  const [again] = h.list().items;
+  assert.notEqual(again.id, item.id);
+  h.store.removeSession(owner);
+  const [removed] = h.list().items;
+  assert.equal(removed.id, again.id);
+  assert.match(removed.reason, /excluída/);
+  assert.deepEqual(removed.resumeSessionIds, []);
+});
+
+test('oferta e mensagens sobrevivem à sessão parada e saem com resolução explícita', (t) => {
+  const h = harness(t);
+  const projectId = 'project-b';
+  const worker = 'agente-b';
+  h.session('principal-b', projectId, { role: 'orchestrator' });
+  const run = h.session(worker, projectId);
+  assert.deepEqual(ids(h.list()), []);
+  h.advance(1);
+  const taskId = h.task(projectId, 'handoff-task', 'backlog');
+  const offer = h.store.offerHandoff({ projectId, taskId, fromSessionId: 'principal-b', toSessionId: worker, objective: 'Executar', idempotencyKey: 'test-handoff' });
+  const messages = ['Assunto um', 'Assunto dois'].map((subject, index) => h.store.sendMessage({ projectId, fromSessionId: 'principal-b', toSessionId: worker, subject, body: 'Corpo reservado', kind: 'note', idempotencyKey: `msg-test-${index}` }));
+  assert.deepEqual(ids(h.list()), []);
+  h.store.finishRun({ runId: run.id, expectedVersion: 1, exitCode: 0 });
+  const items = h.list().items;
+  assert.deepEqual(items.map(({ kind }) => kind), ['handoff_stranded', 'messages_stranded']);
+  assert.equal(items[1].evidence.count, 2);
+  assert(!items[1].reason.includes('Corpo reservado'));
+  h.store.markMessageRead({ projectId, messageId: messages[1].id, sessionId: worker });
+  assert.equal(h.list().items[1].id, items[1].id, 'leitura parcial mantém a ocorrência');
+  h.store.markMessageRead({ projectId, messageId: messages[0].id, sessionId: worker });
+  h.store.cancelHandoff({ projectId, handoffId: offer.id, actor: 'user' });
+  assert.deepEqual(ids(h.list()), []);
+});
+
 test('lista itens dos dois projetos autorizados com projectId correto e ignora projeto fora das pastas', async (t) => {
   const h = harness(t);
   h.session('principal-a', 'project-a', { role: 'orchestrator' });

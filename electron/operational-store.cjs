@@ -304,6 +304,13 @@ const MIGRATIONS = [{
   // sem PTY do ATLAS. Não é reaberta ao abrir o app.
   version: 18,
   sql: "ALTER TABLE sessions ADD COLUMN attachment TEXT CHECK(attachment IS NULL OR attachment = 'external');",
+}, {
+  version: 19,
+  sql: `
+    CREATE INDEX audit_claim_losses ON audit_events(project_id, correlation_id, sequence) WHERE type = 'task.claim_lost';
+    CREATE INDEX audit_run_starts ON audit_events(project_id, run_id, sequence) WHERE type = 'run.started';
+    CREATE INDEX messages_by_recipient ON messages(project_id, to_session_id, created_at);
+  `,
 }];
 
 const AGENT_POLICY_MODES = ['assisted', 'autonomous'];

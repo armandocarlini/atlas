@@ -358,9 +358,8 @@ try {
   // Fila "Precisam de mim": acima de Projetos, fora da rolagem da árvore, com os itens vindos do
   // processo principal. Na abertura só o projeto da fixture está autorizado: a run dele da queda
   // simulada entra como run_failed, e as do Projeto adicional (ainda não autorizado) não entram.
-  // A principal parada do projeto ativo é o único item calculado no renderer.
+  // Iniciar a principal aparece como ação do cartão, fora das pendências.
   await openBriefing();
-  await until(() => main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=principal_start]')].some(item => item.innerText.includes('Iniciar a sessão principal'))`), 'fila mostra a principal parada');
   await until(() => main.evaluate(`document.querySelectorAll('.attention-item[data-kind=run_failed]').length === 1`), 'run da queda simulada na fila');
   const attentionMoreFor = (text) => `[...document.querySelectorAll('.attention-item')].find(item => item.innerText.includes(${JSON.stringify(text)}))?.querySelector('.attention-more')`;
   const attentionSnapshot = () => main.evaluate(`(() => {
@@ -380,15 +379,14 @@ try {
     const fixtureName = path.basename(fixture);
     const queue = await attentionSnapshot();
     assert.equal(queue.title, 'Precisam de mim');
-    assert.match(queue.label, /2 itens precisam de você/, 'contagem anunciada com contexto');
+    assert.match(queue.label, /1 item precisa de você/, 'contagem anunciada com contexto');
     assert(queue.above, 'fila acima do cabeçalho Projetos');
     assert(queue.outsideScroll, 'fila fora da rolagem da árvore');
     assert.equal(queue.oldSection, false, '"Espera você" saiu de dentro do projeto');
-    assert.deepEqual(queue.items.map((item) => [item.kind, item.project]), [['principal_start', fixtureName], ['run_failed', fixtureName]]);
+    assert.deepEqual(queue.items.map((item) => [item.kind, item.project]), [['run_failed', fixtureName]]);
     assert(!queue.items.some((item) => item.project === 'Projeto adicional'), 'projeto fora das pastas autorizadas não entra na fila');
-    assert.equal(queue.items[0].menu, false, 'principal não se adia nem se dispensa');
     assert(queue.items.every((item) => item.name.startsWith(`${item.project} · ${item.title}`)), `nome acessível completo: ${JSON.stringify(queue.items)}`);
-    assert.equal(queue.counters[fixtureName], '2', 'contador do projeto vem da fila global');
+    assert.equal(queue.counters[fixtureName], '1', 'contador do projeto vem da fila global');
     const queueAudit = await main.evaluate(`(${auditInterface.toString()})()`);
     assert.equal(queueAudit.filter((item) => item.ratio < 4.5).length, 0, `Low contrast in attention queue: ${JSON.stringify(queueAudit.filter((item) => item.ratio < 4.5))}`);
     await captureBriefing('briefing-pendencias');
@@ -414,7 +412,7 @@ try {
     await key(main, 'End', { code: 'End', windowsVirtualKeyCode: 35 });
     await main.evaluate(`document.activeElement.click()`);
     await until(() => main.evaluate(`![...document.querySelectorAll('.attention-item')].some(item => item.innerText.includes('histórico-fixture'))`), 'item dispensado sai da fila');
-    await until(async () => (await attentionSnapshot()).counters[fixtureName] === '1', 'contador do projeto acompanha a fila');
+    await until(async () => (await attentionSnapshot()).counters[fixtureName] === '0', 'contador do projeto acompanha a fila');
     assert.deepEqual((await native('invoke', { channel: 'attention:list' })).hidden, { snoozed: 0, dismissed: 1 }, 'dispensar gravado no host');
     console.log('PASS fila Precisam de mim: acima de Projetos, só projetos autorizados, contador, menu por teclado e dispensar');
   }
@@ -455,8 +453,8 @@ try {
     await openBriefing();
     await until(async () => (await attentionSnapshot()).items.filter((item) => item.kind === 'run_failed' && item.project === 'Projeto adicional').length === 2, 'runs do projeto recém-autorizado na fila');
     const queue = await attentionSnapshot();
-    assert.equal(queue.items.find((item) => item.kind === 'principal_start')?.project, 'Projeto adicional', 'principal parada é a do projeto ativo');
-    assert.equal(queue.counters['Projeto adicional'], '3', 'contador do projeto ativo');
+    assert.equal(queue.items.some((item) => item.kind === 'principal_start'), false, 'iniciar a principal fica fora da fila');
+    assert.equal(queue.counters['Projeto adicional'], '2', 'contador do projeto ativo');
     assert.equal(queue.counters[fixtureName], '0', 'contador do outro projeto vem da mesma fila');
     await main.evaluate(`${attentionMoreFor('histórico-extra')}.click()`);
     await until(() => main.evaluate(`document.activeElement?.textContent === 'Adiar 1 hora'`), 'menu de adiar');
@@ -514,11 +512,12 @@ try {
     await until(() => main.evaluate('document.hasFocus()'), 'janela principal recebe foco após recarregar');
     await main.evaluate(`${card}.focus()`);
     await until(() => main.evaluate(`${card}.querySelector('.briefing-terminal')?.dataset.terminalId === ${JSON.stringify(principal.ptyId)}`), 'cartão focado mostra o PTY da principal');
-    await main.evaluate(`(() => {
+    const chooseReceiver = (id) => main.evaluate(`(() => {
       const select = ${receiver};
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(worker.id)});
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(id)});
       select.dispatchEvent(new Event('change', { bubbles: true }));
     })()`);
+    await chooseReceiver(worker.id);
     await until(() => main.evaluate(`${card}.querySelector('.briefing-terminal')?.dataset.terminalId === ${JSON.stringify(worker.ptyId)}`), 'trocar destino troca o PTY');
     await typeText('Validação do Briefing');
     await main.evaluate(`${composer}.focus()`);
@@ -561,9 +560,64 @@ try {
     await main.evaluate(`${composer}.focus()`);
     assert(await main.evaluate(`document.activeElement === ${composer}`), 'foco na caixa de texto');
     await closeBriefing();
-    for (const session of [worker, principal]) {
+    await openBriefing();
+    const receiptText = `${card}.querySelector('.briefing-receipt')?.textContent || ''`;
+    assert.match(await main.evaluate(receiptText), /Enviado a Revisor da fixture/);
+    await chooseReceiver(principal.id);
+    assert.equal(await main.evaluate(receiptText), '', 'trocar destinatário limpa a confirmação');
+    await chooseReceiver(worker.id);
+    assert.equal(await main.evaluate(receiptText), '', 'voltar ao destinatário anterior não restaura a confirmação');
+    await typeText('Segunda mensagem da fixture');
+    await enter();
+    await until(() => main.evaluate(`(${receiptText}).includes('Enviado a Revisor da fixture')`), 'segunda confirmação exibida');
+    const orphanStore = createOperationalStore({ filename: path.join(profile, 'atlas.sqlite') });
+    let orphanTask;
+    try {
+      orphanTask = orphanStore.createTask({ projectId, title: 'Tarefa interrompida da fixture', acceptance: 'Exibir a perda do claim', idempotencyKey: 'briefing-orphan-task' });
+      const handoff = orphanStore.offerHandoff({ projectId, taskId: orphanTask.id, fromSessionId: principal.id, toSessionId: worker.id, objective: 'Validar a perda do claim.', idempotencyKey: 'briefing-orphan-offer' });
+      orphanStore.acceptHandoff({ projectId, handoffId: handoff.id, sessionId: worker.id, runId: worker.runId });
+    } finally {
+      orphanStore.close();
+    }
+    const stopFixtureAgent = async (session) => {
       await native('invoke', { channel: 'terminal:stop', args: [session.ptyId] });
-      await until(async () => (await native('invoke', { channel: 'terminal:attach', args: [session.ptyId] })).exit, 'PTY da fixture encerrado');
+      await until(async () => {
+        const view = await native('invoke', { channel: 'briefing:get' });
+        return !view.briefing.find((entry) => entry.projectId === projectId).agora.sessoes.some(({ id }) => id === session.id);
+      }, 'sessão encerrada saiu do Briefing');
+    };
+    await stopFixtureAgent(worker);
+    await until(() => main.evaluate(`![...${receiver}.options].some(option => option.value === ${JSON.stringify(worker.id)})`), 'destinatário encerrado saiu do seletor');
+    assert.equal(await main.evaluate(receiptText), '', 'encerrar destinatário limpa a confirmação');
+    const orphan = `${card}.querySelector('[data-kind=task_orphaned]')`;
+    await until(() => main.evaluate(`${orphan}?.innerText.includes('Tarefa sem responsável: Tarefa interrompida da fixture')`), 'cartão mantém a tarefa sem responsável');
+    assert.match(await main.evaluate(`${orphan}.innerText`), /Revisor da fixture \(Revisar, Gemini\) foi encerrada por você.*continua em andamento, sem responsável/);
+    await main.evaluate(`[...${orphan}.querySelectorAll('button')].find(button => button.textContent === 'Retomar sessão').click()`);
+    await until(() => main.evaluate(`document.querySelector('#new-session-title')?.textContent === 'Retomar sessão'`), 'retomada pede confirmação');
+    await until(() => main.evaluate(`document.querySelector('.modal select[name=cli] option:checked')?.value === 'gemini' && !document.querySelector('.modal button[type=submit]').disabled`), 'CLI original detectado e confirmação pronta');
+    await escape();
+    await until(() => main.evaluate(`!document.querySelector('.modal-backdrop') && ${briefingVisible}`), 'cancelar retomada preserva o Briefing');
+    await main.evaluate(`[...${orphan}.querySelectorAll('button')].find(button => button.textContent === 'Já resolvi').click()`);
+    await until(() => main.evaluate(`!${orphan}`), 'Já resolvi dispensa o item');
+    assert.equal((await native('invoke', { channel: 'task:list', args: [{ cwd: fixture }] })).items.find((task) => task.id === orphanTask.id).state, 'in_progress', 'dispensar preserva a tarefa');
+    await stopFixtureAgent(principal);
+    const otherItems = (await native('invoke', { channel: 'attention:list' })).items;
+    assert(otherItems.every((item) => item.projectId !== projectId), 'encerramento pelo usuário fica fora da fila do host');
+    for (const { id } of otherItems) {
+      await native('invoke', { channel: 'attention:snooze', args: [{ itemId: id, until: new Date(Date.now() + 15000).toISOString() }] });
+    }
+    await until(() => main.evaluate(`(() => {
+      const currentProject = document.querySelector('.tree-project-name[aria-current=page]');
+      return currentProject?.textContent.includes(${JSON.stringify(path.basename(fixture))})
+        && ${card}.innerText.includes('Principal encerrada')
+        && document.querySelector('.briefing-counter b').textContent === '0';
+    })()`), 'principal encerrada pelo usuário e contador global zero');
+    assert.equal(await main.evaluate(`${card}.querySelector('.briefing-state').dataset.needsUser`), 'false');
+    assert.equal(await main.evaluate(`Boolean(${card}.querySelector('.attention-items'))`), false);
+    assert(await main.evaluate(`[...${card}.querySelectorAll('button')].some(button => button.textContent === 'Iniciar a principal')`));
+    assert.equal((await attentionSnapshot()).counters[path.basename(fixture)], '0', 'projeto sem pendência na árvore');
+    await closeBriefing();
+    for (const session of [worker, principal]) {
       await native('invoke', { channel: 'agent:remove', args: [session.id] });
     }
     // Os handlers foram chamados pela fixture, fora do fluxo de remoção do renderer.
@@ -573,7 +627,7 @@ try {
     await closeBriefing();
     await until(() => main.evaluate(`[...document.querySelectorAll('.tree-project-name')].some(item => item.textContent.startsWith('Projeto adicional'))`), 'projetos carregados sem os PTYs descartados');
     assert(!(await native('invoke', { channel: 'agent:list' })).some((session) => session.id === worker.id || session.id === principal.id));
-    console.log('PASS Briefing: abertura, Escape, contador, projeto sem novidades, destino, PTY real com fixture e janela estreita');
+    console.log('PASS Briefing: abertura, Escape, contador, principal encerrada, limpeza da confirmação, PTY real com fixture e janela estreita');
   }
   await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => item.textContent.startsWith('Projeto adicional')).click()`);
   await until(() => main.evaluate(`Boolean(document.getElementById('tree-session-reauthorized-fixture'))`), 'árvore do projeto adicional expandida');
@@ -2047,10 +2101,11 @@ process.stdin.on('data', (data) => {
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0 && !document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional')`), 'outro projeto ativo, sem os cartões do adicional');
   await openBriefing();
   {
-    // Itens dos dois projetos na mesma lista: a principal parada do projeto ativo e os pedidos do adicional.
+    // Os pedidos do adicional continuam visíveis com outro projeto ativo.
     const fixtureName = path.basename(fixture);
-    const queue = await until(async () => { const snapshot = await attentionSnapshot(); return snapshot.items.some((item) => item.kind === 'principal_start' && item.project === fixtureName) ? snapshot : null; }, 'principal do projeto ativo na fila');
-    assert.deepEqual([...new Set(queue.items.map((item) => item.project))].sort(), [fixtureName, 'Projeto adicional'].sort(), `itens dos dois projetos na mesma lista: ${JSON.stringify(queue.items)}`);
+    const queue = await attentionSnapshot();
+    assert.equal(queue.counters[fixtureName], '0', 'projeto ativo sem principal não ganha pendência');
+    assert(queue.items.every((item) => item.project === 'Projeto adicional'), `pendências pertencem ao projeto adicional: ${JSON.stringify(queue.items)}`);
     assert.equal(queue.items.filter((item) => item.kind === 'request_pending' && item.project === 'Projeto adicional').length, 2, 'pedidos do outro projeto continuam na fila');
   }
   await main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_pending]')].find(item => item.innerText.includes('revisor-recusado')).querySelector('.attention-open').click()`);
@@ -2541,7 +2596,7 @@ try {
   assert(persisted.prepare('SELECT read_at FROM message_deliveries').get().read_at, 'Message read state must persist in SQLite');
   const delegated = persisted.prepare('SELECT id, state, assigned_session_id, claim_epoch FROM tasks WHERE id IN (?, ?) ORDER BY title').all(offeredTaskId, blockedTaskId);
   assert.deepEqual(delegated.map((item) => [item.state, item.assigned_session_id, item.claim_epoch]), [['done', 'smoke-agente', 1], ['ready', null, 2]]);
-  assert.deepEqual(persisted.prepare('SELECT state, resolved_by FROM handoffs ORDER BY created_at, rowid').all().map((item) => [item.state, item.resolved_by]), [['canceled', 'user'], ['accepted', 'agent:smoke-agente'], ['accepted', 'agent:smoke-agente']]);
+  assert.deepEqual(persisted.prepare('SELECT state, resolved_by FROM handoffs WHERE project_id = ? ORDER BY created_at, rowid').all(extraProjectId).map((item) => [item.state, item.resolved_by]), [['canceled', 'user'], ['accepted', 'agent:smoke-agente'], ['accepted', 'agent:smoke-agente']]);
   assert.deepEqual(persisted.prepare('SELECT state FROM reviews ORDER BY created_at, rowid').all().map((item) => item.state), ['changes_requested', 'accepted']);
   assert.deepEqual(persisted.prepare("SELECT kind, count(*) AS total FROM evidence WHERE source = 'system' GROUP BY kind ORDER BY kind").all().map((item) => [item.kind, item.total]), [['git_snapshot', 2], ['regression_run', 2]]);
   assert.deepEqual(persisted.prepare('SELECT state, exit_code AS exitCode FROM regression_runs ORDER BY created_at, rowid').all().map((item) => [item.state, item.exitCode]), [['cancelled', null], ['failed', 1]]);

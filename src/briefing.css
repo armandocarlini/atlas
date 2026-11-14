@@ -43,6 +43,10 @@
 .briefing-row .attention-items { max-height: none; overflow: visible; }
 .briefing-row .attention-project { display: none; }
 .briefing-row .attention-item + .attention-item { margin-top: 3px; }
+.briefing-row .attention-unfinished { display: block; }
+.attention-unfinished .attention-open { cursor: default; }
+.attention-unfinished .attention-reason { margin: 0; }
+.attention-actions { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 8px 6px; }
 .briefing-muted { color: var(--muted); font-size: 12px; }
 .briefing-composer { display: grid; gap: 8px; }
 .briefing-recipient select { flex: 1; min-width: 0; }

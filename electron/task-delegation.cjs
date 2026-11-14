@@ -199,19 +199,12 @@ function createTaskDelegation({ db, now, event, transaction }) {
 
     // Chamado dentro da transação que encerra ou reconcilia a run. A tarefa mantém
     // estado e responsável: o trabalho real é incerto e cabe ao usuário decidir.
-    // Ofertas ainda abertas para a sessão são canceladas: sessões de agente não
-    // ganham nova run, então nunca poderiam aceitar e prenderiam a tarefa.
+    // Ofertas abertas são preservadas até aceite, recusa ou cancelamento explícito.
     loseClaims(runId, at) {
       const tasks = db.prepare('SELECT id, project_id, assigned_session_id, claim_epoch FROM tasks WHERE claim_run_id = ?').all(runId);
       for (const task of tasks) {
         db.prepare('UPDATE tasks SET claim_run_id = NULL, version = version + 1, updated_at = ? WHERE id = ?').run(at, task.id);
         event({ projectId: task.project_id, sessionId: task.assigned_session_id, runId, type: 'task.claim_lost', payload: { taskId: task.id, epoch: task.claim_epoch }, correlationId: task.id, at });
-      }
-      const sessionId = db.prepare('SELECT session_id FROM agent_runs WHERE id = ?').get(runId)?.session_id;
-      const offers = db.prepare("SELECT id, project_id, task_id FROM handoffs WHERE to_session_id = ? AND state = 'offered'").all(sessionId);
-      for (const offer of offers) {
-        db.prepare("UPDATE handoffs SET state = 'canceled', resolved_at = ?, resolved_by = 'system', reason = ?, version = version + 1 WHERE id = ?").run(at, 'A sessão de destino encerrou antes de responder.', offer.id);
-        event({ projectId: offer.project_id, sessionId, runId, type: 'handoff.canceled', payload: { handoffId: offer.id, taskId: offer.task_id, actor: 'system' }, correlationId: offer.id, at });
       }
     },
   };
