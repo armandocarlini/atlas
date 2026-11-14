@@ -47,7 +47,8 @@ import { OVERLAY_BARS, effectiveBackground } from './window-overlay.js';
 import { appearanceTokens, contrastInk, isPreviousDefaultTheme, visibleAccent } from './appearance.js';
 import useModalFocus from './useModalFocus.js';
 import CommandPalette from './CommandPalette.jsx';
-import { atlasDecisions } from './atlas-panel.js';
+import useAttentionQueue from './useAttentionQueue.js';
+import { attentionDestination, attentionTargetStatus, countByProject, summaryLine, withPrincipalItem } from './attention-queue.js';
 import { nextVisibleSessionId, normalizeTerminalLayout, sessionsInLayout, visibleWorkspaceSessions, workspaceSessions } from './workspace-layout.js';
 import { agentSession, mergeAgentSessions, restoreSummary, sessionExit, terminalSession, usesGemini, usesKimi } from './session-state.js';
 import { AgentChoice } from './AgentChoice.jsx';
@@ -885,12 +886,15 @@ export default function App() {
   // projeto. O pop-up de terminal não recebe destinos: o canal dele só escreve no próprio PTY.
   const pasteTargets = useMemo(() => sessionPasteTargets(projectSessions, agentFunctions), [projectSessions, agentFunctions]);
   const navigationSessions = useMemo(() => desktop?.isDesktop ? sessions : sessions.map((session) => ({ ...session, projectId: 'ATLAS' })), [sessions, desktop?.isDesktop]);
-  const projectDecisions = atlasDecisions({
-    requests: desktop?.isDesktop ? agentRequestState.items : [],
-    tasks: desktop?.isDesktop ? taskState.items : [],
-    reviews: desktop?.isDesktop ? taskState.reviews || [] : [],
-    needsPrincipal: Boolean(desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice),
-  });
+  // Fila "Precisam de mim": itens de todos os projetos vindos do processo principal; só a
+  // principal parada do projeto ativo entra pelo renderer (src/attention-queue.js).
+  const attentionQueue = useAttentionQueue(desktop, Boolean(desktop?.isDesktop && !isSecondaryWindow));
+  const needsPrincipal = Boolean(desktop?.isDesktop && orchestratorStatus.projectId === currentProject?.id && orchestratorStatus.needsChoice);
+  const attentionItems = useMemo(() => withPrincipalItem(attentionQueue.items, { needsPrincipal, project: currentProject }), [attentionQueue.items, needsPrincipal, currentProject]);
+  const attentionCounts = useMemo(() => countByProject(attentionItems), [attentionItems]);
+  const [attentionTarget, setAttentionTarget] = useState(null);
+  const [requestToOpen, setRequestToOpen] = useState(null);
+  const [taskFocus, setTaskFocus] = useState(null);
   const displayedColumnOrder = columnDrag?.previewOrder || columnOrder;
   const worktreeOptions = useMemo(() => {
     const options = projects.flatMap((project) => [
@@ -1391,7 +1395,7 @@ export default function App() {
     },
   } : undefined;
 
-  const persistentTaskPanel = desktop?.isDesktop ? <PersistentTaskPanel state={taskState} onNew={isSecondaryWindow ? undefined : () => setTaskModalOpen(true)} onCancelHandoff={isSecondaryWindow ? undefined : cancelHandoff} onRelease={isSecondaryWindow ? undefined : releaseTask} onDecideReview={isSecondaryWindow ? undefined : decideReview} regressionActions={regressionActions} /> : null;
+  const persistentTaskPanel = desktop?.isDesktop ? <PersistentTaskPanel state={taskState} focusTask={taskFocus} onNew={isSecondaryWindow ? undefined : () => setTaskModalOpen(true)} onCancelHandoff={isSecondaryWindow ? undefined : cancelHandoff} onRelease={isSecondaryWindow ? undefined : releaseTask} onDecideReview={isSecondaryWindow ? undefined : decideReview} regressionActions={regressionActions} /> : null;
   const taskEvidencePanel = desktop?.isDesktop ? <TaskEvidencePanel state={taskState} regressionActions={regressionActions} /> : null;
   const sessionMessagesPanel = desktop?.isDesktop ? <SessionMessagesPanel state={messageState} readOnly={isSecondaryWindow} onMarkRead={markMessageRead} /> : null;
 
@@ -1858,11 +1862,56 @@ export default function App() {
     setHiddenSessionIds((current) => current.filter((id) => !ids.has(id)));
   }
 
-  function openDecision(decision) {
-    if (decision.kind === 'request') openAgentRequest(decision.targetId);
-    else if (decision.kind === 'review') openTaskPanel(decision.targetId);
-    else openOrchestratorChoice();
+  // Item da fila: leva ao lugar onde a decisão acontece. De outro projeto, troca de projeto
+  // e só abre quando as tarefas e os pedidos dele carregam (efeito abaixo, sem timer).
+  function openAttentionItem(item) {
+    const destination = attentionDestination(item);
+    if (destination?.kind === 'principal') return openOrchestratorChoice();
+    if (destination?.kind === 'session') {
+      if (sessions.some((session) => session.id === destination.id)) return selectSessionTerminal(destination.id);
+      attentionQueue.fail('A sessão deste item não está mais no ATLAS.');
+      return attentionQueue.reload();
+    }
+    const project = projects.find((entry) => entry.id === item.projectId);
+    if (!destination || !project) {
+      attentionQueue.fail('O projeto deste item não está mais autorizado.');
+      return attentionQueue.reload();
+    }
+    if (project.id !== currentProject?.id) selectProject(project);
+    setAttentionTarget(item);
   }
+
+  useEffect(() => {
+    if (!attentionTarget) return;
+    const status = attentionTargetStatus({ item: attentionTarget, taskState, agentRequestState, sessions });
+    if (status === 'wait') return;
+    const item = attentionTarget;
+    setAttentionTarget(null);
+    if (status === 'missing') {
+      attentionQueue.fail(`"${item.title}" já foi resolvido ou não existe mais.`);
+      attentionQueue.reload();
+      return;
+    }
+    const destination = attentionDestination(item);
+    if (destination.kind === 'task') {
+      openTaskPanel();
+      setTaskFocus({ id: destination.id, at: Date.now() });
+      return;
+    }
+    // Pedido que falhou: o cartão existente aparece com o motivo e o botão Dispensar.
+    if (item.kind === 'request_failed' && !agentRequestErrors[destination.id]) {
+      const request = agentRequestState.items.find((entry) => entry.id === destination.id);
+      setAgentRequestErrors((current) => ({ ...current, [destination.id]: request?.error || 'O agente aprovado não iniciou.' }));
+    }
+    setRequestToOpen(destination.id);
+  }, [attentionTarget, taskState, agentRequestState, sessions]);
+
+  // Depois do commit em que o cartão aparece.
+  useEffect(() => {
+    if (!requestToOpen) return;
+    setRequestToOpen(null);
+    openAgentRequest(requestToOpen);
+  }, [requestToOpen]);
 
   // Comandos da paleta: as mesmas ações dos botões, sem ocupar a tela.
   function paletteCommands() {
@@ -2128,12 +2177,21 @@ export default function App() {
                     workingDirectory,
                     selectedSessionId: selectedId,
                     hiddenSessionIds,
-                    decisions: projectDecisions,
+                    attentionCounts,
+                    attention: attentionQueue.enabled ? {
+                      items: attentionItems,
+                      summary: summaryLine(attentionQueue.view),
+                      loaded: attentionQueue.loaded,
+                      error: attentionQueue.error,
+                      onOpen: openAttentionItem,
+                      onSnooze: attentionQueue.snooze,
+                      onDismiss: attentionQueue.dismiss,
+                      onClearError: attentionQueue.clearError,
+                    } : null,
                     onSelectProject: selectProject,
                     onSelectWorktree: selectWorktree,
                     onSelectSession: selectSessionTerminal,
                     onFocusSession: focusSession,
-                    onDecision: openDecision,
                     onAddProject: addProject,
                     onRefresh: refreshProjects,
                     loading: projectsLoading || projects.some((project) => project.scanning),

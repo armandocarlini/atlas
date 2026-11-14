@@ -332,8 +332,64 @@ try {
   await until(() => main.evaluate(`Boolean(document.querySelector('.session-history'))`), 'histórico aberto pela árvore');
   // Ícone da sessão: CLI desconhecido não ganha marca inventada; histórico tem selo de encerrada.
   assert.deepEqual(await main.evaluate(`(() => { const glyph = document.querySelector('[data-session-id=history-fixture] .session-header .session-glyph'); return [glyph?.dataset.cli, glyph?.classList.contains('tone-ended'), glyph?.innerText.trim()]; })()`), ['agent', true, 'Agente, encerrada']);
-  // A árvore coloca a principal parada em "Espera você".
-  await until(() => main.evaluate(`[...document.querySelectorAll('.tree-decision.principal')].some(item => item.innerText.includes('Iniciar a sessão principal'))`), 'árvore mostra a principal parada');
+  // Fila "Precisam de mim": acima de Projetos, fora da rolagem da árvore, com os itens vindos do
+  // processo principal. Na abertura só o projeto da fixture está autorizado: a run dele da queda
+  // simulada entra como run_failed, e as do Projeto adicional (ainda não autorizado) não entram.
+  // A principal parada do projeto ativo é o único item calculado no renderer.
+  await until(() => main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=principal_start]')].some(item => item.innerText.includes('Iniciar a sessão principal'))`), 'fila mostra a principal parada');
+  await until(() => main.evaluate(`document.querySelectorAll('.attention-item[data-kind=run_failed]').length === 1`), 'run da queda simulada na fila');
+  const attentionMoreFor = (text) => `[...document.querySelectorAll('.attention-item')].find(item => item.innerText.includes(${JSON.stringify(text)}))?.querySelector('.attention-more')`;
+  const attentionSnapshot = () => main.evaluate(`(() => {
+    const section = document.querySelector('.attention-queue');
+    const heading = document.querySelector('.workspace-tree > .workspace-tree-heading');
+    return {
+      title: section.querySelector('h2').textContent,
+      labelled: section.getAttribute('aria-labelledby'),
+      above: section.getBoundingClientRect().bottom <= heading.getBoundingClientRect().top + 1,
+      outsideScroll: !section.closest('.workspace-tree-scroll'),
+      status: section.querySelector('[role=status]').textContent,
+      items: [...section.querySelectorAll('.attention-item')].map(item => ({ kind: item.dataset.kind, project: item.querySelector('.attention-project').textContent, title: item.querySelector('strong').textContent, name: item.querySelector('.attention-open').getAttribute('aria-label'), menu: Boolean(item.querySelector('.attention-more')) })),
+      counters: Object.fromEntries([...document.querySelectorAll('.workspace-tree .tree-project-name')].map(item => [item.querySelector('span').textContent, item.querySelector('.tree-attention [aria-hidden]')?.textContent || '0'])),
+      oldSection: Boolean(document.querySelector('.tree-decisions')),
+    };
+  })()`);
+  {
+    const fixtureName = path.basename(fixture);
+    const queue = await attentionSnapshot();
+    assert.equal(queue.title, 'Precisam de mim');
+    assert.equal(queue.labelled, 'attention-queue-title', 'seção com rótulo');
+    assert(queue.above, 'fila acima do cabeçalho Projetos');
+    assert(queue.outsideScroll, 'fila fora da rolagem da árvore');
+    assert.equal(queue.oldSection, false, '"Espera você" saiu de dentro do projeto');
+    assert.equal(queue.status, '2 itens precisam de você', 'contagem anunciada com contexto');
+    assert.deepEqual(queue.items.map((item) => [item.kind, item.project]), [['principal_start', fixtureName], ['run_failed', fixtureName]]);
+    assert(!queue.items.some((item) => item.project === 'Projeto adicional'), 'projeto fora das pastas autorizadas não entra na fila');
+    assert.equal(queue.items[0].menu, false, 'principal não se adia nem se dispensa');
+    assert(queue.items.every((item) => item.name.startsWith(`${item.project} · ${item.title}`)), `nome acessível completo: ${JSON.stringify(queue.items)}`);
+    assert.equal(queue.counters[fixtureName], '2', 'contador do projeto vem da fila global');
+    const queueAudit = await main.evaluate(`(${auditInterface.toString()})()`);
+    assert.equal(queueAudit.filter((item) => item.ratio < 4.5).length, 0, `Low contrast in attention queue: ${JSON.stringify(queueAudit.filter((item) => item.ratio < 4.5))}`);
+    await screenshot(main, 'attention-queue');
+    // Menu por teclado: o foco entra no primeiro item; End vai a Dispensar; Escape devolve o foco.
+    await main.evaluate(`(() => { const button = ${attentionMoreFor('histórico-fixture')}; button.focus(); button.click(); })()`);
+    await until(() => main.evaluate(`document.activeElement?.getAttribute('role') === 'menuitem' && document.activeElement.textContent === 'Adiar 1 hora'`), 'menu abre com foco no primeiro item');
+    assert.deepEqual(await main.evaluate(`[...document.querySelectorAll('.attention-menu [role=menuitem]')].map(item => item.textContent)`), ['Adiar 1 hora', 'Adiar 4 horas', 'Adiar até amanhã', 'Dispensar']);
+    await key(main, 'End', { code: 'End', windowsVirtualKeyCode: 35 });
+    assert.equal(await main.evaluate(`document.activeElement.textContent`), 'Dispensar');
+    await key(main, 'ArrowDown', { code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+    assert.equal(await main.evaluate(`document.activeElement.textContent`), 'Adiar 1 hora', 'setas circulam');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    await until(() => main.evaluate(`!document.querySelector('.attention-menu') && document.activeElement === ${attentionMoreFor('histórico-fixture')}`), 'Escape fecha o menu e devolve o foco');
+    // Dispensar pelo teclado: grava no host e o item sai; o contador do projeto acompanha.
+    await main.evaluate(`${attentionMoreFor('histórico-fixture')}.click()`);
+    await until(() => main.evaluate(`Boolean(document.querySelector('.attention-menu'))`), 'menu reaberto');
+    await key(main, 'End', { code: 'End', windowsVirtualKeyCode: 35 });
+    await main.evaluate(`document.activeElement.click()`);
+    await until(() => main.evaluate(`![...document.querySelectorAll('.attention-item')].some(item => item.innerText.includes('histórico-fixture'))`), 'item dispensado sai da fila');
+    await until(async () => (await attentionSnapshot()).counters[fixtureName] === '1', 'contador do projeto acompanha a fila');
+    assert.deepEqual((await native('invoke', { channel: 'attention:list' })).hidden, { snoozed: 0, dismissed: 1 }, 'dispensar gravado no host');
+    console.log('PASS fila Precisam de mim: acima de Projetos, só projetos autorizados, contador, menu por teclado e dispensar');
+  }
   // Regressão: sem sessão Kimi no projeto, nada de aviso do Kimi (só o indicador discreto).
   assert.equal(await main.evaluate(`document.querySelectorAll('.integration-notice').length`), 0, 'Kimi notice only with a Kimi session');
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-history').length`), 1, 'Unauthorized project history must remain hidden');
@@ -363,6 +419,22 @@ try {
   assert(await main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]').closest('.tree-project-row').querySelector('.tree-expander').getAttribute('aria-expanded') === 'true'`), 'Selecting a project must reveal its repositories and sessions');
   assert(await main.evaluate(`document.querySelector('.workspace-path span').textContent === ${JSON.stringify(extraProject)}`), 'Initial hydration overwrote the selected directory');
   console.log('PASS seleção do projeto preservada durante inicialização tardia');
+  // Projeto autorizado agora: as runs dele da queda simulada entram na fila sem recarregar a UI,
+  // ao lado dos itens do outro projeto; adiar tira o item e fica registrado no host.
+  {
+    const fixtureName = path.basename(fixture);
+    await until(async () => (await attentionSnapshot()).items.filter((item) => item.kind === 'run_failed' && item.project === 'Projeto adicional').length === 2, 'runs do projeto recém-autorizado na fila');
+    const queue = await attentionSnapshot();
+    assert.equal(queue.items.find((item) => item.kind === 'principal_start')?.project, 'Projeto adicional', 'principal parada é a do projeto ativo');
+    assert.equal(queue.counters['Projeto adicional'], '3', 'contador do projeto ativo');
+    assert.equal(queue.counters[fixtureName], '0', 'contador do outro projeto vem da mesma fila');
+    await main.evaluate(`${attentionMoreFor('histórico-extra')}.click()`);
+    await until(() => main.evaluate(`document.activeElement?.textContent === 'Adiar 1 hora'`), 'menu de adiar');
+    await main.evaluate(`document.activeElement.click()`);
+    await until(() => main.evaluate(`![...document.querySelectorAll('.attention-item')].some(item => item.innerText.includes('histórico-extra'))`), 'item adiado sai da fila');
+    assert.deepEqual((await native('invoke', { channel: 'attention:list' })).hidden, { snoozed: 1, dismissed: 1 }, 'adiar gravado no host');
+    console.log('PASS fila com os dois projetos depois de autorizar, contadores por projeto e adiar');
+  }
   assert.equal(await main.evaluate(`document.querySelectorAll('.session-card').length`), 0, 'histórico do projeto adicional não abre sozinho');
   await main.evaluate(`document.getElementById('tree-session-reauthorized-fixture').click()`);
   await until(() => main.evaluate(`Boolean(document.querySelector('[data-session-id=reauthorized-fixture]'))`), 'histórico do projeto adicional aberto pela árvore');
@@ -991,6 +1063,20 @@ process.stdin.on('data', (data) => {
   await screenshot(main, 'columns-nav-icons');
   await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
   await until(() => main.evaluate(`!document.querySelector('#navigation-flyout') && document.activeElement?.classList.contains('rail-project')`), 'Esc fecha o flyout e devolve o foco');
+  // No trilho, a fila continua acessível: botão com a contagem no nome e o mesmo flyout.
+  {
+    const queueButton = await main.evaluate(`(() => { const button = document.querySelector('.navigation-rail .rail-queue'); return { label: button?.getAttribute('aria-label') || '', badge: button?.querySelector('.rail-attention')?.textContent }; })()`);
+    assert.match(queueButton.label, /^Precisam de mim: \d+ (item precisa|itens precisam) de você$/, `botão da fila no trilho: ${queueButton.label}`);
+    assert.equal(queueButton.label.match(/\d+/)[0], queueButton.badge, 'selo e nome acessível com a mesma contagem');
+    assert(await main.evaluate(`[...document.querySelectorAll('.rail-project')].some(item => item.getAttribute('aria-label').includes('de você'))`), 'projeto no trilho anuncia os itens da fila');
+    await main.evaluate(`document.querySelector('.navigation-rail .rail-queue').focus(); document.querySelector('.navigation-rail .rail-queue').click()`);
+    await until(() => main.evaluate(`document.querySelectorAll('#attention-flyout .attention-item').length > 0 && document.querySelector('#attention-flyout').contains(document.activeElement)`), 'flyout da fila com foco dentro');
+    await until(() => main.evaluate(`document.querySelector('#attention-flyout').getAnimations().every(item => item.playState === 'finished')`), 'entrada do flyout da fila concluída');
+    assert(await main.evaluate(`[...document.querySelectorAll('#attention-flyout .attention-open')].every(item => item.getAttribute('aria-label').includes(' · '))`), 'nomes completos no flyout');
+    await screenshot(main, 'attention-queue-compact');
+    await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+    await until(() => main.evaluate(`!document.querySelector('#attention-flyout') && document.activeElement?.classList.contains('rail-queue')`), 'Esc fecha a fila e devolve o foco');
+  }
   const activateFocusedButton = (selector) => main.evaluate(`(() => {
     const button = document.querySelector(${JSON.stringify(selector)});
     if (!button) return false;
@@ -1795,16 +1881,34 @@ process.stdin.on('data', (data) => {
     liveStore.close();
   }
   await native('send', { channel: 'agent-request:changed', payload: { projectId: extraProjectId } });
+  // O smoke grava direto no banco: o aviso que o main emitiria junto com o dos pedidos vai à mão.
+  await native('send', { channel: 'attention:changed', payload: { projectId: extraProjectId } });
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 2`), 'pending agent requests shown');
   const requestCards = await main.evaluate(`[...document.querySelectorAll('.agent-request')].map(item => item.innerText)`);
   assert(requestCards[0].includes('Novo agente: revisor-recusado') && requestCards[0].includes('Pedido de ORQUESTRADOR-fixture'), 'Request names requester and agent');
   assert(requestCards[1].includes('Segunda linha preservada') && requestCards[1].includes('Vale até') && requestCards[1].includes('Política: até 2 agentes'), 'Request shows purpose, validity and policy');
   assert(requestCards.every((text) => text.includes('sem flags de autonomia')), 'Request states how the agent starts');
-  // Painel do Atlas: cada pedido pendente espera o usuário e leva ao próprio cartão.
-  const panelRequests = await main.evaluate(`[...document.querySelectorAll('.tree-decision.request')].map(item => item.textContent.replace(/^[!✓]/, ''))`);
-  assert(panelRequests.includes('Novo agente: revisor-recusado') && panelRequests.length === 2, `Panel lists pending requests: ${panelRequests}`);
-  await main.evaluate(`[...document.querySelectorAll('.tree-decision.request')].find(item => item.innerText.includes('revisor-recusado')).click()`);
-  await until(() => main.evaluate(`document.activeElement?.closest('.agent-request')?.innerText.includes('revisor-recusado')`), 'painel leva ao cartão do pedido');
+  // Fila "Precisam de mim": cada pedido pendente espera o usuário e leva ao próprio cartão,
+  // mesmo a partir de outro projeto: troca de projeto, espera a carga dele e só então abre.
+  await until(() => main.evaluate(`document.querySelectorAll('.attention-item[data-kind=request_pending]').length === 2`), 'pedidos pendentes na fila');
+  const panelRequests = await main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_pending] strong')].map(item => item.textContent)`);
+  assert(panelRequests.includes('Novo agente: revisor-recusado') && panelRequests.length === 2, `Queue lists pending requests: ${panelRequests}`);
+  await main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_pending]')].find(item => item.innerText.includes('revisor-recusado')).querySelector('.attention-more').click()`);
+  await until(() => main.evaluate(`Boolean(document.querySelector('.attention-menu'))`), 'menu do pedido');
+  assert.deepEqual(await main.evaluate(`[...document.querySelectorAll('.attention-menu [role=menuitem]')].map(item => item.textContent)`), ['Adiar 1 hora', 'Adiar 4 horas', 'Adiar até amanhã'], 'pedido pendente não se dispensa');
+  await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(() => main.evaluate(`!document.querySelector('.attention-menu')`), 'menu do pedido fechado');
+  await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => !item.textContent.startsWith('Projeto adicional')).click()`);
+  await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0 && !document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional')`), 'outro projeto ativo, sem os cartões do adicional');
+  {
+    // Itens dos dois projetos na mesma lista: a principal parada do projeto ativo e os pedidos do adicional.
+    const fixtureName = path.basename(fixture);
+    const queue = await until(async () => { const snapshot = await attentionSnapshot(); return snapshot.items.some((item) => item.kind === 'principal_start' && item.project === fixtureName) ? snapshot : null; }, 'principal do projeto ativo na fila');
+    assert.deepEqual([...new Set(queue.items.map((item) => item.project))].sort(), [fixtureName, 'Projeto adicional'].sort(), `itens dos dois projetos na mesma lista: ${JSON.stringify(queue.items)}`);
+    assert.equal(queue.items.filter((item) => item.kind === 'request_pending' && item.project === 'Projeto adicional').length, 2, 'pedidos do outro projeto continuam na fila');
+  }
+  await main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_pending]')].find(item => item.innerText.includes('revisor-recusado')).querySelector('.attention-open').click()`);
+  await until(() => main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional') && document.activeElement?.closest('.agent-request')?.innerText.includes('revisor-recusado')`), 'fila troca de projeto e leva ao cartão do pedido');
   const requestAudit = await main.evaluate(`(${auditInterface.toString()})()`);
   assert.equal(requestAudit.filter((item) => item.ratio < 4.5).length, 0, 'Low contrast in agent requests');
   await screenshot(main, 'agent-requests');
@@ -1838,7 +1942,16 @@ process.stdin.on('data', (data) => {
   assert.equal(await main.evaluate(`[...document.querySelectorAll('.session-card h3')].some(item => item.textContent === 'revisor-sem-cli')`), false);
   await click(main, '.agent-request button', 'Dispensar');
   await until(() => main.evaluate(`document.querySelectorAll('.agent-request').length === 0`), 'failed request dismissed');
-  assert.equal(await main.evaluate(`document.querySelectorAll('.tree-decision.request').length`), 0, 'Decided requests leave the panel');
+  assert.equal(await main.evaluate(`document.querySelectorAll('.attention-item[data-kind=request_pending]').length`), 0, 'Decided requests leave the queue');
+  // O pedido que falhou continua na fila (vem do banco); abrir mostra de novo o cartão com o motivo.
+  await until(() => main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_failed]')].some(item => item.innerText.includes('revisor-sem-cli') && item.innerText.includes('Não foi possível iniciar o OpenCode'))`), 'pedido que falhou na fila com o motivo');
+  await main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_failed]')].find(item => item.innerText.includes('revisor-sem-cli')).querySelector('.attention-open').click()`);
+  await until(() => main.evaluate(`document.activeElement?.closest('.agent-request')?.innerText.includes('revisor-sem-cli') && document.querySelector('.agent-request [role=alert]')?.innerText.includes('Não foi possível iniciar o OpenCode')`), 'fila reabre o cartão do pedido que falhou');
+  await click(main, '.agent-request button', 'Dispensar');
+  await main.evaluate(`[...document.querySelectorAll('.attention-item[data-kind=request_failed]')].find(item => item.innerText.includes('revisor-sem-cli')).querySelector('.attention-more').click()`);
+  await until(() => main.evaluate(`[...document.querySelectorAll('.attention-menu [role=menuitem]')].at(-1)?.textContent === 'Dispensar'`), 'pedido que falhou pode ser dispensado');
+  await main.evaluate(`[...document.querySelectorAll('.attention-menu [role=menuitem]')].at(-1).click()`);
+  await until(() => main.evaluate(`document.querySelectorAll('.attention-item[data-kind=request_failed]').length === 0`), 'pedido que falhou dispensado da fila');
   console.log('PASS pedidos de agente da principal: conteúdo, validade, política, recusa, falha honesta sem CLI e Painel do Atlas');
   // Delegação semeada como a principal e um agente da fixture fariam pela ponte MCP:
   // uma oferta aberta e uma tarefa aceita e bloqueada. O usuário cancela e devolve.
@@ -1855,10 +1968,24 @@ process.stdin.on('data', (data) => {
     delegationStore.close();
   }
   await native('send', { channel: 'task:changed', payload: { projectId: extraProjectId } });
+  await native('send', { channel: 'attention:changed', payload: { projectId: extraProjectId } });
   const queueItem = (title) => `[...document.querySelectorAll('.task-queue .queue-item')].find(item => item.innerText.includes(${JSON.stringify(title)}))`;
   await until(() => main.evaluate(`Boolean(${queueItem('Delegada bloqueada')})`), 'delegated tasks listed');
   assert.match(await main.evaluate(`${queueItem('Delegada aberta')}.innerText`), /Pronta/);
   assert.match(await main.evaluate(`${queueItem('Delegada bloqueada')}.innerText`), /Bloqueada · agente-fixture/);
+  // Tarefa bloqueada na fila: de outro projeto, abrir troca de projeto, espera as tarefas e
+  // seleciona a tarefa certa no painel; o resumo soma a bloqueada.
+  {
+    const blockedItem = `[...document.querySelectorAll('.attention-item[data-kind=task_blocked]')].find(item => item.innerText.includes('Delegada bloqueada'))`;
+    await until(() => main.evaluate(`Boolean(${blockedItem}) && ${blockedItem}.innerText.includes('Falta o fixture de terminal.')`), 'tarefa bloqueada na fila com o motivo');
+    assert.match(await main.evaluate(`document.querySelector('.attention-summary')?.textContent || ''`), /^Desde a última visita: .*1 bloqueada/, 'resumo soma a bloqueada');
+    await main.evaluate(`${queueItem('Delegada aberta')}.click()`);
+    await main.evaluate(`[...document.querySelectorAll('.tree-project-name')].find(item => !item.textContent.startsWith('Projeto adicional')).click()`);
+    await until(() => main.evaluate(`!document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional') && !${queueItem('Delegada bloqueada')}`), 'outro projeto ativo, sem as tarefas do adicional');
+    await main.evaluate(`${blockedItem}.querySelector('.attention-open').click()`);
+    await until(() => main.evaluate(`document.querySelector('.tree-project-name[aria-current=page]').textContent.startsWith('Projeto adicional') && document.activeElement === ${queueItem('Delegada bloqueada')} && document.querySelector('.task-assignment')?.innerText.includes('Falta o fixture de terminal.')`), 'fila troca de projeto e seleciona a tarefa bloqueada');
+    console.log('PASS fila abre pedido e tarefa de outro projeto só depois da carga dele');
+  }
   await main.evaluate(`${queueItem('Delegada aberta')}.click()`);
   await until(() => main.evaluate(`document.querySelector('.task-assignment')?.innerText.includes('Oferecida a agente-fixture')`), 'open offer shown');
   const offerText = await main.evaluate(`document.querySelector('.task-assignment').innerText`);

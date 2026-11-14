@@ -65,6 +65,8 @@ export default function useFlyout({ initialFocus } = {}) {
     });
     function closeOutside(event) {
       if (flyoutRef.current?.contains(event.target) || triggerRef.current?.contains(event.target)) return;
+      // Menus abertos de dentro do painel moram num portal próprio e não o fecham.
+      if (event.target.closest?.('[data-flyout-child]')) return;
       close(false);
     }
     function closeEscape(event) {

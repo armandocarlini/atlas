@@ -290,7 +290,12 @@ app.whenReady().then(async () => {
   // Cada projeto avisa a interface quando a varredura dele termina.
   projectHost = createProjectHost({
     app, dialog, ipcMain, getMainWindow, store: operationalStore,
-    onChange: (project) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('project:changed', project); },
+    onChange: (project) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send('project:changed', project);
+      // Um projeto autorizado ou relido entra na fila "Precisam de mim" (só pastas autorizadas).
+      mainWindow.webContents.send('attention:changed', { projectId: project?.id ?? null });
+    },
   });
   ptyTransport = createPtyTransport({ getMainWindow });
   terminalHost = createTerminalHost({
