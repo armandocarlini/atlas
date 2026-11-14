@@ -251,7 +251,12 @@ function createAgentRequestHost({ ipcMain, projectHost, store, isMainSender, age
     return next;
   }
 
-  return { policy: publicPolicy, evaluate };
+  // Motivo de o modo autônomo ter deixado o pedido esperando, como o cartão mostra.
+  function autoNoteFor(requestId, projectId) {
+    return policyFor(projectId).mode === 'autonomous' ? autoNotes.get(requestId) ?? null : null;
+  }
+
+  return { policy: publicPolicy, evaluate, autoNoteFor };
 }
 
 module.exports = { createAgentRequestHost };

@@ -100,6 +100,11 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
   updateAgentFunction: (request) => ipcRenderer.invoke('agent-function:update', request),
   deleteAgentFunction: (request) => ipcRenderer.invoke('agent-function:delete', request),
   onAgentFunctionsChanged: (callback) => subscribe('agent-function:changed', callback),
+  // Fila "Precisam de mim": todos os projetos autorizados; só o usuário adia ou dispensa.
+  listAttention: () => ipcRenderer.invoke('attention:list'),
+  snoozeAttention: (request) => ipcRenderer.invoke('attention:snooze', request),
+  dismissAttention: (request) => ipcRenderer.invoke('attention:dismiss', request),
+  onAttentionChanged: (callback) => subscribe('attention:changed', callback),
   takeOpenPath: () => ipcRenderer.invoke('open-path:take'),
   authorizeOpenPath: (request) => ipcRenderer.invoke('open-path:authorize', request),
   dismissOpenPath: (request) => ipcRenderer.invoke('open-path:dismiss', request),

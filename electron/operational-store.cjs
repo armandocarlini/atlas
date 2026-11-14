@@ -6,6 +6,7 @@ const { createTaskDelegation } = require('./task-delegation.cjs');
 const { createTaskReview } = require('./task-review.cjs');
 const { createAgentFunctions, SLUG_PATTERN } = require('./agent-functions.cjs');
 const { createRegressionSuites } = require('./regression-suite.cjs');
+const { createAttentionStore, LAST_CLOSE_KEY } = require('./attention-store.cjs');
 
 const MIGRATIONS = [{
   version: 1,
@@ -441,6 +442,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
   const agentFunctions = createAgentFunctions({ db, now, transaction });
   const { recordEvidence, ...reviewApi } = review;
   const regression = createRegressionSuites({ db, now, event, transaction, recordEvidence });
+  const attention = createAttentionStore({ db, now, event, transaction });
 
   function reconcileActive(reason) {
     const active = db.prepare(`SELECT r.id, r.session_id, r.reason, s.project_id FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE r.state = 'running'`).all();
@@ -533,6 +535,7 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
     ...agentFunctions,
     ...reviewApi,
     ...regression,
+    ...attention,
 
     getOrchestratorMode(projectId) {
       return db.prepare('SELECT mode FROM orchestrator_settings WHERE project_id = ?').get(projectId)?.mode || 'coordinate';
@@ -796,6 +799,9 @@ function createOperationalStore({ filename, now = () => new Date().toISOString()
           ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify(active.map(({ id }) => id)));
         db.prepare(`INSERT INTO app_state (key, value) VALUES ('last_closed_terminals', ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify(terminals));
+        // "Última visita" da fila Precisam de mim: o fechamento normal, mesmo sem runs ativas.
+        db.prepare(`INSERT INTO app_state (key, value) VALUES (?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(LAST_CLOSE_KEY, JSON.stringify(now()));
         return reconcileActive('application_closed');
       });
     },

@@ -19,6 +19,10 @@ const { createRegressionRunner } = require('./regression-runner.cjs');
 const { createRegressionSuiteHost } = require('./regression-suite-host.cjs');
 const { windowChrome, registerWindowChrome } = require('./window-chrome.cjs');
 const { registerClipboardChannels } = require('./terminal-clipboard.cjs');
+const { createAttentionHost } = require('./attention-host.cjs');
+
+// Avisos ao renderer que também mudam a fila "Precisam de mim".
+const ATTENTION_SOURCES = new Set(['task:changed', 'agent-request:changed']);
 
 let mainWindow = null;
 let panelWindow = null;
@@ -309,7 +313,10 @@ app.whenReady().then(async () => {
     isAllowedSender: (event) => terminalHost.isMainSender(event) || Boolean(getPopupEntry(event.sender)),
   });
   const sendToMain = (channel, payload) => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send(channel, payload);
+    // A fila "Precisam de mim" deriva de tarefas, runs e pedidos: muda junto com eles.
+    if (ATTENTION_SOURCES.has(channel)) mainWindow.webContents.send('attention:changed', payload);
   };
   // Sem o pipe local, os agentes continuam funcionando, só sem ferramentas do ATLAS.
   const toolsHost = createMcpHost({
@@ -366,6 +373,16 @@ app.whenReady().then(async () => {
   createTaskHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
   createMessageHost({ ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender });
   createAgentFunctionHost({ ipcMain, store: operationalStore, isMainSender: terminalHost.isMainSender, onChange: () => sendToMain('agent-function:changed', {}) });
+  const attentionHost = createAttentionHost({
+    ipcMain, projectHost, store: operationalStore, isMainSender: terminalHost.isMainSender,
+    autoNoteFor: (requestId, projectId) => agentRequests?.autoNoteFor(requestId, projectId),
+    onChange: () => sendToMain('attention:changed', {}),
+  });
+  try {
+    attentionHost.refresh();
+  } catch (error) {
+    console.error('Não foi possível calcular a fila de atenção:', error);
+  }
   // Logs da suíte fora do banco e do Git; só o usuário configura e para.
   const regressionLogs = path.join(app.getPath('userData'), 'regression-logs');
   regressionRunner = createRegressionRunner({ store: operationalStore, logsDir: regressionLogs, onChange: (projectId) => sendToMain('task:changed', { projectId }) });
