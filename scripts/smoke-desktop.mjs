@@ -726,7 +726,7 @@ try {
   const worktreeTitle = await main.evaluate(`document.querySelector(${JSON.stringify(target)})?.title`);
   assert(worktreeTitle.includes('feature/revisao') && worktreeTitle.includes('3 alterações') && worktreeTitle.includes(worktree), `title completo da worktree: ${worktreeTitle}`);
   await click(main, target);
-  await until(() => main.evaluate(`document.querySelector('.persistent-tasks').innerText.includes('Nenhuma tarefa criada')`), 'task scope changed');
+  await until(() => main.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa interrompida da fixture')`), 'task scope follows the worktree project');
   assert(!(await main.evaluate(`document.querySelector('.persistent-tasks').innerText`)).includes('Tarefa real · smoke'));
   await main.evaluate(`[...document.querySelectorAll('.inspector-tabs button')].find(item => item.textContent.trim().startsWith('Mensagens')).click()`);
   await until(() => main.evaluate(`document.querySelector('.messages-panel')?.innerText.includes('Nenhuma mensagem')`), 'message scope changed');
@@ -1808,7 +1808,7 @@ process.stdin.on('data', (data) => {
   await until(() => panel.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa real · smoke')`), 'task snapshot synced to popup');
   assert.equal(await panel.evaluate(`document.querySelectorAll('.persistent-tasks button').length`), 1, 'Popup lists task selection but cannot create tasks');
   await click(main, target);
-  await until(() => panel.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Nenhuma tarefa criada')`), 'popup task scope follows main');
+  await until(() => panel.evaluate(`document.querySelector('.persistent-tasks')?.innerText.includes('Tarefa interrompida da fixture')`), 'popup task scope follows main');
   assert((await native('windows')).find((item) => item.url.includes('window=panels')).alwaysOnTop);
   assert.equal(await panel.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`), '#18222b');
   await native('resize', { kind: 'panels', width: 420, height: 700 });
