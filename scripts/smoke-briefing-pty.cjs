@@ -5,6 +5,10 @@ process.stdout.write('\x1b[?2004hBriefing fixture pronta\r\n');
 let line = '';
 let pasted = false;
 process.stdin.on('data', (input) => {
+  if (!line && input === '\x1b') {
+    process.stdout.write('Esc recebido pela fixture\r\n');
+    return;
+  }
   line += input;
   if (line.startsWith('\x1b[200~')) {
     const end = line.indexOf('\x1b[201~');

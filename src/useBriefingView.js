@@ -40,13 +40,15 @@ export default function useBriefingView({ enabled, ready, hasProjects, blocked }
     if (!enabled) return undefined;
     function keydown(event) {
       if (blocked || event.defaultPrevented || event.isComposing || event.key !== 'Escape' || !open) return;
+      // No terminal interativo, Esc pertence ao CLI mesmo se o xterm não consumir o evento.
+      if (event.target.closest?.('.briefing-terminal')) return;
       if (document.querySelector('[aria-modal="true"], .rail-flyout, [role="menu"], select:open')) return;
       event.preventDefault();
       close();
     }
     function shortcut(event) {
       if (blocked || event.defaultPrevented || event.isComposing || document.querySelector('[aria-modal="true"]')) return;
-      if (event.key === 'Escape' && open && event.target.closest?.('.briefing-terminal') && !document.querySelector('[role="menu"]')) {
+      if (event.key === 'Escape' && open && event.target.closest?.('.briefing-terminal[data-read-only="true"]') && !document.querySelector('.rail-flyout, [role="menu"]')) {
         event.preventDefault();
         event.stopPropagation();
         close();

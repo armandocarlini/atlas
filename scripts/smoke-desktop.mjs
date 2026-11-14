@@ -402,6 +402,12 @@ try {
     assert.equal(await main.evaluate(`document.activeElement.textContent`), 'Adiar 1 hora', 'setas circulam');
     await key(main, 'Escape', { code: 'Escape', windowsVirtualKeyCode: 27 });
     await until(() => main.evaluate(`!document.querySelector('.attention-menu') && document.activeElement === ${attentionMoreFor('histórico-fixture')}`), 'Escape fecha o menu e devolve o foco');
+    assert(await main.evaluate(briefingVisible), 'Escape no menu mantém o Briefing aberto');
+    await key(main, 'F1', { code: 'F1', windowsVirtualKeyCode: 112 });
+    await until(() => main.evaluate(`Boolean(document.activeElement?.closest('.command-palette'))`), 'paleta aberta com foco');
+    await escape();
+    await until(() => main.evaluate(`!document.querySelector('.command-palette')`), 'Escape fecha a paleta');
+    assert(await main.evaluate(briefingVisible), 'Escape no diálogo mantém o Briefing aberto');
     // Dispensar pelo teclado: grava no host e o item sai; o contador do projeto acompanha.
     await main.evaluate(`${attentionMoreFor('histórico-fixture')}.click()`);
     await until(() => main.evaluate(`Boolean(document.querySelector('.attention-menu'))`), 'menu reaberto');
@@ -504,6 +510,8 @@ try {
     await until(() => main.evaluate(briefingVisible), 'Briefing com principal após recarregar');
     await until(() => main.evaluate(`[...document.querySelectorAll('.tree-project-name')].some(item => item.textContent.startsWith('Projeto adicional'))`), 'árvore hidratada após recarregar');
     await until(() => main.evaluate(`${receiver}.value === ${JSON.stringify(principal.id)}`), 'principal é destino inicial');
+    await native('focus');
+    await until(() => main.evaluate('document.hasFocus()'), 'janela principal recebe foco após recarregar');
     await main.evaluate(`${card}.focus()`);
     await until(() => main.evaluate(`${card}.querySelector('.briefing-terminal')?.dataset.terminalId === ${JSON.stringify(principal.ptyId)}`), 'cartão focado mostra o PTY da principal');
     await main.evaluate(`(() => {
@@ -526,6 +534,32 @@ try {
     await main.evaluate(`${card}.scrollIntoView({ block: 'start' })`);
     await captureBriefing('briefing-janela-estreita');
     await native('resize', { width: 1440, height: 900 });
+    const terminalInput = `${card}.querySelector('.briefing-terminal .xterm-helper-textarea')`;
+    const focusBriefingTerminal = async () => {
+      await native('focus');
+      await until(() => main.evaluate(`(() => {
+        if (!${terminalInput}) ${card}.focus();
+        const input = ${terminalInput};
+        input?.focus();
+        return input && document.hasFocus() && document.activeElement === input;
+      })()`), 'foco no terminal do Briefing');
+    };
+    await focusBriefingTerminal();
+    await escape();
+    assert(await main.evaluate(briefingVisible), 'Escape no terminal mantém o Briefing aberto');
+    await until(async () => {
+      const { scrollback } = await native('invoke', { channel: 'terminal:attach', args: [worker.ptyId] });
+      return scrollback.includes('Esc recebido pela fixture');
+    }, 'Escape recebido pelo processo no PTY selecionado');
+    await key(main, 'Tab', { code: 'Tab', windowsVirtualKeyCode: 9 });
+    await until(() => main.evaluate(`document.activeElement !== ${terminalInput}`), 'Tab sai do terminal');
+    assert(await main.evaluate(briefingVisible), 'Tab mantém o Briefing aberto');
+    await focusBriefingTerminal();
+    await key(main, 'B', { code: 'KeyB', windowsVirtualKeyCode: 66, modifiers: 10 });
+    await until(() => main.evaluate(`!${briefingVisible}`), 'Ctrl+Shift+B fecha com foco no terminal');
+    await openBriefing();
+    await main.evaluate(`${composer}.focus()`);
+    assert(await main.evaluate(`document.activeElement === ${composer}`), 'foco na caixa de texto');
     await closeBriefing();
     for (const session of [worker, principal]) {
       await native('invoke', { channel: 'terminal:stop', args: [session.ptyId] });

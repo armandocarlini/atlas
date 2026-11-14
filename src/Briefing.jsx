@@ -50,6 +50,7 @@ function BriefingCard({ card, focused, focus, onOpenProject, onStartPrincipal, q
   const inFlight = useRef(false);
   const sessions = card.agora.sessoes;
   const target = briefingDestination(sessions, selection);
+  const readOnlyTerminal = Boolean(target && detachedTerminals.includes(target.id));
   const canSend = !busy && briefingCanSend(target, text);
   const receivers = sessions.filter((session) => session.terminalId && !session.external);
   const receiverName = (session) => receivers.some((other) => other.id !== session.id && other.name === session.name)
@@ -138,9 +139,9 @@ function BriefingCard({ card, focused, focus, onOpenProject, onStartPrincipal, q
           {error && <p className="briefing-error" role="alert">{error}</p>}
           {!card.semNovidades && !sessions.length && !card.precisa.some((item) => item.local) && <button type="button" className="button secondary compact" onClick={() => onStartPrincipal(card.projectId)}>Iniciar a principal</button>}
         </div>
-        {focused && target && <section className="briefing-terminal" aria-label={`Terminal de ${receiverName(target)}`} data-terminal-id={target.terminalId}>
+        {focused && target && <section className="briefing-terminal" aria-label={`Terminal de ${receiverName(target)}`} data-terminal-id={target.terminalId} data-read-only={readOnlyTerminal}>
           <h3><SquareTerminal size={15} aria-hidden="true" />{receiverName(target)}</h3>
-          <TerminalView key={target.terminalId} terminalId={target.terminalId} desktop={desktop} theme={theme} cli={terminalCli(target.cli)} onExit={queue.reload} readOnly={detachedTerminals.includes(target.id)} tabNavigates />
+          <TerminalView key={target.terminalId} terminalId={target.terminalId} desktop={desktop} theme={theme} cli={terminalCli(target.cli)} onExit={queue.reload} readOnly={readOnlyTerminal} tabNavigates />
         </section>}
       </div>}
       {card.semNovidades && <button type="button" className="button subtle compact briefing-quiet-start" onClick={() => onStartPrincipal(card.projectId)}>Iniciar a principal</button>}
